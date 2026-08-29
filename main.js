@@ -1259,17 +1259,38 @@ $('btnGenSup').onclick = async () => {
     updateSupStats();
     return;
   }
-  setProgress(0.4, '网格降采样布点…'); await nextFrame();
-  // 每个 spacing×spacing×spacing 体素保留最低点，避免连续表面被聚成一组；
-  // Y 也参与分格：上下多层的悬空点（如双层平台）不会互相覆盖
+  setProgress(0.4, '均匀布点（泊松盘）…'); await nextFrame();
+  // 孤岛周界降采样仍按 spacing 体素（每体素保留最低点）
   const cell = spacing;
   const key = (x, y, z) => ((Math.floor(y / cell) + 4096) * 8192 + (Math.floor(x / cell) + 4096)) * 8192 + (Math.floor(z / cell) + 4096);
-  const reps = new Map();
-  for (const pt of all) {
-    const k = key(pt.x, pt.y, pt.z);
-    if (!reps.has(k) || pt.y < reps.get(k).y) reps.set(k, pt);
-  }
-  const clusters = Array.from(reps.values()).sort((a, b) => a.y - b.y);
+  // 均匀布点（参考 Bridson 2007 泊松盘的离散候选集变体 + PrusaSlicer permanent 种子语义）：
+  // 孤岛关键点作为种子预置占位；候选池按高度升序贪心，与已放置点保持 spacing 三维最小间距。
+  // 三维距离在斜面上大于 XY 投影距，天然近似测地均匀。空间哈希格 = spacing/√3。
+  const r = spacing, hCell = r / Math.sqrt(3), r2 = r * r * 0.999;
+  const cellOf = (x, y, z) => [Math.floor(x / hCell), Math.floor(y / hCell), Math.floor(z / hCell)];
+  const hkey = (i, j, k) => ((i + 4096) * 8192 + (j + 4096)) * 8192 + (k + 4096);
+  const hash = new Map();   // cellKey -> 已放置点数组
+  const farFromPlaced = (x, y, z) => {
+    const [ci, cj, ck] = cellOf(x, y, z);
+    // ±2 邻域（125 格）：格子对角线 2·spacing/√3 > spacing，±1 会漏掉隔格近点
+    for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) for (let dk = -2; dk <= 2; dk++) {
+      const arr = hash.get(hkey(ci + di, cj + dj, ck + dk));
+      if (!arr) continue;
+      for (const p of arr) {
+        if ((p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2 < r2) return false;
+      }
+    }
+    return true;
+  };
+  const registerPt = pt => {
+    const [ci, cj, ck] = cellOf(pt.x, pt.y, pt.z);
+    const hk = hkey(ci, cj, ck);
+    let arr = hash.get(hk);
+    if (!arr) hash.set(hk, arr = []);
+    arr.push(pt);
+  };
+  // 候选池：悬空点 + 陡峭面重心，按高度升序（自下而上、确定性顺序）
+  const clusters = all.slice().sort((a, b) => a.y - b.y || a.x - b.x || a.z - b.z);
   // M4 图引导布点：孤岛关键点（周界降采样 + 全岛最低点）优先放置，与普通池同体素去重。
   // 周界支撑防孤岛边缘翘曲；最低点支撑孤岛根部的最大落差处。
   const keypoints = [];
@@ -1298,7 +1319,7 @@ $('btnGenSup').onclick = async () => {
           if (!periVox.has(k) || pt.y < periVox.get(k).y) periVox.set(k, pt);
         }
       }
-      if (lowest) keypoints.push(lowest);
+      if (lowest) periVox.set(key(lowest.x, lowest.y, lowest.z), lowest);   // 最低点先入图（同体素被更低周界点取代亦可，杜绝重复）
       for (const pt of periVox.values()) keypoints.push(pt);
     }
   }
@@ -1386,7 +1407,6 @@ $('btnGenSup').onclick = async () => {
     return (cnt & 1) === 1;
   };
   // 放置单根支撑：保护面抑制 → 贴面过滤 → 锚定探测。返回状态供计数
-  const placedVox = new Set();   // 已放置体素（关键点与普通池互斥去重）
   const tryPlace = (c) => {
     if (c.y < 0.25) return 'low';                 // 贴板/低于筏层顶的点不支撑（世界系）
     const tipY = c.y;                        // 不做抬升钳制，避免尖端扎进模型
@@ -1415,25 +1435,26 @@ $('btnGenSup').onclick = async () => {
     }
     addSupport(c.x, tipY, c.z, anchorY, nrm);
     placed++;
-    placedVox.add(key(c.x, tipY, c.z));
     return 'placed';
   };
   const tally = r => { if (r === 'suppressed') suppressed++; else if (r === 'flush') flushSkipped++; };
-  // 第一相：孤岛关键点（优先保障，不受普通池挤占）
+  // 第一相：孤岛关键点（种子预置，占位进泊松哈希）
   let keyPlaced = 0;
   for (const c of keypoints) {
     if (placed >= MAX) break;
     const r = tryPlace(c);
-    if (r === 'placed') keyPlaced++; else tally(r);
+    if (r === 'placed') { keyPlaced++; registerPt(c); } else tally(r);
   }
-  // 第二相：普通聚类池
+  // 第二相：候选池泊松盘贪心——与已放置点保持 spacing 三维间距
+  let sampled = 0;
   for (const c of clusters) {
     if (placed >= MAX) break;
-    if (placedVox.has(key(c.x, c.y, c.z))) continue;
-    tally(tryPlace(c));
+    if (!farFromPlaced(c.x, c.y, c.z)) continue;
+    const r = tryPlace(c);
+    if (r === 'placed') { registerPt(c); sampled++; } else tally(r);
   }
   setProgress(null);
-  log(`支撑生成：${placed} 根（聚类 ${clusters.length} 组，孤岛关键点 ${keyPlaced}/${keypoints.length}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
+  log(`支撑生成：${placed} 根（候选 ${all.length} → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
   updateSupStats();
   if (state.analysis) drawLayer();
 };

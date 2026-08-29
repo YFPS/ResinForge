@@ -71,6 +71,12 @@ XZ 栅格每个像素列，沿打印方向（+Y）存储**所有材料区间** `
 - 孤岛判定图论化：`出边权重总和 < attachPx` 即孤岛；与原像素级判定**按构造严格等价**，实测四 demo `consistent/weakOut/strongOut` 全 true
 - 节点规模：tier 130 节点 / 128 边，statue 401 / 398，knot 891 / 891（knot 每层多连通域）
 - 孤岛节点保留 `pixels` 像素表，供 M4 关键点提取
+
+### 后续里程碑：M6 均匀布点（已完成）
+
+- 选型：种子预置 + 候选集三维泊松盘贪心（Bridson 2007 离散变体；PrusaSlicer `UniformSupportIsland` 的 Voronoi 方案需多边形轮廓输入，与 LDI 栅格不兼容，未采用）
+- 实测（spacing=3mm）：普通候选两两间距 ≥ spacing·0.999；最近邻均值 knot 3.06 / statue 2.82（≈间距）；孤岛周界种子有意加密（tier 底岛环带）
+- 修复两个实现 bug：种子最低点与周界点重复入图（nnMin=0 重复支撑）；哈希 ±1 邻域在格距 spacing/√3 下覆盖不足（改为 ±2/125 格）
 | **M4** | 图引导布点：孤岛关键点优先 + 尖端 LDI 贴面精化 | 每孤岛至少 1 根支撑；导出 STL 在 CHITUBOX 复核 | ✅ 完成（口径修正见下） |
 
 ### M4 验收实测（layerH=0.2mm）

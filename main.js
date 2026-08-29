@@ -1179,7 +1179,7 @@ function updateSupStats() {
    ③ 不做布尔并集，重叠实体在切片偶奇填充下自然合并（同 its_merge），导出 STL 被下游切片器兼容
    销头自动朝向（对应 PrusaSlicer Head.dir）：沿接触面外法线倾斜，限锥角 = 自支撑角 selfAngle；
    极点 = 接触点 + 轴·pen（沿轴扎入），主干保持垂直、接驳在倾斜销头的中部球头球心处（落点随倾角水平偏移，属预期行为） */
-function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrm = null) {
+function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null, nrmBot = null) {
   const tipR = Math.max(0.05, parseFloat($('tipD').value) / 2);       // 顶部球头半径 r_pin
   const midR = Math.max(tipR * 1.5, parseFloat($('midD').value) / 2); // 中部球头半径 r_back = 主干半径
   const baseR = Math.max(midR, parseFloat($('baseD').value) / 2);     // 锥底底半径
@@ -1200,50 +1200,63 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrm = null) {
     { g: new THREE.SphereGeometry(midR, SEG, 10, 0, Math.PI * 2, a1, Math.PI - a1), y: backC },            // 中部球头
     { g: new THREE.CylinderGeometry(tipR * cosA, midR * cosA, yA - yB, SEG, 1, true), y: (yA + yB) / 2 },  // 锥头裙边
   ]);
-  // 销头倾角：轴 = −n（钝端→尖端）；法线与垂直向下夹角 > 自支撑角 → 保持垂直；
-  // 8° 死区：近平底（偏差 <8°）也不倾斜——吸收细分法线噪声，避免平底出现莫名斜头
-  let axis = null;
-  if (nrm && !anchored) {
-    const cosSelf = Math.cos(parseFloat($('selfAngle').value) * Math.PI / 180);
-    const cosDead = Math.cos(8 * Math.PI / 180);
-    if (nrm[1] < -cosSelf - 1e-6 && nrm[1] > -cosDead) axis = new THREE.Vector3(-nrm[0], -nrm[1], -nrm[2]).normalize();
-  }
-  // 顶部销头：绕极点旋转（+Y → 轴）后放到极点。极点 = 接触点 + 轴·pen（沿轴扎入模型 pen 深；
+  // 锥头朝向：轴 = −n（钝端→尖端）。上锥头以被托悬空面的外法线（朝下）为准，下锥头以承载面外法线（朝上）为准；
+  // 限锥角 = 自支撑角；8° 死区（近平面不倾斜，吸收细分法线噪声）
+  const cosSelf = Math.cos(parseFloat($('selfAngle').value) * Math.PI / 180);
+  const cosDead = Math.cos(8 * Math.PI / 180);
+  const headAxis = (n, isTop) => {
+    if (!n) return null;
+    const ok = isTop ? (n[1] < -cosSelf - 1e-6 && n[1] > -cosDead)
+                     : (n[1] > cosSelf + 1e-6 && n[1] < cosDead);
+    return ok ? new THREE.Vector3(-n[0], -n[1], -n[2]).normalize() : null;
+  };
+  const axisT = headAxis(nrmTop, true);
+  // 上锥头：绕极点旋转（+Y → 轴）后放到极点。极点 = 接触点 + 轴·pen（沿轴扎入模型 pen 深；
   // 垂直时退化为 (0, span+pen, 0)。若极点只沿 +Y 偏移，倾斜时顶部球头会甩到表面外侧——方向就反了）
-  const ax0 = axis ? axis.x : 0, ay0 = axis ? axis.y : 1, az0 = axis ? axis.z : 0;
-  const poleX = ax0 * pen, poleY = span + ay0 * pen, poleZ = az0 * pen;
+  const axT = axisT ? axisT.x : 0, ayT = axisT ? axisT.y : 1, azT = axisT ? axisT.z : 0;
+  const poleTX = axT * pen, poleTY = span + ayT * pen, poleTZ = azT * pen;
   const topHead = headGeom.clone();
-  if (axis) topHead.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis)));
-  parts.push({ g: topHead, x: poleX, y: poleY, z: poleZ });
-  // 中部球头球心（倾斜后位置）= 极点 − 轴·(r_pin + 锥头长)
-  const bcx = poleX - ax0 * (tipR + robe), bcy = poleY - ay0 * (tipR + robe), bcz = poleZ - az0 * (tipR + robe);
-  // 底部：锚定→反向销头（垂直）；落板→锥底（随主干水平偏移）
-  let pillarBotY;
+  if (axisT) topHead.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axisT)));
+  parts.push({ g: topHead, x: poleTX, y: poleTY, z: poleTZ });
+  // 顶部中部球头球心（主干上端点）= 极点 − 轴·(r_pin + 锥头长)
+  const jt = { x: poleTX - axT * (tipR + robe), y: poleTY - ayT * (tipR + robe), z: poleTZ - azT * (tipR + robe) };
+  let jb, axisB = null;
   if (anchored) {
+    // 下锥头（反向销头）：沿承载面法线倾斜；极点 = 下接触点 + 轴·pen（扎入下方表面）
+    axisB = headAxis(nrmBot, false);
+    const axB = axisB ? axisB.x : 0, ayB = axisB ? axisB.y : -1, azB = axisB ? axisB.z : 0;
+    const poleBX = axB * pen, poleBY = ayB * pen, poleBZ = azB * pen;
     const anch = headGeom.clone();
-    anch.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI));
-    parts.push({ g: anch, y: -pen });
-    pillarBotY = -pen + (tipR + robe);
+    anch.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axisB || new THREE.Vector3(0, -1, 0))));
+    parts.push({ g: anch, x: poleBX, y: poleBY, z: poleBZ });
+    jb = { x: poleBX - axB * (tipR + robe), y: poleBY - ayB * (tipR + robe), z: poleBZ - azB * (tipR + robe) };
   } else {
+    // 锥底（随主干水平偏移）
     const pedH = Math.min(1.2, Math.max(0.5, span * 0.15), span * 0.45);
-    parts.push({ g: new THREE.CylinderGeometry(midR, baseR, pedH, SEG + 2), x: bcx, y: pedH / 2, z: bcz });   // 锥底
-    pillarBotY = pedH;
+    parts.push({ g: new THREE.CylinderGeometry(midR, baseR, pedH, SEG + 2), x: jt.x, y: pedH / 2, z: jt.z });
+    jb = { x: jt.x, y: pedH, z: jt.z };
   }
-  // 主干：顶端嵌入中部球头球心，垂直向下；跨度不足时退化为销头直抵锥底/对顶
-  const pillarLen = bcy - pillarBotY;
-  if (pillarLen > 0.1) parts.push({ g: new THREE.CylinderGeometry(midR, midR, pillarLen, SEG + 2), x: bcx, y: pillarBotY + pillarLen / 2, z: bcz });
+  // 主干：连接上下中部球头球心（锚定且双头倾斜时可斜置；两端藏于球内，斜置无缝）；跨度过小退化为双头对顶
+  const dx = jt.x - jb.x, dy = jt.y - jb.y, dz = jt.z - jb.z;
+  const plen = Math.hypot(dx, dy, dz);
+  if (plen > 0.1) {
+    const pg = new THREE.CylinderGeometry(midR, midR, plen, SEG + 2);
+    if (Math.abs(dx) + Math.abs(dz) > 1e-6) pg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / plen, dy / plen, dz / plen))));
+    parts.push({ g: pg, x: jb.x + dx / 2, y: jb.y + dy / 2, z: jb.z + dz / 2 });
+  }
   const geom = mergeGeoms(parts);
   const mesh = new THREE.Mesh(geom, anchored ? supMatAnchor : supMat);
   mesh.position.set(x, yBase, z);
-  mesh.userData.tiltDeg = axis ? Math.round(Math.acos(ay0) * 180 / Math.PI) : 0;   // 调试/验证用
+  mesh.userData.tiltDeg = axisT ? Math.round(Math.acos(ayT) * 180 / Math.PI) : 0;          // 上锥头倾角（调试/验证）
+  mesh.userData.tiltDegBot = axisB ? Math.round(Math.acos(-(axisB.y)) * 180 / Math.PI) : 0; // 下锥头倾角
   return mesh;
 }
-function addSupport(x, y, z, anchorY = null, nrm = null) {
+function addSupport(x, y, z, anchorY = null, nrmTop = null, nrmBot = null) {
   const anchored = anchorY !== null;
   const yBase = anchored ? anchorY : (raftOn() ? RAFT_T : 0);   // 落板支撑落在筏层顶面
-  const mesh = makeSupportMesh(x, y, z, yBase, anchored, nrm);
+  const mesh = makeSupportMesh(x, y, z, yBase, anchored, nrmTop, nrmBot);
   supportGroup.add(mesh);
-  state.supports.push({ mesh, x, z, y, anchored, tiltDeg: mesh.userData.tiltDeg || 0 });
+  state.supports.push({ mesh, x, z, y, anchored, tiltDeg: mesh.userData.tiltDeg || 0, tiltDegBot: mesh.userData.tiltDegBot || 0 });
   updateSupStats();
 }
 
@@ -1370,8 +1383,8 @@ $('btnGenSup').onclick = async () => {
     }
     return bestY > -1e8 ? { y: bestY, f: bestF } : null;
   };
-  // 用途①贴面过滤②锚定底盘（命中任意距离的下方表面都优于落板贯穿模型）
-  const findBelow = (x, yTip, z) => { const r = rayDown(x, yTip - 0.05, z); return r ? r.y : null; };
+  // 用途①贴面过滤②锚定底盘（命中任意距离的下方表面都优于落板贯穿模型）；返回 {y, f}（f=承载面索引，供下锥头朝向）
+  const findBelow = (x, yTip, z) => rayDown(x, yTip - 0.05, z);
   // 接触面探测：从尖端上方 0.05mm 竖直向下取最近命中面——真实被触面，比「最近质心面」可靠
   const probeFace = (x, tipY, z) => {
     const r = rayDown(x, tipY + 0.05, z, 0.005);   // tMin 小阈值：命中 0.05 处的被触面（findBelow 的 0.1 会把它排除）
@@ -1425,15 +1438,16 @@ $('btnGenSup').onclick = async () => {
     // （不能用向下射线的距离判定：射线起点若在实体内，会一路穿到实体底面而误判为悬空）
     if (isSolidAt(c.x, tipY - 0.15, c.z)) return 'flush';
     const below = findBelow(c.x, tipY, c.z);
-    const anchorY = (useShort && below !== null) ? below : null;
+    const anchorY = (useShort && below !== null) ? below.y : null;
     if (anchorY !== null) anchoredN++;
-    // 销头朝向法线：射线探测真实接触面（比最近质心面可靠）；锚定短小支撑不倾斜
-    let nrm = null;
-    if (anchorY === null && faces) {
+    // 锥头朝向法线：上锥头 = 射线探测真实接触面；下锥头 = 锚定射线的承载面（findBelow 命中面）
+    let nrmTop = null, nrmBot = null;
+    if (faces) {
       const pf = probeFace(c.x, tipY, c.z);
-      if (pf >= 0) nrm = [faces.nrm[pf * 3], faces.nrm[pf * 3 + 1], faces.nrm[pf * 3 + 2]];
+      if (pf >= 0) nrmTop = [faces.nrm[pf * 3], faces.nrm[pf * 3 + 1], faces.nrm[pf * 3 + 2]];
+      if (anchorY !== null && below.f >= 0) nrmBot = [faces.nrm[below.f * 3], faces.nrm[below.f * 3 + 1], faces.nrm[below.f * 3 + 2]];
     }
-    addSupport(c.x, tipY, c.z, anchorY, nrm);
+    addSupport(c.x, tipY, c.z, anchorY, nrmTop, nrmBot);
     placed++;
     return 'placed';
   };

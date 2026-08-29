@@ -437,7 +437,8 @@ function steepFaces(facesF, q, selfAngleDeg, prot, protW, collectPts) {
         pts.push({
           x: rot[0] * cx + rot[4] * cy + rot[8] * cz,
           y: rot[1] * cx + rot[5] * cy + rot[9] * cz,
-          z: rot[2] * cx + rot[6] * cy + rot[10] * cz
+          z: rot[2] * cx + rot[6] * cy + rot[10] * cz,
+          area: area[f]   // 面面积：供区域面积过滤
         });
       }
     }
@@ -1249,6 +1250,8 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
   mesh.position.set(x, yBase, z);
   mesh.userData.tiltDeg = axisT ? Math.round(Math.acos(ayT) * 180 / Math.PI) : 0;          // 上锥头倾角（调试/验证）
   mesh.userData.tiltDegBot = axisB ? Math.round(Math.acos(-(axisB.y)) * 180 / Math.PI) : 0; // 下锥头倾角
+  mesh.userData.jx = jt.x; mesh.userData.jz = jt.z;   // 主干顶部球心（局部 XZ）：杆身防粘连的真实站位
+  if (anchored) { mesh.userData.jbx = jb.x; mesh.userData.jbz = jb.z; }   // 主干底部球心（锚定）
   return mesh;
 }
 function addSupport(x, y, z, anchorY = null, nrmTop = null, nrmBot = null) {
@@ -1266,9 +1269,45 @@ $('btnGenSup').onclick = async () => {
   const A = state.analysis;
   const spacing = Math.max(1, parseFloat($('spacing').value));
   // 合并两个来源：栅格悬空点 + 陡峭面重心
-  const all = [...A.overhang.map(o => ({ x: o.x, y: o.y, z: o.z })), ...A.steepPts];
+  let all = [...A.overhang.map(o => ({ x: o.x, y: o.y, z: o.z })), ...A.steepPts];
   if (!all.length) {
     log('没有检测到需要支撑的悬空区域');
+    updateSupStats();
+    return;
+  }
+  // 区域面积过滤（参考 BambuStudio Minimum Support Area / Orca "Remove Small Overhangs" / Wang Z. support-relevant 框架）：
+  // 2mm 格 26 邻域并查集聚类出连通悬空区域，区域面积 < 阈值 → 整区不生成支撑（尖刺小帽点缀支撑的主要来源）。
+  // 孤岛不走此过滤（真孤岛无桥可架，必须支撑）——其种子由图节点单独保障。
+  const minSupArea = Math.max(0.1, parseFloat($('minSupArea').value) || 2);
+  const cellArea = A.grid.sx * A.grid.sz;
+  let areaPruned = 0;
+  {
+    const cq = 2;   // 聚类格 2mm
+    const ck2 = (i, j, k) => ((j + 4096) * 8192 + (i + 4096)) * 8192 + (k + 4096);   // (x,y,z) 格索引
+    const parent = new Map(), rootArea = new Map(), candCell = new Array(all.length);
+    const find = k => { let r = k; while (parent.get(r) !== r) r = parent.get(r); let c = k; while (parent.get(c) !== r) { const n = parent.get(c); parent.set(c, r); c = n; } return r; };
+    for (let i = 0; i < all.length; i++) {
+      const pt = all[i];
+      const i0 = Math.floor(pt.x / cq), j0 = Math.floor(pt.y / cq), k0 = Math.floor(pt.z / cq);
+      const k = ck2(i0, j0, k0);
+      candCell[i] = k;
+      if (!parent.has(k)) parent.set(k, k);
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) {
+        if (!di && !dj && !dk) continue;
+        const nk = ck2(i0 + di, j0 + dj, k0 + dk);
+        if (parent.has(nk)) { const ra = find(k), rb = find(nk); if (ra !== rb) parent.set(ra, rb); }
+      }
+    }
+    for (let i = 0; i < all.length; i++) {
+      const r = find(candCell[i]);
+      rootArea.set(r, (rootArea.get(r) || 0) + (all[i].area ?? cellArea));
+    }
+    const before = all.length;
+    all = all.filter((_, i) => (rootArea.get(find(candCell[i])) || 0) >= minSupArea);
+    areaPruned = before - all.length;
+  }
+  if (!all.length) {
+    log(`没有需要支撑的悬空区域（区域面积过滤 <${minSupArea}mm² 后为空）`);
     updateSupStats();
     return;
   }
@@ -1332,13 +1371,14 @@ $('btnGenSup').onclick = async () => {
           if (!periVox.has(k) || pt.y < periVox.get(k).y) periVox.set(k, pt);
         }
       }
+      // 种子带上孤岛 id（覆盖兜底定位用）
       if (lowest) periVox.set(key(lowest.x, lowest.y, lowest.z), lowest);   // 最低点先入图（同体素被更低周界点取代亦可，杜绝重复）
-      for (const pt of periVox.values()) keypoints.push(pt);
+      for (const pt of periVox.values()) keypoints.push({ ...pt, node: nd.id });
     }
   }
   setProgress(0.7, '生成支撑几何体…'); await nextFrame();
   // 布点策略：孤岛关键点（周界+最低点）优先 → 普通悬空点体素聚类；尖端高度来自 LDI 区间入口（贴面精确）
-  let suppressed = 0, placed = 0, anchoredN = 0, flushSkipped = 0;
+  let suppressed = 0, placed = 0, anchoredN = 0, flushSkipped = 0, heldN = 0;
   const MAX = 900;   // 抬高后模型底面轮廓会铺满布点，上限需覆盖底面 + 上层特征
   const posL = state.mesh.geometry.attributes.position.array;
   const rh = raiseH();
@@ -1419,8 +1459,8 @@ $('btnGenSup').onclick = async () => {
     }
     return (cnt & 1) === 1;
   };
-  // 放置单根支撑：保护面抑制 → 贴面过滤 → 锚定探测。返回状态供计数
-  const tryPlace = (c) => {
+  // 放置单根支撑：保护面抑制 → 贴面过滤 → 锚定探测（below 由调用方预计算）。返回状态供计数
+  const tryPlace = (c, below) => {
     if (c.y < 0.25) return 'low';                 // 贴板/低于筏层顶的点不支撑（世界系）
     const tipY = c.y;                        // 不做抬升钳制，避免尖端扎进模型
     // 最近面保护检测
@@ -1437,8 +1477,8 @@ $('btnGenSup').onclick = async () => {
     // 贴面过滤：尖端正下方 0.15mm 已在实体内 → 该点本就由模型自身托住，无需支撑。
     // （不能用向下射线的距离判定：射线起点若在实体内，会一路穿到实体底面而误判为悬空）
     if (isSolidAt(c.x, tipY - 0.15, c.z)) return 'flush';
-    const below = findBelow(c.x, tipY, c.z);
-    const anchorY = (useShort && below !== null) ? below.y : null;
+    if (below !== null && tipY - below.y < 0.8) return 'held';   // 下方 0.8mm 内已有材料 → 桥接即可，不生成支撑（Formlabs 短跨豁免）
+    const anchorY = below !== null ? below.y : null;
     if (anchorY !== null) anchoredN++;
     // 锥头朝向法线：上锥头 = 射线探测真实接触面；下锥头 = 锚定射线的承载面（findBelow 命中面）
     let nrmTop = null, nrmBot = null;
@@ -1451,24 +1491,155 @@ $('btnGenSup').onclick = async () => {
     placed++;
     return 'placed';
   };
-  const tally = r => { if (r === 'suppressed') suppressed++; else if (r === 'flush') flushSkipped++; };
-  // 第一相：孤岛关键点（种子预置，占位进泊松哈希）
-  let keyPlaced = 0;
+  const tally = r => { if (r === 'suppressed') suppressed++; else if (r === 'flush') flushSkipped++; else if (r === 'held') heldN++; };
+  // 第二相：候选池泊松盘贪心 + 覆盖锥过滤 + 锥底防粘连
+  // 覆盖锥（Vanek 2014 Clever Support coverage）：已放置低点支撑的自支撑锥
+  // （半径 = 高差 × tan(自支撑角)，高差上限 12mm，0.9 余量）覆盖其上方连通坡面的悬空点——
+  // 坡面底部钉住后向上逐层有重叠，无需重复布满。孤岛种子永不参与被过滤（第一相先放）。
+  const tanSelf = Math.tan(parseFloat($('selfAngle').value) * Math.PI / 180);
+  const fuseR2 = (parseFloat($('baseD').value) * 1.05) ** 2;   // 锥底最小 XY 间距²（防基座粘连）
+  const placedPts = [];   // 已放置点（覆盖锥判定）
+  const pedPts = [];      // 落板支撑 XY（锥底粘连判定）
+  const covHash = new Map();   // XZ 哈希（格 3mm），覆盖锥加速
+  const covReg = p => {
+    const k = (Math.floor(p.x / 3) + 4096) * 8192 + (Math.floor(p.z / 3) + 4096);
+    let a = covHash.get(k); if (!a) covHash.set(k, a = []); a.push(p);
+  };
+  const coveredBy = (c) => {
+    const ci = Math.floor(c.x / 3), ck = Math.floor(c.z / 3);
+    for (let di = -4; di <= 4; di++) for (let dk = -4; dk <= 4; dk++) {   // ±4 格 ≥ 最大覆盖半径 12·tan45·0.9
+      const arr = covHash.get((ci + di + 4096) * 8192 + (ck + dk + 4096));
+      if (!arr) continue;
+      for (const p of arr) {
+        if (p.y > c.y + 0.05) continue;
+        const dy = c.y - p.y;
+        if (dy > 12) continue;
+        const rcov = dy * tanSelf * 0.9;
+        if ((p.x - c.x) ** 2 + (p.z - c.z) ** 2 <= rcov * rcov) return true;
+      }
+    }
+    return false;
+  };
+  const isAnchoredLast = () => state.supports[state.supports.length - 1].anchored;
+  // 杆身级防粘连（对所有支撑生效，含种子）：XY 净距 < 中段直径+0.4mm 且 Y 区间重叠 → 互斥。
+  // 泊松盘只约束尖端点；支撑是有体积的杆，杆身/球头互撞必须显式判定。
+  // 站位用主干球心的真实 XZ（倾斜销头会让杆身偏离接触点，登记接触点会漏判）。
+  // Y 区间按实际网格范围外扩 0.2mm（销头扎入 pen 超出名义端点），间隙判据 0.1mm。
+  const shaftList = [];   // 已放置支撑的主干球心 {x, z, yLo, yHi}（Y 已外扩）
+  const shaftClear = parseFloat($('midD').value) + 0.4;
+  const shaftFused = (x, z, yLo, yHi) => {
+    for (const p of shaftList) {
+      if ((p.x - x) ** 2 + (p.z - z) ** 2 >= shaftClear * shaftClear) continue;
+      if (yHi < p.yLo - 0.3 || yLo > p.yHi + 0.3) continue;
+      return true;
+    }
+    return false;
+  };
+  // 放置后登记主干站位：顶部球心（jt）+ 锚定时的底部球心（jb）
+  const regShaft = (c, yLo) => {
+    const m = state.supports[state.supports.length - 1].mesh;
+    shaftList.push({ x: c.x + (m.userData.jx || 0), z: c.z + (m.userData.jz || 0), yLo: yLo - 0.2, yHi: c.y + 0.2 });
+    if (m.userData.jbx !== undefined) shaftList.push({ x: c.x + m.userData.jbx, z: c.z + m.userData.jbz, yLo: yLo - 0.2, yHi: c.y + 0.2 });
+  };
+  // 第一相：孤岛关键点（种子预置，占位进泊松哈希 + 覆盖锥）。
+  // 种子间同样做杆身互撞检查——多岛屿密集模型上「首根豁免」会让密集区种子互贴（实测 223 岛 1002 对互粘）；
+  // 被挡种子的孤岛由相邻岛屿的支撑物理覆盖 rim（同一悬空区域的相邻区域），不强制补放。
+  let keyPlaced = 0, seedFused = 0;
   for (const c of keypoints) {
     if (placed >= MAX) break;
-    const r = tryPlace(c);
-    if (r === 'placed') { keyPlaced++; registerPt(c); } else tally(r);
+    const below = useShort ? findBelow(c.x, c.y, c.z) : null;
+    const yLo = below ? below.y : 0;
+    if (shaftFused(c.x, c.z, yLo - 0.2, c.y + 0.2)) { seedFused++; continue; }
+    const r = tryPlace(c, below);
+    if (r === 'placed') {
+      keyPlaced++; registerPt(c); placedPts.push(c); covReg(c);
+      regShaft(c, yLo);
+      const sr = state.supports[state.supports.length - 1];
+      sr.origin = 'seed'; sr.node = c.node;   // 归因标签（排查用）
+      if (!sr.anchored) pedPts.push({ x: c.x + (sr.mesh.userData.jx || 0), z: c.z + (sr.mesh.userData.jz || 0) });
+    } else tally(r);
   }
-  // 第二相：候选池泊松盘贪心——与已放置点保持 spacing 三维间距
-  let sampled = 0;
+  let sampled = 0, covPruned = 0, fusePruned = 0, shaftPruned = 0;
   for (const c of clusters) {
     if (placed >= MAX) break;
-    if (!farFromPlaced(c.x, c.y, c.z)) continue;
-    const r = tryPlace(c);
-    if (r === 'placed') { registerPt(c); sampled++; } else tally(r);
+    if (!farFromPlaced(c.x, c.y, c.z)) continue;   // 泊松盘最小间距（3D）
+    if (coveredBy(c)) { covPruned++; continue; }    // 覆盖锥过滤
+    const below = useShort ? findBelow(c.x, c.y, c.z) : null;
+    if (below === null) {
+      // 落板：锥底在平台层互不重叠（与高度差无关，故用 XY 判定）
+      let fused = false;
+      for (const p of pedPts) { if ((p.x - c.x) ** 2 + (p.z - c.z) ** 2 < fuseR2) { fused = true; break; } }
+      if (fused) { fusePruned++; continue; }
+    }
+    const yLo = below ? below.y : 0;
+    if (shaftFused(c.x, c.z, yLo - 0.2, c.y + 0.2)) { shaftPruned++; continue; }   // 杆身防粘连（落板↔短小、短小↔短小）
+    const r = tryPlace(c, below);
+    if (r === 'placed') {
+      registerPt(c); sampled++; placedPts.push(c); covReg(c);
+      regShaft(c, yLo);
+      const sr = state.supports[state.supports.length - 1];
+      sr.origin = 'pool';   // 归因标签
+      if (!sr.anchored) pedPts.push({ x: c.x + (sr.mesh.userData.jx || 0), z: c.z + (sr.mesh.userData.jz || 0) });
+    } else tally(r);
+  }
+  // 覆盖兜底（先于终检）：附近无支撑的孤岛，逐个尝试其关键点直到一根落地。
+  // 不做互撞检查——悬空优先于互粘；与已有支撑互贴的去重阶段保护（同为种子不互清）。
+  let coverFix = 0;
+  if (A.graph) {
+    for (const nd of A.graph.nodes) {
+      if (!nd.island) continue;
+      const near = state.supports.some(s => Math.hypot(s.x - nd.cx, s.z - nd.cz) < 2 && Math.abs(s.y - nd.y) < 2);
+      if (near) continue;
+      const kps = keypoints.filter(c => c.node === nd.id);   // 该孤岛的全部关键点逐个尝试，直到一根落地
+      for (const kp of kps) {
+        if (placed >= MAX) break;
+        const r = tryPlace(kp, useShort ? findBelow(kp.x, kp.y, kp.z) : null);
+        if (r === 'placed') {
+          coverFix++; keyPlaced++;
+          const sr = state.supports[state.supports.length - 1];
+          sr.origin = 'seed'; sr.node = nd.id;
+          break;
+        }
+      }
+    }
+  }
+  // 终检去重（最后执行）：放置期无法预知候选自身的球心偏移（倾斜相对的销头互甩），事后按真球心站位复核清冗。
+  // 互粘对去冗策略：普通池优先于种子；同为种子（含兜底）不清——相邻孤岛被同一支撑钉住属可接受。
+  let deduped = 0;
+  {
+    const ents = [];
+    state.supports.forEach((s, idx) => {
+      const g = s.mesh.geometry; g.computeBoundingBox();
+      const yLo = g.boundingBox.min.y + s.mesh.position.y - 0.1, yHi = g.boundingBox.max.y + s.mesh.position.y + 0.1;
+      const jx = s.mesh.userData.jx || 0, jz = s.mesh.userData.jz || 0;
+      ents.push({ idx, x: s.x + jx, z: s.z + jz, yLo, yHi, s });
+      if (s.anchored && s.mesh.userData.jbx !== undefined) ents.push({ idx, x: s.x + s.mesh.userData.jbx, z: s.z + s.mesh.userData.jbz, yLo, yHi, s });
+    });
+    const gone = new Set();
+    for (let i = 0; i < ents.length; i++) {
+      if (gone.has(ents[i].idx)) continue;
+      for (let j = i + 1; j < ents.length; j++) {
+        const a = ents[i], b = ents[j];
+        if (a.idx === b.idx || gone.has(b.idx)) continue;          // 同一支撑的上下球心不算互粘
+        if (a.s.origin === 'seed' && b.s.origin === 'seed') continue; // 双种子互贴：相邻孤岛共钉，接受
+        if (a.yHi < b.yLo - 0.1 || a.yLo > b.yHi + 0.1) continue;
+        if (Math.hypot(a.x - b.x, a.z - b.z) >= shaftClear - 0.2) continue;
+        const drop = a.s.origin === 'pool' ? a : b;   // 去普通池的；都去不了则去后放的 b
+        gone.add(drop.idx);
+      }
+    }
+    if (gone.size) {
+      const rest = [];
+      state.supports.forEach((s, idx) => {
+        if (gone.has(idx)) { supportGroup.remove(s.mesh); s.mesh.geometry.dispose(); deduped++; }
+        else rest.push(s);
+      });
+      state.supports = rest;
+      placed -= deduped;
+    }
   }
   setProgress(null);
-  log(`支撑生成：${placed} 根（候选 ${all.length} → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
+  log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
   updateSupStats();
   if (state.analysis) drawLayer();
 };
@@ -1583,7 +1754,7 @@ window.addEventListener('pointerup', () => { state.painting = false; });
 /* ================================================================
    启动
 ================================================================ */
-window.__dbg = { loadDemo, rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings };   // 调试/自动化访问口
+window.__dbg = { loadDemo, loadSTLBuffer, rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings };   // 调试/自动化访问口
 buildPlate();
 resize();
 loadDemo('knot');

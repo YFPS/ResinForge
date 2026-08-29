@@ -1185,8 +1185,12 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
   const midR = Math.max(tipR * 1.5, parseFloat($('midD').value) / 2); // 中部球头半径 r_back = 主干半径
   const baseR = Math.max(midR, parseFloat($('baseD').value) / 2);     // 锥底底半径
   const pen = Math.min(0.3, Math.max(0.1, tipR));                     // 扎入深度
-  const span = Math.max(0.4, yTip - yBase);                           // 总跨度（局部系 y=0 在 yBase）
-  const nHeads = anchored ? 2 : 1;
+  const nHeadsG = anchored ? 2 : 1;
+  // 退化兜底：跨度容不下全部销头（+锥头 0.12 下限 + 0.15 余量）时拒绝生成，
+  // 否则锥头压扁、主干消失，渲染成一对互相贯穿的对顶销头（实测 Arm_Left 羽毛尖端 0.99mm 断支撑）
+  if (yTip - yBase < nHeadsG * (tipR + midR) + 0.15 + 0.12 * nHeadsG) return null;
+  const span = yTip - yBase;
+  const nHeads = nHeadsG;
   let robe = Math.max(0.4, midR * 1.8);
   robe = Math.min(robe, Math.max(0.12, (span - nHeads * (tipR + midR) - 0.15) / nHeads));
   const alpha = Math.asin(Math.min(0.9, (midR - tipR) / robe));       // 锥头半锥角（切线几何）
@@ -1237,7 +1241,7 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
     parts.push({ g: new THREE.CylinderGeometry(midR, baseR, pedH, SEG + 2), x: jt.x, y: pedH / 2, z: jt.z });
     jb = { x: jt.x, y: pedH, z: jt.z };
   }
-  // 主干：连接上下中部球头球心（锚定且双头倾斜时可斜置；两端藏于球内，斜置无缝）；跨度过小退化为双头对顶
+  // 主干：连接上下中部球头球心（锚定且双头倾斜时可斜置；两端藏于球内，斜置无缝）；跨度退化已在函数头拒绝生成
   const dx = jt.x - jb.x, dy = jt.y - jb.y, dz = jt.z - jb.z;
   const plen = Math.hypot(dx, dy, dz);
   if (plen > 0.1) {
@@ -1254,13 +1258,36 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
   if (anchored) { mesh.userData.jbx = jb.x; mesh.userData.jbz = jb.z; }   // 主干底部球心（锚定）
   return mesh;
 }
-function addSupport(x, y, z, anchorY = null, nrmTop = null, nrmBot = null) {
+/* 微型短柱（CHITUBOX 标准件风格）：锚定跨度容不下双销头时的短支撑替代方案。
+   实测 CHITUBOX 在同一模型上用 Ø0.8mm 球端微柱铺 0.5~2mm 短间隙（178 根），几何干净、易掰除；
+   简单圆柱 + 两端半球，竖直不倾斜，永不退化。尖端/底端各扎入表面 0.1mm */
+function makeMicroPostMesh(x, yTip, z, yBase) {
+  const midR = Math.max(parseFloat($('tipD').value) * 1.5 / 2, parseFloat($('midD').value) / 2);
+  const span = yTip - yBase;
+  const embed = 0.1;
+  const yT = span - midR + embed;   // 顶部球心（尖端扎入被托面）
+  const yB = midR - embed;          // 底部球心（底端扎入承载面）
+  const parts = [
+    { g: new THREE.SphereGeometry(midR, 10, 8), y: yT },
+    { g: new THREE.SphereGeometry(midR, 10, 8), y: yB },
+  ];
+  if (yT - yB > 0.05) parts.push({ g: new THREE.CylinderGeometry(midR, midR, yT - yB, 12), y: (yT + yB) / 2 });
+  const mesh = new THREE.Mesh(mergeGeoms(parts), supMatAnchor);
+  mesh.position.set(x, yBase, z);
+  mesh.userData.tiltDeg = 0; mesh.userData.tiltDegBot = 0;
+  mesh.userData.jx = 0; mesh.userData.jz = 0;
+  mesh.userData.jbx = 0; mesh.userData.jbz = 0;   // 竖直直柱：球心站位即接触点
+  return mesh;
+}
+function addSupport(x, y, z, anchorY = null, nrmTop = null, nrmBot = null, micro = false) {
   const anchored = anchorY !== null;
   const yBase = anchored ? anchorY : (raftOn() ? RAFT_T : 0);   // 落板支撑落在筏层顶面
-  const mesh = makeSupportMesh(x, y, z, yBase, anchored, nrmTop, nrmBot);
+  const mesh = micro ? makeMicroPostMesh(x, y, z, yBase) : makeSupportMesh(x, y, z, yBase, anchored, nrmTop, nrmBot);
+  if (!mesh) return null;   // 跨度退化被拒（见 makeSupportMesh 退化兜底）
   supportGroup.add(mesh);
   state.supports.push({ mesh, x, z, y, anchored, tiltDeg: mesh.userData.tiltDeg || 0, tiltDegBot: mesh.userData.tiltDegBot || 0 });
   updateSupStats();
+  return mesh;   // 返回真值供调用方判定放置成功（null = 退化被拒）
 }
 
 $('btnGenSup').onclick = async () => {
@@ -1378,7 +1405,7 @@ $('btnGenSup').onclick = async () => {
   }
   setProgress(0.7, '生成支撑几何体…'); await nextFrame();
   // 布点策略：孤岛关键点（周界+最低点）优先 → 普通悬空点体素聚类；尖端高度来自 LDI 区间入口（贴面精确）
-  let suppressed = 0, placed = 0, anchoredN = 0, flushSkipped = 0, heldN = 0;
+  let suppressed = 0, placed = 0, anchoredN = 0, flushSkipped = 0, heldN = 0, stubN = 0, microN = 0;
   const MAX = 900;   // 抬高后模型底面轮廓会铺满布点，上限需覆盖底面 + 上层特征
   const posL = state.mesh.geometry.attributes.position.array;
   const rh = raiseH();
@@ -1387,6 +1414,22 @@ $('btnGenSup').onclick = async () => {
   for (let i = 0; i < posL.length; i++) pos[i] = posL[i] + (i % 3 === 1 ? rh : 0);
   const nf = pos.length / 9;
   const useShort = $('shortSup').checked;
+  // 最小支撑跨度：双销头几何下限（2×(r_pin+r_back)+锥头下限与余量）+ 0.3mm 余量。
+  // 短于此跨度的锚定/落板支撑会退化为对顶销头疙瘩（实测 Arm_Left 羽毛尖端），直接按短跨豁免跳过
+  const tipR0 = Math.max(0.05, parseFloat($('tipD').value) / 2);
+  const midR0 = Math.max(tipR0 * 1.5, parseFloat($('midD').value) / 2);
+  const minSupLen = 2 * (tipR0 + midR0) + 0.39 + 0.3;
+  // 保护面扫描的面重心预计算（一次性 O(面数)）：无保护面时保持 null，tryPlace 完全跳过扫描
+  let protCent = null;
+  if (state.protectedFaces.size) {
+    protCent = new Float32Array(nf * 3);
+    for (let f = 0; f < nf; f++) {
+      const i = f * 9;
+      protCent[f * 3] = (pos[i] + pos[i + 3] + pos[i + 6]) / 3;
+      protCent[f * 3 + 1] = (pos[i + 1] + pos[i + 4] + pos[i + 7]) / 3;
+      protCent[f * 3 + 2] = (pos[i + 2] + pos[i + 5] + pos[i + 8]) / 3;
+    }
+  }
   // 向下射线核心（Möller–Trumbore，不剔背面）：复用分析的 Y 分桶，返回 oy 下方最高命中 {y, f}
   const rayDown = (x, oy, z, tMin = 0.1) => {
     const g = A.grid;
@@ -1459,25 +1502,37 @@ $('btnGenSup').onclick = async () => {
     }
     return (cnt & 1) === 1;
   };
-  // 放置单根支撑：保护面抑制 → 贴面过滤 → 锚定探测（below 由调用方预计算）。返回状态供计数
+  // 放置单根支撑：贴面过滤 → 短跨/锚定面过滤 → 保护面抑制（廉价过滤前置）。
+  // 保护面最近面扫描是 O(全部面)，必须放在所有廉价过滤之后、且仅在有保护面时执行——
+  // 否则 7 万候选 × 21 万面 ≈ 百亿次距离计算，主线程同步冻结（Arm_Left 实测浏览器未响应）
   const tryPlace = (c, below) => {
     if (c.y < 0.25) return 'low';                 // 贴板/低于筏层顶的点不支撑（世界系）
     const tipY = c.y;                        // 不做抬升钳制，避免尖端扎进模型
-    // 最近面保护检测
-    let nearest = -1, nd2 = 1e9;
-    for (let f = 0; f < nf; f++) {
-      const i = f * 9;
-      const cx = (pos[i] + pos[i + 3] + pos[i + 6]) / 3;
-      const cy = (pos[i + 1] + pos[i + 4] + pos[i + 7]) / 3;
-      const cz = (pos[i] + pos[i + 5] + pos[i + 8]) / 3;
-      const d2 = (cx - c.x) ** 2 + (cy - tipY) ** 2 + (cz - c.z) ** 2;
-      if (d2 < nd2) { nd2 = d2; nearest = f; }
-    }
-    if (nearest >= 0 && state.protectedFaces.has(nearest) && nd2 < 25) return 'suppressed';
     // 贴面过滤：尖端正下方 0.15mm 已在实体内 → 该点本就由模型自身托住，无需支撑。
     // （不能用向下射线的距离判定：射线起点若在实体内，会一路穿到实体底面而误判为悬空）
     if (isSolidAt(c.x, tipY - 0.15, c.z)) return 'flush';
     if (below !== null && tipY - below.y < 0.8) return 'held';   // 下方 0.8mm 内已有材料 → 桥接即可，不生成支撑（Formlabs 短跨豁免）
+    // 最小跨度过滤：跨度容不下双销头的锚定支撑 → 微型短柱（CHITUBOX 标准件风格）；
+    // 常规销头锚定仍要求可信承载面（法线过平的侧壁/悬空面拒绝）。落板支撑过短仍跳过（应从板面长起）
+    let micro = false;
+    if (below !== null) {
+      if (tipY - below.y >= minSupLen) {
+        // 锚定面可信度：命中面法线过平（竖直侧壁/悬空下表面）→ 不能承载，拒绝锚定。
+        // （实测 Arm_Left 羽毛尖端：向下射线 1~3mm 内命中相邻羽枝侧壁，法线 y≈0.1~0.3，生成的短支撑毫无意义）
+        if (below.f >= 0 && faces && faces.nrm[below.f * 3 + 1] < 0.5) return 'stub';
+      } else {
+        micro = true;   // span ∈ [0.8, minSupLen)：直柱微支撑，对锚面平整度要求低，不做承载面检查
+      }
+    } else if (tipY - (raftOn() ? RAFT_T : 0) < minSupLen) return 'stub';
+    // 最近面保护检测（仅存在保护面时；重心已预计算，单次 O(面数)）
+    if (protCent) {
+      let nearest = -1, nd2 = 1e9;
+      for (let f = 0; f < nf; f++) {
+        const d2 = (protCent[f * 3] - c.x) ** 2 + (protCent[f * 3 + 1] - tipY) ** 2 + (protCent[f * 3 + 2] - c.z) ** 2;
+        if (d2 < nd2) { nd2 = d2; nearest = f; }
+      }
+      if (nearest >= 0 && state.protectedFaces.has(nearest) && nd2 < 25) return 'suppressed';
+    }
     const anchorY = below !== null ? below.y : null;
     if (anchorY !== null) anchoredN++;
     // 锥头朝向法线：上锥头 = 射线探测真实接触面；下锥头 = 锚定射线的承载面（findBelow 命中面）
@@ -1487,11 +1542,13 @@ $('btnGenSup').onclick = async () => {
       if (pf >= 0) nrmTop = [faces.nrm[pf * 3], faces.nrm[pf * 3 + 1], faces.nrm[pf * 3 + 2]];
       if (anchorY !== null && below.f >= 0) nrmBot = [faces.nrm[below.f * 3], faces.nrm[below.f * 3 + 1], faces.nrm[below.f * 3 + 2]];
     }
-    addSupport(c.x, tipY, c.z, anchorY, nrmTop, nrmBot);
+    const ok = addSupport(c.x, tipY, c.z, anchorY, nrmTop, nrmBot, micro);
+    if (!ok) return 'stub';   // 兜底：几何仍判退化（不应发生，微柱几何永不退化）
     placed++;
+    if (micro) microN++;
     return 'placed';
   };
-  const tally = r => { if (r === 'suppressed') suppressed++; else if (r === 'flush') flushSkipped++; else if (r === 'held') heldN++; };
+  const tally = r => { if (r === 'suppressed') suppressed++; else if (r === 'flush') flushSkipped++; else if (r === 'held') heldN++; else if (r === 'stub') stubN++; };
   // 第二相：候选池泊松盘贪心 + 覆盖锥过滤 + 锥底防粘连
   // 覆盖锥（Vanek 2014 Clever Support coverage）：已放置低点支撑的自支撑锥
   // （半径 = 高差 × tan(自支撑角)，高差上限 12mm，0.9 余量）覆盖其上方连通坡面的悬空点——
@@ -1545,8 +1602,10 @@ $('btnGenSup').onclick = async () => {
   // 种子间同样做杆身互撞检查——多岛屿密集模型上「首根豁免」会让密集区种子互贴（实测 223 岛 1002 对互粘）；
   // 被挡种子的孤岛由相邻岛屿的支撑物理覆盖 rim（同一悬空区域的相邻区域），不强制补放。
   let keyPlaced = 0, seedFused = 0;
+  let seedI = 0;
   for (const c of keypoints) {
     if (placed >= MAX) break;
+    if (++seedI % 2000 === 0) { setProgress(0.45, '孤岛关键点布点…'); await nextFrame(); }   // 周期让帧，防主线程冻结
     const below = useShort ? findBelow(c.x, c.y, c.z) : null;
     const yLo = below ? below.y : 0;
     if (shaftFused(c.x, c.z, yLo - 0.2, c.y + 0.2)) { seedFused++; continue; }
@@ -1560,8 +1619,10 @@ $('btnGenSup').onclick = async () => {
     } else tally(r);
   }
   let sampled = 0, covPruned = 0, fusePruned = 0, shaftPruned = 0;
+  let poolI = 0;
   for (const c of clusters) {
     if (placed >= MAX) break;
+    if (++poolI % 2000 === 0) { setProgress(0.5 + 0.15 * poolI / clusters.length, '布点过滤（泊松/覆盖锥/防粘连）…'); await nextFrame(); }   // 周期让帧，防主线程冻结
     if (!farFromPlaced(c.x, c.y, c.z)) continue;   // 泊松盘最小间距（3D）
     if (coveredBy(c)) { covPruned++; continue; }    // 覆盖锥过滤
     const below = useShort ? findBelow(c.x, c.y, c.z) : null;
@@ -1639,7 +1700,7 @@ $('btnGenSup').onclick = async () => {
     }
   }
   setProgress(null);
-  log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
+  log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，微型短柱 ${microN}，过短跳过 ${stubN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
   updateSupStats();
   if (state.analysis) drawLayer();
 };

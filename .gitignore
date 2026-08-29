@@ -1,0 +1,8 @@
+# 测试/调试残留
+.msys*
+.test.html
+.testshot.html
+.dom_test*.html
+.shot*.png
+chrome_*.err
+server_test*.log

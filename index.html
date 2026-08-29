@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResinForge · 光固化自动支撑系统 v0.1</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <div class="brand"><h1>ResinForge</h1><span class="ver">语义支撑系统 v0.1 · 算法验证版</span></div>
+    <div class="sub">浏览器端光固化支撑管线：像素级切片 → 多目标朝向优化 → 孤岛检测 → 支撑生成 → STL 导出。推荐从「环面结」开始体验。</div>
+
+    <div class="card">
+      <h3>机器配置</h3>
+      <div class="row">
+        <label class="f" style="margin:0;flex:1"><span>板面 X</span><input type="number" id="plateX" value="150" min="50" max="400" step="1">mm</label>
+        <label class="f" style="margin:0;flex:1"><span>板面 Z</span><input type="number" id="plateZ" value="85" min="50" max="400" step="1">mm</label>
+        <label class="f" style="margin:0;flex:1"><span>像素</span><input type="number" id="pixelUm" value="24" min="10" max="100" step="1">µm</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="step">1</span>模型</h3>
+      <div class="row">
+        <button id="btnLoad">载入 STL</button>
+        <input type="file" id="fileInput" accept=".stl" style="display:none">
+      </div>
+      <div class="row">
+        <button data-demo="knot">环面结</button>
+        <button data-demo="mushroom">蘑菇</button>
+        <button data-demo="tier">双层平台</button>
+        <button data-demo="statue">悬臂雕像</button>
+      </div>
+      <div id="modelInfo" class="hint">未载入模型</div>
+    </div>
+
+    <div class="card">
+      <h3><span class="step">2</span>自动朝向优化</h3>
+      <div class="row" style="align-items:center">
+        <label class="f" style="margin:0;flex:1"><span>采样精度</span>
+          <select id="orientQuality">
+            <option value="32">快速 32 向</option>
+            <option value="64" selected>标准 64 向</option>
+            <option value="128">精细 128 向</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="f" style="margin:0;flex:1"><span>自支撑角</span><input type="number" id="selfAngle" value="45" min="20" max="70" step="1">°</label>
+        <label class="f" style="margin:0;flex:1"><span>保护面权重</span><input type="number" id="protW" value="8" min="1" max="50" step="1">x</label>
+      </div>
+      <div class="row"><button id="btnOrient" class="primary" style="flex:1">开始朝向优化</button></div>
+      <div id="progressWrap"><div id="progressBar"><div id="progressFill"></div></div><div id="progressText"></div></div>
+      <div id="orientResults"></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="step">3</span>保护面（语义权重）</h3>
+      <div class="hint" style="margin-bottom:8px">用「涂保护面」笔刷在模型上标记不可有支撑的表面（脸、细节面）。保护面会同时影响朝向打分与支撑布点。红色 = 已保护。</div>
+      <div class="row">
+        <label class="f" style="margin:0;flex:1"><span>笔刷半径</span><input type="number" id="brushR" value="3" min="0.5" max="20" step="0.5">mm</label>
+      </div>
+      <div class="row"><button id="btnClearProt">清除全部保护面</button></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="step">4</span>切片与孤岛分析</h3>
+      <div class="row">
+        <label class="f" style="margin:0"><span>层厚</span><input type="number" id="layerH" value="0.1" min="0.025" max="0.3" step="0.005">mm</label>
+        <label class="f" style="margin:0"><span>悬空阈值</span><input type="number" id="gapThresh" value="0.35" min="0.1" max="2" step="0.05">mm</label>
+        <label class="f" style="margin:0"><span>抬高</span><input type="number" id="raiseH" value="4" min="0" max="15" step="0.5">mm</label>
+      </div>
+      <div class="row">
+        <label class="f" style="margin:0"><span>孤岛最小面积</span><input type="number" id="minIslArea" value="0.5" min="0.05" max="20" step="0.05">mm²</label>
+        <label class="f" style="margin:0"><span>最小附着面积</span><input type="number" id="minAttach" value="1" min="0.05" max="20" step="0.05">mm²</label>
+      </div>
+      <div class="hint" style="margin-bottom:8px">模型按「抬高」悬于筏层上方，最底层作为孤岛参与检测；与下层接触面积不足「最小附着面积」的连通域同样视为孤岛。</div>
+      <div class="row"><button id="btnSlice" class="primary" style="flex:1">运行逐层分析</button></div>
+      <div id="sliceStats" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="step">5</span>支撑生成</h3>
+      <div class="row">
+        <label class="f" style="margin:0"><span>尖端直径</span><input type="number" id="tipD" value="0.3" min="0.1" max="1" step="0.05">mm</label>
+        <label class="f" style="margin:0"><span>中段直径</span><input type="number" id="midD" value="0.8" min="0.2" max="3" step="0.1">mm</label>
+      </div>
+      <div class="row">
+        <label class="f" style="margin:0"><span>底盘直径</span><input type="number" id="baseD" value="3" min="1" max="6" step="0.5">mm</label>
+        <label class="f" style="margin:0"><span>支撑间距</span><input type="number" id="spacing" value="3" min="1" max="10" step="0.5">mm</label>
+      </div>
+      <div class="row" style="align-items:center">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;color:#8b949e;cursor:pointer">
+          <input type="checkbox" id="shortSup" checked style="accent-color:#38d996">短小支撑（锚定模型表面）
+        </label>
+      </div>
+      <div class="hint" style="margin-top:2px">支撑为三段式结构（销头→柱身→基座/锚头），尖端扎入表面微量深度。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到筏层（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
+      <div class="row">
+        <button id="btnGenSup" class="primary" style="flex:1">自动生成支撑</button>
+        <button id="btnClearSup">清空</button>
+      </div>
+      <div id="supStats"></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="step">6</span>导出</h3>
+      <div class="row" style="align-items:center">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;color:#8b949e;cursor:pointer">
+          <input type="checkbox" id="raftOn" style="accent-color:#38d996">筏层（厚 1.2mm，默认关闭；勾选后显示并随导出携带）
+        </label>
+        <label class="f" style="margin:0;flex:1"><span>边距</span><input type="number" id="raftMargin" value="3" min="1" max="10" step="0.5">mm</label>
+      </div>
+      <div class="row">
+        <button id="btnExportAll" class="primary" style="flex:1">导出 模型+支撑 STL</button>
+        <button id="btnExportSup">仅支撑 STL</button>
+      </div>
+      <div class="hint" style="margin-top:6px">导出后导入 CHITUBOX / Lychee 排版切片即可打印（已按 STL 惯例回转换为 Z-up）。绿色=落板支撑（落在筏层顶面），琥珀色=锚定模型表面的短小支撑。</div>
+    </div>
+  </aside>
+
+  <main id="viewport">
+    <canvas id="gl"></canvas>
+    <div id="dropHint">松开以载入 STL 文件</div>
+    <div id="modeBar">
+      <button id="mOrbit" class="mode on" title="旋转视角">🖱 旋转</button>
+      <button id="mPaint" class="mode" title="在模型表面涂保护面">🖌 保护面</button>
+      <button id="mAdd" class="mode" title="点击模型表面手动加支撑">➕ 加支撑</button>
+      <button id="mDel" class="mode" title="点击支撑删除">✂ 删支撑</button>
+    </div>
+    <div id="toast"></div>
+    <div id="inspector">
+      <h4>层检查器 · 红=孤岛（脚下无料）· 蓝=本层 · 暗青=下层残影</h4>
+      <canvas id="layerCanvas" width="256" height="256"></canvas>
+      <input type="range" id="layerSlider" min="1" max="100" value="1">
+      <div id="layerLabel"></div>
+    </div>
+    <div id="log"></div>
+  </main>
+</div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

@@ -14,7 +14,7 @@
 ================================================================ */
 import { state, params, bus, log } from '../store.js';
 import { ldiGapAt } from './slicer.js';
-import { RAFT_T } from './model.js';
+import { baseY } from './model.js';
 
 let heatOn = false;
 export const isHeatOn = () => heatOn;
@@ -56,7 +56,7 @@ export function computeVertHeat() {
   const cosv = Math.cos(params.selfAngle * Math.PI / 180);
   const ld = state.analysis && state.analysis.ld ? state.analysis.ld : null;
   const raise = state.analysis ? state.analysis.raiseH : params.raiseH;
-  const floorY = params.raftOn ? RAFT_T : 0;
+  const floorY = baseY();   // 与支撑落点口径一致（网格板顶 / 筏层顶 / 平台）
 
   // 1) 唯一顶点合并（量化 1e-4mm）+ 平滑顶点法线（邻接面法线按面积加权）
   const vid = new Int32Array(n);

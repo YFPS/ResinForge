@@ -3,15 +3,17 @@
    写出前统一 Y-up → Z-up 逆变换 (x,y,z) → (x,-z,y)，与载入的 rotateX(-90°) 互逆。
 ================================================================ */
 import * as THREE from 'three';
-import { state, log, toast } from '../store.js';
-import { raftOn, raftMargin, RAFT_T } from './model.js';
+import { state, params, log, toast } from '../store.js';
+import { raftOn, raftMargin, RAFT_T, buildGridRaftGeom } from './model.js';
 
 export function exportSTL(includeModel, includeSupports, filename) {
   const arrays = [];
   if (includeModel && state.mesh) arrays.push({ arr: state.mesh.geometry.attributes.position.array, dx: 0, dy: state.mesh.position.y, dz: 0 });
   if (includeSupports) {
-    // 筏层：模型 XZ 外接圆 + 边距，与场景显示一致
-    if (raftOn() && state.mesh) {
+    // 底板：网格底板（多孔梁格）或实心筏层，与场景显示一致
+    if (state.mesh && params.gridRaftOn) {
+      arrays.push({ arr: buildGridRaftGeom().attributes.position.array, dx: 0, dy: 0, dz: 0 });
+    } else if (state.mesh && raftOn()) {
       const bb = state.mesh.geometry.boundingBox;
       const rr = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
       const rg = new THREE.CylinderGeometry(rr, rr, RAFT_T, 48).toNonIndexed();

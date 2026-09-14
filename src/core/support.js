@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { raiseH, raftOn, RAFT_T, mergeGeoms } from './model.js';
+import { raiseH, raftOn, RAFT_T, mergeGeoms, baseY } from './model.js';
 import { drawLayer } from './inspect.js';
 
 export function clearSupports(refresh = true) {
@@ -41,7 +41,7 @@ export function buildScaffold() {
   state.supports = rest;
   if (!params.scaffoldOn) return 0;
 
-  const yBase = raftOn() ? RAFT_T : 0;
+  const yBase = baseY();
   const headLoss = params.tipD / 2 + (params.headLen || 0.7);   // 主干上端 ≈ 尖端 − (r_pin + 锥头长)
   const posts = [];
   for (const s of state.supports) {
@@ -219,7 +219,7 @@ export function makeMicroPostMesh(x, yTip, z, yBase) {
 
 export function addSupport(x, y, z, anchorY = null, nrmTop = null, nrmBot = null, micro = false) {
   const anchored = anchorY !== null;
-  const yBase = anchored ? anchorY : (raftOn() ? RAFT_T : 0);   // 落板支撑落在筏层顶面
+  const yBase = anchored ? anchorY : baseY();   // 落板支撑落在筏层顶面
   const mesh = micro ? makeMicroPostMesh(x, y, z, yBase) : makeSupportMesh(x, y, z, yBase, anchored, nrmTop, nrmBot);
   if (!mesh) return null;   // 跨度退化被拒（见 makeSupportMesh 退化兜底）
   supportGroup.add(mesh);
@@ -470,7 +470,7 @@ export async function runGenSup(opts = {}) {
       } else {
         micro = true;   // span ∈ [0.8, minSupLen)：直柱微支撑，对锚面平整度要求低，不做承载面检查
       }
-    } else if (tipY - (raftOn() ? RAFT_T : 0) < minSupLen) return 'stub';
+    } else if (tipY - baseY() < minSupLen) return 'stub';
     // 最近面保护检测（仅存在保护面时；重心已预计算，单次 O(面数)）
     if (protCent) {
       let nearest = -1, nd2 = 1e9;

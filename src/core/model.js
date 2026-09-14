@@ -69,22 +69,44 @@ export function setGeometry(geom, name) {
   updateRaft();
 }
 
-/* 筏层显示：模型 XZ 外接圆半径 + 边距，厚 RAFT_T，顶面即落板支撑的着落面 */
+/* 筏层/网格底板显示：模型 XZ 外接圆半径 + 边距。实心筏层厚 RAFT_T；网格底板为 X/Z 交叉梁格（e-Stage 风格多孔板）。
+   支撑落点高度统一走 baseY()（网格板顶 / 筏层顶 / 平台 0）。 */
+export const baseY = () => (params.gridRaftOn ? (params.gridT || 0.8) : (raftOn() ? RAFT_T : 0));
+
+/* 网格底板几何：外接圆内 X/Z 双向梁格，梁在圆边界处截弦（多孔排水，e-Stage 风格） */
+export function buildGridRaftGeom() {
+  const bb = state.mesh.geometry.boundingBox;
+  const R = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
+  const t = params.gridT || 0.8, bar = Math.max(0.2, params.gridBar || 0.8), step = Math.max(bar + 0.4, params.gridStep || 3);
+  const parts = [];
+  for (let z = -R + step / 2; z <= R - step / 4; z += step) {
+    const hx = Math.sqrt(Math.max(0.25, R * R - z * z));
+    parts.push({ g: new THREE.BoxGeometry(hx * 2, t, bar), x: 0, y: t / 2, z });
+  }
+  for (let x = -R + step / 2; x <= R - step / 4; x += step) {
+    const hz = Math.sqrt(Math.max(0.25, R * R - x * x));
+    parts.push({ g: new THREE.BoxGeometry(bar, t, hz * 2), x, y: t / 2, z: 0 });
+  }
+  return mergeGeoms(parts);
+}
+
 export function updateRaft() {
   if (raftMesh) { scene.remove(raftMesh); raftMesh.geometry.dispose(); raftMesh = null; }
-  if (!state.mesh || !raftOn()) return;
-  const bb = state.mesh.geometry.boundingBox;
-  const r = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
-  raftMesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(r, r, RAFT_T, 64),
-    new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05, transparent: true, opacity: 0.85 })
-  );
-  raftMesh.position.y = RAFT_T / 2;
+  if (!state.mesh || (!raftOn() && !params.gridRaftOn)) return;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05, transparent: true, opacity: 0.85 });
+  if (params.gridRaftOn) {
+    raftMesh = new THREE.Mesh(buildGridRaftGeom(), mat);
+  } else {
+    const bb = state.mesh.geometry.boundingBox;
+    const r = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
+    raftMesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, RAFT_T, 64), mat);
+    raftMesh.position.y = RAFT_T / 2;
+  }
   scene.add(raftMesh);
 }
 
 /* 参数变更副作用（复刻旧 main.js 的 change 监听；React 组件 onChange 调用） */
-export function handleRaftOnChange() { updateRaft(); toast('筏层设置已变更，请重新生成支撑'); }
+export function handleRaftOnChange() { updateRaft(); toast('底板设置已变更，请重新生成支撑'); }
 export function handleRaftMarginChange() { updateRaft(); }
 export function handleRaiseHChange() {
   const h = raiseH();

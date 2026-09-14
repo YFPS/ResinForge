@@ -50,7 +50,7 @@ export default function SupportCard() {
           <label className="f"><span>XY 间距</span><InputNumber value={params.crossMaxXY} min={3} max={20} step={0.5} onChange={v => setParam('crossMaxXY', v)} />mm</label>
         </div>
       )}
-      <div className="hint" style={{ marginTop: 2 }}>支撑为分段结构（顶端→柱身→基座/底端），顶端球头扎入表面微量深度（嵌入深度可调）。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到筏层（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
+      <div className="hint" style={{ marginTop: 2 }}>支撑为分段结构（顶端→柱身→基座/底端），顶端球头扎入表面微量深度（嵌入深度可调）。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到底板（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
       <div className="row">
         <Button type="primary" style={{ flex: 1 }} loading={loading} onClick={() => start(false)}>自动支撑</Button>
         <Tooltip content="仅为检测到的孤岛位置补打支撑（不清空现有支撑）">

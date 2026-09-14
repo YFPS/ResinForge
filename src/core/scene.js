@@ -7,7 +7,6 @@
 ================================================================ */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
 import { loadDemo, loadSTLBuffer } from './model.js';
 import { addSupport, updateSupStats } from './support.js';
@@ -18,32 +17,23 @@ scene.background = new THREE.Color(0x0d1117);
 scene.fog = new THREE.Fog(0x0d1117, 300, 900);
 export const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
 camera.position.set(95, 75, 95);
-
-/* 光照 = 方向光塑形 + 环境光（IBL）兜底：RoomEnvironment 经 PMREM 预滤波后作 scene.environment，
-   等效简单全局光照——背光面/底面不再死黑（热力图在阴影区也可读）。envMapIntensity 按材质微调。 */
-scene.add(new THREE.HemisphereLight(0xcdd9e5, 0x0d1117, 0.4));
-const dl = new THREE.DirectionalLight(0xffffff, 1.1);
-dl.position.set(60, 120, 40); scene.add(dl);
-const dl2 = new THREE.DirectionalLight(0x8899aa, 0.35);
-dl2.position.set(-80, 40, -60); scene.add(dl2);
 scene.add(new THREE.AxesHelper(12));
 
 export const modelGroup = new THREE.Group(); scene.add(modelGroup);
 export const supportGroup = new THREE.Group(); scene.add(supportGroup);
 
-export const modelMat = new THREE.MeshStandardMaterial({
-  color: 0xb9c2cf, roughness: 0.55, metalness: 0.15, vertexColors: true, envMapIntensity: 0.45
-});
-export const supMat = new THREE.MeshStandardMaterial({ color: 0x38d996, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
-export const supMatAnchor = new THREE.MeshStandardMaterial({ color: 0xffb020, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
+/* 无光照平铺渲染（unlit）：加支撑软件需实时查看任意角度，颜色不能被光照/阴影调制——
+   模型顶点色（普通灰 / 热力图 / 保护面）与支撑配色在任何视角下保持原色可读。
+   不添加任何灯光与 scene.environment（MeshBasicMaterial 忽略光照，加了对模型无效只影响其他材质）。 */
+export const modelMat = new THREE.MeshBasicMaterial({ color: 0xb9c2cf, vertexColors: true });
+export const supMat = new THREE.MeshBasicMaterial({ color: 0x38d996 });
+export const supMatAnchor = new THREE.MeshBasicMaterial({ color: 0xffb020 });
 
 /* 预览渲染器（朝向候选缩略图；preserveDrawingBuffer 供 toDataURL 出图，React 渲染 <img>） */
 export const prevRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 prevRenderer.setSize(112, 112);
 export const prevScene = new THREE.Scene();
 prevScene.background = new THREE.Color(0x0d1117);
-prevScene.add(new THREE.HemisphereLight(0xcdd9e5, 0x0d1117, 1.3));
-const pdl = new THREE.DirectionalLight(0xffffff, 1.6); pdl.position.set(60, 120, 40); prevScene.add(pdl);
 export const prevCam = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
 export const prev = { mesh: null };   // 预览模型 Mesh（model.js setGeometry 重建，orient.js 渲染缩略图）
 
@@ -142,12 +132,6 @@ export function initScene(canvasEl) {
   canvas = canvasEl;
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  /* 环境光照（IBL ≈ 简易全局光照）：主场景与缩略图场景各自 PMREM（纹理绑定 GL 上下文，不能跨 renderer 共享） */
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  const pmremPrev = new THREE.PMREMGenerator(prevRenderer);
-  prevScene.environment = pmremPrev.fromScene(new RoomEnvironment(), 0.04).texture;
-  pmrem.dispose(); pmremPrev.dispose();
   controls = new OrbitControls(camera, canvas);
   controls.target.set(0, 22, 0);
   controls.enableDamping = true; controls.dampingFactor = 0.12;

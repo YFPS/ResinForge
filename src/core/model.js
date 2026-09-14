@@ -47,7 +47,7 @@ export function setGeometry(geom, name) {
   state.faces = computeFaceDataFull(geom.attributes.position.array);
 
   if (prev.mesh) { prevScene.remove(prev.mesh); }
-  prev.mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: 0xb9c2cf }));   // 缩略图同样无光照平铺
+  prev.mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color: 0xb9c2cf, roughness: 0.55, metalness: 0.15 }));
   prevScene.add(prev.mesh);
 
   const bb2 = geom.boundingBox;
@@ -77,7 +77,7 @@ export function updateRaft() {
   const r = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
   raftMesh = new THREE.Mesh(
     new THREE.CylinderGeometry(r, r, RAFT_T, 64),
-    new THREE.MeshBasicMaterial({ color: 0x2a3444, transparent: true, opacity: 0.85 })
+    new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05, transparent: true, opacity: 0.85 })
   );
   raftMesh.position.y = RAFT_T / 2;
   scene.add(raftMesh);

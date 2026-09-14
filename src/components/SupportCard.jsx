@@ -3,7 +3,7 @@ import { Button, Checkbox, InputNumber } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { bus } from '../store.js';
-import { runGenSup, clearSupports } from '../core/support.js';
+import { runGenSup, clearSupports, buildScaffold, updateSupStats } from '../core/support.js';
 
 /* 支撑生成：顶端/锥头/底盘/间距等几何参数 + 短小支撑开关 + 生成/清空 + supStats（订阅 bus 'supStats'） */
 export default function SupportCard() {
@@ -37,6 +37,17 @@ export default function SupportCard() {
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（锚定模型表面）</Checkbox>
       </div>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <Checkbox checked={params.scaffoldOn} onChange={v => { setParam('scaffoldOn', v); buildScaffold(); updateSupStats(); }}>脚手架（立柱间交叉横梁）</Checkbox>
+      </div>
+      {params.scaffoldOn && (
+        <div className="row">
+          <label className="f"><span>横梁直径</span><InputNumber value={params.crossD} min={0.2} max={2} step={0.1} onChange={v => setParam('crossD', v)} />mm</label>
+          <label className="f"><span>起始高度</span><InputNumber value={params.crossStartH} min={0} max={20} step={0.5} onChange={v => setParam('crossStartH', v)} />mm</label>
+          <label className="f"><span>Z 间距</span><InputNumber value={params.crossZStep} min={2} max={20} step={0.5} onChange={v => setParam('crossZStep', v)} />mm</label>
+          <label className="f"><span>XY 间距</span><InputNumber value={params.crossMaxXY} min={3} max={20} step={0.5} onChange={v => setParam('crossMaxXY', v)} />mm</label>
+        </div>
+      )}
       <div className="hint" style={{ marginTop: 2 }}>支撑为分段结构（顶端→柱身→基座/底端），顶端球头扎入表面微量深度（嵌入深度可调）。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到筏层（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
       <div className="row">
         <Button type="primary" style={{ flex: 1 }} loading={loading} onClick={start}>自动生成支撑</Button>

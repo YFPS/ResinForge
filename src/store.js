@@ -34,6 +34,12 @@ export const params = {
   spacing: 3,         // 支撑间距
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑（锚定模型表面）
+  /* 脚手架（交叉横梁，CHITUBOX 交叉结构体系） */
+  scaffoldOn: true,   // 启用交叉横梁（相邻落板立柱间 X 形交叉）
+  crossD: 0.5,        // 交叉结构直径（mm）
+  crossStartH: 3,     // 交叉生成起始高度（mm，相对平台）
+  crossZStep: 5,      // 交叉结构 Z 向最小间距（mm）
+  crossMaxXY: 8,      // 交叉结构 XY 最大间距（mm）
   /* 筏层 */
   raftOn: false,      // 筏层开关（厚 1.2mm，默认关闭）
   raftMargin: 3,      // 筏层边距（mm）

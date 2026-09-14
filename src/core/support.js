@@ -16,10 +16,85 @@ export function clearSupports(refresh = true) {
   if (refresh) { updateSupStats(); if (state.analysis) drawLayer(); }
 }
 export function updateSupStats() {
-  const n = state.supports.length;
-  const anchored = state.supports.filter(s => s.anchored).length;
+  const posts = state.supports.filter(s => !s.scaffold);
+  const n = posts.length;
+  const anchored = posts.filter(s => s.anchored).length;
   const prot = state.protectedFaces.size;
   bus.emit('supStats', { n, anchored, prot });
+}
+
+/* ================================================================
+   脚手架（交叉横梁，CHITUBOX「交叉结构」体系）
+   相邻落板立柱之间按 Z 层间隔生成 X 形交叉斜梁，把孤立立柱连成格架（抗摆动刚性大幅提升）。
+   参数：crossD 直径 / crossStartH 起始高度（相对平台）/ crossZStep Z 向最小间距 / crossMaxXY XY 最大间距。
+   横梁两端没入立柱主干（柱半径 ≥ 梁半径时自然搭接，不做布尔）；锚定短小支撑不参与（两端已在模型上）。
+================================================================ */
+export function buildScaffold() {
+  // 先清旧横梁（幂等：重复调用安全）
+  const rest = [];
+  for (const s of state.supports) {
+    if (s.scaffold) { supportGroup.remove(s.mesh); s.mesh.geometry.dispose(); }
+    else rest.push(s);
+  }
+  state.supports = rest;
+  if (!params.scaffoldOn) return 0;
+
+  const yBase = raftOn() ? RAFT_T : 0;
+  const headLoss = params.tipD / 2 + (params.headLen || 0.7);   // 主干上端 ≈ 尖端 − (r_pin + 锥头长)
+  const posts = [];
+  for (const s of state.supports) {
+    if (s.anchored) continue;
+    const ax = s.x + (s.mesh.userData.jx || 0), az = s.z + (s.mesh.userData.jz || 0);   // 主干轴线 XZ（倾斜后偏离接触点）
+    posts.push({ ax, az, yLo: yBase + 0.6, yHi: s.y - headLoss });   // 主干可用高度区间（锥底顶 → 中部球头）
+  }
+  if (posts.length < 2) return 0;
+
+  // 邻接边：每根立柱连接 crossMaxXY 内最近的 2 根（O(n²)，900 上限内可接受）
+  const maxXY = Math.max(2, params.crossMaxXY || 8);
+  const edges = new Map();   // "i_j" -> [i,j]
+  for (let i = 0; i < posts.length; i++) {
+    const near = [];
+    for (let j = 0; j < posts.length; j++) {
+      if (i === j) continue;
+      const d = Math.hypot(posts[i].ax - posts[j].ax, posts[i].az - posts[j].az);
+      if (d <= maxXY && d > 1e-3) near.push([d, j]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    for (const [, j] of near.slice(0, 2)) edges.set(Math.min(i, j) + '_' + Math.max(i, j), [i, j]);
+  }
+
+  const r = Math.max(0.1, (params.crossD || 0.5) / 2);
+  const startH = Math.max(0, params.crossStartH || 0);
+  const zStep = Math.max(1, params.crossZStep || 5);
+  const parts = [];
+  let beamN = 0;
+  const SEG = 8;
+  for (const [i, j] of edges.values()) {
+    const A = posts[i], B = posts[j];
+    const yS = Math.max(startH, A.yLo, B.yLo);         // 交叉起始：起始高度且两柱均有主干
+    const yE = Math.min(A.yHi, B.yHi);                 // 交叉终止：任一柱主干尽端
+    if (yE - yS < 0.8) continue;
+    const dist = Math.hypot(A.ax - B.ax, A.az - B.az);
+    const hh = Math.min(zStep / 2, (yE - yS) / 2, dist / 2);   // X 半高：≤45° 斜率且不超出区间
+    for (let y = yS + hh; y <= yE - hh + 1e-6; y += zStep) {
+      for (const [yA, yB] of [[y - hh, y + hh], [y + hh, y - hh]]) {   // X 一对：A低→B高 / A高→B低
+        const dx = B.ax - A.ax, dy = yB - yA, dz = B.az - A.az;
+        const len = Math.hypot(dx, dy, dz);
+        if (len < 0.3) continue;
+        const g = new THREE.CylinderGeometry(r, r, len, SEG);
+        g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(
+          new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len))));
+        parts.push({ g, x: A.ax + dx / 2, y: yA + dy / 2, z: A.az + dz / 2 });
+        beamN++;
+      }
+    }
+  }
+  if (!parts.length) return 0;
+  const mesh = new THREE.Mesh(mergeGeoms(parts), supMat);
+  mesh.userData.scaffold = true;
+  supportGroup.add(mesh);
+  state.supports.push({ mesh, x: 0, z: 0, y: 0, anchored: false, scaffold: true });
+  return beamN;
 }
 
 /* PrusaSlicer 风格分段支撑，落板支撑从上到下六部位：
@@ -555,7 +630,9 @@ export async function runGenSup() {
     }
   }
   setProgress(null);
+  const crossN = buildScaffold();   // 脚手架：相邻落板立柱间 X 形交叉横梁（幂等重建）
   log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，微型短柱 ${microN}，过短跳过 ${stubN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
+  if (params.scaffoldOn) log(`脚手架横梁：${crossN} 根交叉梁（起始高 ${params.crossStartH}mm · Z 间距 ${params.crossZStep}mm · XY ≤ ${params.crossMaxXY}mm）`, crossN ? 'ok' : 'warn');
   updateSupStats();
   if (state.analysis) drawLayer();
 }

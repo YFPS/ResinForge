@@ -96,7 +96,7 @@ npm run build     # 产物到 dist/
   - `window.__dbg` — 包含 `loadDemo`、`rasterizeSection`、`analyze`、`buildLDI`、`sampleLDILayer`、`compareLDI`、`ldiColumnCrossings`
 - **异步 UI 更新**：长时间循环中使用 `await nextFrame()`（即 `requestAnimationFrame`）避免阻塞渲染。
 - **坐标系**：世界系即打印系——平台顶面 y=0，模型底面抬高 `raiseH`（默认 4mm），筏层厚 1.2mm。STL 载入时执行 `rotateX(-Math.PI/2)`（Z-up → Y-up），导出时逆变换回 Z-up。打印方向为 **+Y**。
-- **机器配置**：板面 X/Z 与 XY 像素（µm）在左栏顶部输入，驱动平台网格尺寸、模型越界警告与分析格/机器像素比提示。
+- **机器配置**：板面 X/Z 与 XY 像素（µm）在左栏顶部输入，驱动模型越界警告与分析格/机器像素比提示（3D 视图不显示坐标轴与网格底板）。
 - **注释风格**：中文注释为主；core 模块保留原 `/* ---------- 区块名 ---------- */` 分隔。
 - **交互约定**：OrbitControls 常开；左键仅在「旋转」模式旋转，其余模式留给涂画/加/删支撑；**右键在任意模式下均以模型中心旋转视角**（`controls.target` = 模型包围盒中心），canvas 屏蔽右键系统菜单。
 - **光照约定**：方向光塑形 + `RoomEnvironment` 经 PMREM 作 `scene.environment`（IBL ≈ 简易全局光照），背光面/底面不死黑；材质用 `envMapIntensity`（0.4~0.45）控制环境光占比，主场景与缩略图场景各自 PMREM（纹理不跨 renderer 共享）。

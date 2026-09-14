@@ -31,7 +31,7 @@ const dl2 = new THREE.DirectionalLight(0x8899aa, 0.35);
 dl2.position.set(-80, 40, -60); scene.add(dl2);
 const dl3 = new THREE.DirectionalLight(0xaabbcc, 0.5);   // 底部填充：正下视角不死黑
 dl3.position.set(-20, -100, 30); scene.add(dl3);
-scene.add(new THREE.AxesHelper(12));
+/* 不显示坐标轴与网格底板（视图更干净，专注模型与支撑检查） */
 
 export const modelGroup = new THREE.Group(); scene.add(modelGroup);
 export const supportGroup = new THREE.Group(); scene.add(supportGroup);
@@ -59,16 +59,6 @@ let controls = null;
 export const getRenderer = () => renderer;
 export const getControls = () => controls;
 export const getCanvas = () => canvas;
-
-/* 打印平台：不显示实体板（演示画面更干净），仅以网格标示成型平面；网格尺寸跟随机器配置 */
-let gridMesh = null;
-export function buildPlate() {
-  const L = params.plateX || 150, W = params.plateZ || 85;
-  if (gridMesh) { scene.remove(gridMesh); gridMesh.geometry.dispose(); gridMesh.material.dispose(); }
-  const gs = Math.max(L, W);
-  gridMesh = new THREE.GridHelper(gs, Math.max(10, Math.round(gs / 5)), 0x2a3648, 0x1c2532);
-  scene.add(gridMesh);
-}
 
 function resize() {
   const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
@@ -212,7 +202,6 @@ export function initScene(canvasEl) {
   })();
 
   /* 启动 */
-  buildPlate();
   resize();
   loadDemo('knot');
   log('ResinForge v0.1 就绪：像素级切片 + 多目标朝向优化 + 孤岛检测 + 语义保护面权重', 'ok');

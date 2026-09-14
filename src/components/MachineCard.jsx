@@ -2,12 +2,11 @@ import React from 'react';
 import { InputNumber } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
-import { buildPlate } from '../core/scene.js';
 
-/* 机器配置：板面 X / Z / 像素µm —— 变更即重建平台网格（旧 plateX/plateZ change 监听） */
+/* 机器配置：板面 X / Z / 像素µm —— 驱动模型越界警告与分析格/机器像素比提示（网格底板已移除） */
 export default function MachineCard() {
   const [params, setParam] = useParams();
-  const set = (k) => (v) => { setParam(k, v); if (k === 'plateX' || k === 'plateZ') buildPlate(); };
+  const set = (k) => (v) => setParam(k, v);
   return (
     <Card title="机器配置">
       <div className="row">

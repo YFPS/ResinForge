@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自动支撑工具。项目无需构建步骤，直接在浏览器中打开即可运行。
+ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自动支撑工具。前端基于 **Vite + React + Arco Design**，全部计算在本地浏览器完成。
 
 核心能力：
 
@@ -14,21 +14,19 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 - 自动生成落板支撑 / 锚定模型表面的短小支撑
 - 导出合并 STL 或仅支撑 STL
 
-版本：v0.1（算法验证版）
+版本：v0.2（Arco React 重构版）
 语言：界面与代码注释以中文为主。
 
 ---
 
 ## 技术栈
 
-- **运行时**：现代浏览器（WebGL 2 / WebGL 1）
-- **3D 渲染**：three.js v0.160.0（通过 CDN ES Module 引入）
-- **模块加载**：原生 `<script type="module">` + `<script type="importmap">`
+- **构建/开发**：Vite 5（`@vitejs/plugin-react`），无 TypeScript
+- **UI 框架**：React 18 + `@arco-design/web-react` 2.66（暗色主题：`body[arco-theme=dark]`）
+- **3D 渲染**：three.js v0.160.0（npm 依赖，非 CDN）
 - **几何处理**：three.js 内置几何体 + 自定义 BufferGeometry 合并
 - **STL I/O**：three.js `STLLoader` 解析；自定义二进制 STL 写入
-- **语言**：原生 JavaScript（ES2020+），无 TypeScript
-- **样式**：`style.css`，无 CSS 预处理器
-- **依赖管理**：无 `package.json`，无构建工具
+- **运行时要求**：node 18+（开发/构建）；现代浏览器（WebGL 2 / WebGL 1）
 
 ---
 
@@ -36,71 +34,69 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 
 ```text
 resin-support-web/
-├── index.html      # 页面结构与 importmap
-├── style.css       # 全部样式
-├── main.js         # 全部 JavaScript（原 index.html 内联脚本）
-└── AGENTS.md       # 本文件
+├── index.html          # Vite 入口（<div id="root">）
+├── package.json        # 依赖与脚本（dev/build/preview）
+├── vite.config.js      # preserveSymlinks + 轮询 watch（网络盘兼容）
+├── dev.bat / build.bat # UNC 网络盘启动器（pushd 映射盘符后 npm run）
+├── src/
+│   ├── main.jsx        # React 根 + Arco 样式 + 全局调试口（window.state/THREE/__dbg）
+│   ├── App.jsx         # Layout：左侧参数栏 + 右侧 3D 视口
+│   ├── styles.css      # 少量自定义样式（深色配色）
+│   ├── store.js        # params（全部工艺参数默认值）+ state + bus（迷你 pub/sub）
+│   ├── core/           # 框架无关算法层（不得 import React 组件）
+│   │   ├── scene.js    # 渲染器/相机/OrbitControls/灯光/平台网格/材质/指针交互/拖放
+│   │   ├── model.js    # setGeometry、内置 demo×4、STL 载入、筏层
+│   │   ├── slicer.js   # rasterizeSection、analyze、buildLDI、sampleLDILayer、steepFaces 等
+│   │   ├── orient.js   # 朝向候选采样、评分、缩略图（离屏渲染 → dataURL）
+│   │   ├── inspect.js  # 逐层分析、层检查器绘制
+│   │   ├── support.js  # 支撑生成全流程（布点/防粘连/顶端几何/微型短柱）
+│   │   └── stl.js      # 二进制 STL 导出
+│   └── components/     # Arco UI 卡片（每卡片对应左栏一个区块）
+│       ├── Viewport.jsx    # 3D 视口 + 模式栏 + 日志面板 + 层检查器 + 拖放提示
+│       ├── MachineCard.jsx / ModelCard.jsx / OrientCard.jsx / ProtectCard.jsx
+│       ├── SliceCard.jsx / SupportCard.jsx / ExportCard.jsx
+│       └── Card.jsx / useParams.js  # 卡片壳与参数绑定钩子
+└── AGENTS.md           # 本文件
 ```
 
-`main.js` 按功能划分为多个注释区块：
-
-| 区块 | 起始注释 | 主要内容 |
-|------|----------|----------|
-| 基础工具 | `基础工具` | DOM 辅助、日志、Toast、进度条 |
-| three.js 场景 | `three.js 场景` | 渲染器、相机、灯光、平台网格、材质 |
-| 状态 | `状态` | 全局 `state` 对象 |
-| 切片引擎 | `切片引擎` | `rasterizeSection`、`computeFaceDataFull`、`analyze` |
-| 模型载入 | `模型载入` | `setGeometry`、内置 demo、STL 载入与拖放 |
-| 保护面笔刷 | `保护面笔刷` | 面级别语义标记 |
-| 朝向优化 | `朝向优化` | 随机+正交候选采样、评分、缩略图 |
-| 详细切片分析 | `详细切片分析` | 层检查器、孤岛高亮 |
-| 支撑生成 | `支撑生成` | 聚类布点、向下射线、锚定判定 |
-| 导出二进制 STL | `导出二进制 STL` | 合并模型与支撑输出 |
-| 交互模式 | `交互模式` | 旋转/涂保护面/加支撑/删支撑切换；右键在任意模式下均以模型中心旋转视角 |
-| 启动 | `启动` | demo 初始化、全局调试接口 |
+**core ↔ React 边界**：core 只读 `params.*`、只经 `bus.emit` 发 UI 事件；React 组件订阅 bus 渲染（`log`/`toast`/`progress`/`modelInfo`/`sliceStats`/`supStats`/`orientResults`/`inspector`/`layerLabel`/`mode`/`dropHint`）。层检查器的 2D canvas 由 React 提供元素引用（`setLayerCanvas`），绘制保留在 core。
 
 ---
 
 ## 构建与运行
 
-### 本地运行
-
-由于使用 ES Module 与 CDN，直接通过 HTTP(S) 访问即可；用 `file://` 协议打开可能因 CORS 导致 importmap 加载失败，推荐使用任意静态服务器：
-
 ```bash
-# Python 3
-python -m http.server 8080
-
-# Node.js（如已安装 serve）
-npx serve .
+npm install       # 首次
+npm run dev       # 开发服务器 http://127.0.0.1:8123
+npm run build     # 产物到 dist/
 ```
 
-然后在浏览器访问 `http://localhost:8080`。
+### 网络盘（UNC 路径）注意事项
 
-### 无构建流程
+项目位于 `\\Nas518dbd\SHARE\resin-support-web` 之类的 UNC 路径时：
 
-- 没有 `package.json`、`vite.config.js`、`webpack.config.js` 或任何构建脚本。
-- 修改 `index.html`、`style.css` 或 `main.js` 后刷新浏览器即可生效。
-- three.js 通过 CDN 引入，版本号固定在 `0.160.0`。
+- cmd 不支持 UNC 作工作目录 → 用根目录的 `dev.bat` / `build.bat`（内部 `pushd %~dp0` 映射盘符）。
+- vite 有两个 UNC 相关 bug 需要绕：`vite.config.js` 中 `resolve.preserveSymlinks: true`（阻止 realpath 把映射盘符还原成 UNC 后被 posix 归一化压垮路径）与 `server.watch.usePolling`（网络盘文件监听不可靠）。
+- 若 vite 的 config 文件打包（esbuild externalize-deps）在 UNC cwd 下报 "Failed to resolve entry"，先经 bat/pushd 在映射盘符下运行即可。
 
 ### 部署
 
-将 `index.html` 部署到任意静态托管服务即可（GitHub Pages、Vercel、Netlify、Nginx 等）。不需要服务器端逻辑。
+`npm run build` 后将 `dist/` 部署到任意静态托管（GitHub Pages / Vercel / Nginx 等）。无服务器端逻辑。
 
 ---
 
 ## 代码组织约定
 
-- **单一模块**：所有 JS 都在 `main.js` 一个 `<script type="module">` 中，按上面表格的注释区块组织。
-- **全局调试入口**：
+- **参数单一事实来源**：`src/store.js` 的 `params`；core 一律 `params.xxx` 读取，React 用 `useParams()` 受控绑定（onChange 即写回并触发副作用，如 plateX/plateZ→buildPlate、raiseH→模型重新抬高）。
+- **全局调试入口**（`src/main.jsx` 挂载）：
   - `window.state` — 应用状态（当前模型、支撑、分析结果、模式等）
   - `window.THREE` — 调试/自动化访问 three.js
-  - `window.__dbg` — 包含 `loadDemo`、`rasterizeSection`、`analyze`
-- **DOM 约定**：使用 `$ = id => document.getElementById(id)` 简化取元素。
+  - `window.__dbg` — 包含 `loadDemo`、`rasterizeSection`、`analyze`、`buildLDI`、`sampleLDILayer`、`compareLDI`、`ldiColumnCrossings`
 - **异步 UI 更新**：长时间循环中使用 `await nextFrame()`（即 `requestAnimationFrame`）避免阻塞渲染。
 - **坐标系**：世界系即打印系——平台顶面 y=0，模型底面抬高 `raiseH`（默认 4mm），筏层厚 1.2mm。STL 载入时执行 `rotateX(-Math.PI/2)`（Z-up → Y-up），导出时逆变换回 Z-up。打印方向为 **+Y**。
 - **机器配置**：板面 X/Z 与 XY 像素（µm）在左栏顶部输入，驱动平台网格尺寸、模型越界警告与分析格/机器像素比提示。
-- **注释风格**：中文注释为主，使用 `/* ---------- 区块名 ---------- */` 分隔。
+- **注释风格**：中文注释为主；core 模块保留原 `/* ---------- 区块名 ---------- */` 分隔。
+- **交互约定**：OrbitControls 常开；左键仅在「旋转」模式旋转，其余模式留给涂画/加/删支撑；**右键在任意模式下均以模型中心旋转视角**（`controls.target` = 模型包围盒中心），canvas 屏蔽右键系统菜单。
 - **术语约定**：锚定模型表面的短支撑统一称「**短小支撑**」（UI 文案、日志、代码注释一致，琥珀色显示）；落到筏层/平台的称「落板支撑」（绿色显示）。支撑六部位命名见「支撑生成」节。**「顶端」** = 顶部球头 + 锥头（支撑上端接触模型的端头结构）；短小支撑下部的同构镜像（底部球头 + 锥头）称「**底端**」（原「反向销头」）。端头结构统称「顶端/底端」，不再使用「销头」。
 
 ---
@@ -124,7 +120,7 @@ npx serve .
 - 候选集 = 13 个正交规范化朝向 + N 个随机四元数（N=32/64/128）。
 - 对每个候选执行粗切片，并用 `steepFaces` 计算陡峭悬空面积（含保护面权重）。
 - 评分权重：支撑体积 32%、孤岛面积 18%、陡峭悬空面积 20%、最大截面 20%、高度 10%。
-- 取评分最高的 8 个候选渲染缩略图，可手动选择或一键应用最佳朝向。
+- 取评分最高的 8 个候选，离屏渲染缩略图（`toDataURL`），经 bus 发给 React 渲染，可手动选择或一键应用最佳朝向。
 
 ### 保护面
 
@@ -179,9 +175,9 @@ npx serve .
 ## 测试策略
 
 - **无自动化测试框架**：项目没有单元测试、集成测试或 CI 配置。
-- **无头验证工具**：`.bench.mjs`（CDP 驱动无头 Chrome，真实时间性能基准）；`__dbg.compareLDI`（LDI 与位图路径逐层位图对照）。注意 `--virtual-time-budget` 下 `performance.now()` 不前进且 rAF 会停，时序测量必须用 CDP 方式。
+- **无头验证工具**：`.bench.mjs`（CDP 驱动无头 Chrome，真实时间性能基准；用法：先 `npm run dev`，再 `node .bench.mjs http://127.0.0.1:8123/`）；`__dbg.compareLDI`（LDI 与位图路径逐层位图对照）。注意 `--virtual-time-budget` 下 `performance.now()` 不前进且 rAF 会停，时序测量必须用 CDP 方式。
 - **手动测试路径**：
-  1. 打开页面，默认加载「环面结」演示模型。
+  1. `npm run dev` 打开页面，默认加载「环面结」演示模型。
   2. 载入自定义 `.stl` 或切换 demo。
   3. 运行「自动朝向优化」，查看候选缩略图与评分。
   4. 进入「保护面」模式涂画若干区域。
@@ -195,24 +191,24 @@ npx serve .
 ## 安全与隐私
 
 - **完全客户端运行**：用户 STL 文件由浏览器 `FileReader` / `arrayBuffer()` 读取，不上传任何服务器。
-- **无外部 API**：除 three.js CDN 外不请求其他后端服务。
-- **CDN 依赖**：three.js 从 `cdn.jsdelivr.net` 加载；若需离线使用，需替换 importmap 为本地副本。
+- **无外部 API**：所有依赖经 npm 安装并打进 bundle，运行时不请求任何后端或 CDN。
 - **无认证、无状态持久化**：刷新页面后所有模型、保护面、支撑都会丢失。
 
 ---
 
 ## 修改建议
 
-- 如需新增 demo 模型，在 `loadDemo` 函数中添加分支并扩展 `[data-demo]` 按钮。
-- 如需调整评分权重，修改 `btnOrient.onclick` 中归一化后的 `r.w` 计算。
+- 如需新增 demo 模型，在 `src/core/model.js` 的 `loadDemo` 中添加分支并在 `ModelCard.jsx` 扩展按钮。
+- 如需调整评分权重，修改 `src/core/orient.js` 朝向评分中归一化后的 `r.w` 计算。
 - 如需支持其他格式（如 OBJ/PLY），需引入对应 three.js loader 并参照 `loadSTLBuffer` 接口实现。
-- `main.js` 保持注释区块分隔，避免无差别重排导致 diff 难以阅读。
+- 新增工艺参数：在 `store.js` 的 `params` 加默认值 → core 用 `params.x` 读取 → 对应卡片加 `InputNumber` 绑定。
+- core 模块保持「不 import React」的边界；UI 副作用一律走 bus 事件。
 
 ---
 
-## 已知限制（v0.1）
+## 已知限制（v0.2）
 
-- 已拆分为 `index.html` / `style.css` / `main.js`；规模进一步扩大后可再按功能拆分 `main.js`。
 - 支撑生成使用体素聚类中心作为尖端位置，未做射线精化贴面。
 - `steepFaceMetric` 为早期废弃函数，实际使用 `steepFaces`。
 - 精分析网格分辨率固定为 288，大模型可能内存占用较高。
+- 无状态持久化；大模型（>60 万面）载入后朝向优化耗时较长。

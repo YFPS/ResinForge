@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const DBG = 9223;
-const APP = process.argv[2] || 'http://127.0.0.1:8111/index.html';
+const APP = process.argv[2] || 'http://127.0.0.1:8123/';   // vite dev server 默认端口
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const chrome = spawn(CHROME, [

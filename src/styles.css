@@ -1,0 +1,99 @@
+/* 整体布局与自定义样式（配色延续旧 style.css：#0d1117 底 / #38d996 主色 / #ffb020 琥珀） */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  background: #0d1117; color: #c9d1d9; font-size: 13px;
+}
+#root { height: 100vh; }
+
+/* ---------- 左侧面板 ---------- */
+.panel {
+  height: 100%; overflow-y: auto;
+  background: #161b22 !important; border-right: 1px solid #21262d; padding: 14px 14px 40px;
+}
+.panel::-webkit-scrollbar { width: 8px; }
+.panel::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+.brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.brand h1 { font-size: 17px; color: #e6edf3; font-weight: 700; letter-spacing: .3px; }
+.brand .ver { font-size: 11px; color: #6e7681; }
+.sub { color: #6e7681; font-size: 11px; margin-bottom: 14px; line-height: 1.6; }
+
+.card {
+  background: #0d1117; border: 1px solid #21262d; border-radius: 8px;
+  padding: 12px; margin-bottom: 12px;
+}
+.card h3 {
+  font-size: 12px; color: #e6edf3; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+}
+.card h3 .step {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; background: #21262d;
+  color: #38d996; font-size: 10px; font-weight: 700;
+}
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.row:last-child { margin-bottom: 0; }
+.row + .hint, .row + .kvbox { margin-top: 2px; }
+label.f { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 7px; color: #8b949e; flex: 1; margin: 0; }
+label.f span { flex: 1; white-space: nowrap; }
+.hint { color: #6e7681; font-size: 11px; line-height: 1.7; }
+.kv { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; color: #8b949e; }
+.kv b { color: #c9d1d9; font-weight: 600; }
+.kv b.warn { color: #f0883e; }
+.kv b.good { color: #38d996; }
+
+/* Arco 控件紧凑化（贴合旧 70px 数字输入框） */
+.card .arco-input-number { width: 76px; }
+.card .arco-btn { padding: 0 10px; }
+.card .arco-checkbox { color: #8b949e; font-size: 12px; }
+
+/* 朝向优化进度与候选 */
+.progress-wrap { margin: 8px 0; }
+.progress-text { font-size: 11px; color: #6e7681; margin-top: 4px; }
+.orient-results { margin-top: 8px; }
+.cand {
+  display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 6px;
+  border: 1px solid #21262d; margin-bottom: 6px; cursor: pointer;
+}
+.cand:hover { background: #161b22; }
+.cand.best { border-color: #38d996; }
+.cand img { width: 56px; height: 56px; border-radius: 4px; background: #0d1117; }
+.cand .info { flex: 1; font-size: 11px; color: #8b949e; line-height: 1.6; }
+.cand .info b { color: #38d996; font-size: 13px; }
+
+/* ---------- 右侧视口 ---------- */
+.viewport-wrap { position: relative; min-width: 0; }
+.viewport { position: relative; width: 100%; height: 100%; }
+.gl { width: 100%; height: 100%; display: block; }
+
+.drop-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #6e7681; font-size: 14px; pointer-events: none; opacity: 0; transition: opacity .2s;
+  background: rgba(13,17,23,.72); border: 2px dashed #38d996; z-index: 5;
+}
+.drop-hint.show { opacity: 1; }
+
+.log-panel {
+  position: absolute; left: 12px; bottom: 12px; width: 380px; max-height: 130px; overflow-y: auto;
+  background: rgba(13,17,23,.82); border: 1px solid #21262d; border-radius: 8px;
+  padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.7;
+  color: #8b949e; pointer-events: auto; backdrop-filter: blur(4px); z-index: 4;
+}
+.log-panel .t { color: #6e7681; margin-right: 6px; }
+.log-panel .ok { color: #38d996; }
+.log-panel .warn { color: #f0883e; }
+
+.inspector {
+  position: absolute; right: 12px; bottom: 12px; width: 300px;
+  background: rgba(13,17,23,.88); border: 1px solid #21262d; border-radius: 8px;
+  padding: 10px; backdrop-filter: blur(4px); z-index: 4;
+}
+.inspector h4 { font-size: 11px; color: #8b949e; margin-bottom: 8px; font-weight: 600; }
+.layer-canvas { width: 100%; aspect-ratio: 1; background: #0d1117; border-radius: 6px; border: 1px solid #21262d; image-rendering: pixelated; display: block; }
+.inspector .arco-slider { margin: 8px 0 4px; }
+.layer-label { font-size: 11px; color: #8b949e; font-family: ui-monospace, Menlo, monospace; }
+
+.mode-bar {
+  position: absolute; left: 12px; top: 12px; z-index: 4;
+  background: rgba(13,17,23,.85); border: 1px solid #21262d; border-radius: 8px; padding: 6px;
+}

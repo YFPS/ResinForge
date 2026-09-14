@@ -7,3 +7,7 @@
 chrome_*.err
 server_test*.log
 kimi-debug-session_*.zip
+
+# 前端工程
+node_modules/
+dist/

@@ -1,0 +1,126 @@
+/* ================================================================
+   朝向优化：randomQuat / canonicalQuats / 评分循环 / renderCandidates / applyOrientation。
+   与旧 main.js 的差异：缩略图不再 drawImage 到 DOM canvas，而是用离屏 prevRenderer
+   （preserveDrawingBuffer:true）toDataURL 出图，连同评分数据经 bus 'orientResults' 交给 React。
+================================================================ */
+import * as THREE from 'three';
+import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
+import { analyze, computeFaceDataFull, steepFaces } from './slicer.js';
+import { raiseH } from './model.js';
+import { clearSupports } from './support.js';
+import { hideInspector } from './inspect.js';
+import { prevRenderer, prevScene, prevCam, prev } from './scene.js';
+
+export function randomQuat() {
+  const u1 = Math.random(), u2 = Math.random() * Math.PI * 2, u3 = Math.random() * Math.PI * 2;
+  const a = Math.sqrt(1 - u1), b = Math.sqrt(u1);
+  return new THREE.Quaternion(a * Math.sin(u2), a * Math.cos(u2), b * Math.sin(u3), b * Math.cos(u3)).normalize();
+}
+export function canonicalQuats() {
+  const qs = [new THREE.Quaternion()];
+  const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (const ax of axes) {
+    for (const ang of [Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      qs.push(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...ax), ang));
+    }
+  }
+  return qs;
+}
+
+let lastList = null;   // 最近一次候选（React 点击缩略图 → applyCandidate(i)）
+
+export async function runOrient() {
+  if (!state.mesh) return toast('请先载入模型');
+  const pos = state.mesh.geometry.attributes.position.array;
+  const facesF = computeFaceDataFull(pos);
+  const nRand = params.orientQuality;
+  const selfAngle = params.selfAngle;
+  const protW = params.protW;
+  // 粗分析参数
+  const bb = state.mesh.geometry.boundingBox;
+  const spanY = bb.max.y - bb.min.y;
+  const coarseH = Math.max(0.15, spanY / 160);
+  const cands = [...canonicalQuats()];
+  for (let i = 0; i < nRand; i++) cands.push(randomQuat());
+  const results = [];
+  const total = cands.length;
+  log(`朝向优化：${total} 个候选 · 粗层厚 ${coarseH.toFixed(2)}mm · 自支撑角 ${selfAngle}°`);
+  const t0 = performance.now();
+  for (let i = 0; i < total; i++) {
+    const q = cands[i];
+    const r = analyze(pos, q, { gridRes: 128, layerH: coarseH, gapThresh: Math.max(0.5, coarseH * 2.5), raiseH: raiseH() });
+    const sf = steepFaces(facesF, q, selfAngle, state.protectedFaces, protW, false);
+    results.push({
+      q, supportVol: r.metrics.supportVol, islandArea: r.metrics.islandArea,
+      maxFill: r.metrics.maxFill, height: r.metrics.height, steepArea: sf.steepArea, protHit: sf.protHit
+    });
+    if (i % 2 === 1 || i === total - 1) {
+      setProgress((i + 1) / total, `候选 ${i + 1}/${total}`);
+      await nextFrame();
+    }
+  }
+  // 归一化评分
+  const mx = k => Math.max(1e-9, ...results.map(r => r[k]));
+  const msv = mx('supportVol'), mia = mx('islandArea'), mmf = mx('maxFill'), mh = mx('height'), msa = mx('steepArea');
+  for (const r of results) {
+    r.w = 0.32 * (r.supportVol / msv) + 0.18 * (r.islandArea / mia) + 0.2 * (r.steepArea / msa) + 0.2 * (r.maxFill / mmf) + 0.1 * (r.height / mh);
+  }
+  results.sort((a, b) => a.w - b.w);
+  const worstW = results[results.length - 1].w;
+  for (const r of results) r.score = Math.max(1, Math.round(100 * (1 - r.w / worstW)));
+  setProgress(null);
+  log(`朝向优化完成：${((performance.now() - t0) / 1000).toFixed(1)}s · 最佳评分 ${results[0].score}`, 'ok');
+  renderCandidates(results.slice(0, 8));
+  state.orientResult = results[0];
+}
+
+function renderCandidates(list) {
+  lastList = list;
+  if (!prev.mesh) { bus.emit('orientResults', []); return; }
+  const scale = 1 / Math.max(1e-6, (() => {
+    prev.mesh.geometry.computeBoundingSphere();
+    return prev.mesh.geometry.boundingSphere.radius;
+  })());
+  const items = list.map((r, idx) => {
+    // 渲染缩略图（离屏，dataURL 交给 React 的 <img>）
+    prev.mesh.quaternion.copy(r.q);
+    prevCam.position.set(0, r.height * 0.7, r.height * 1.3).normalize().multiplyScalar(r.height * 1.9);
+    prevCam.lookAt(0, r.height * 0.35, 0);
+    prevRenderer.render(prevScene, prevCam);
+    return {
+      idx, score: r.score, isBest: idx === 0,
+      supportVol: r.supportVol, steepArea: r.steepArea,
+      islandArea: r.islandArea, maxFill: r.maxFill,
+      img: prevRenderer.domElement.toDataURL(),
+    };
+  });
+  bus.emit('orientResults', items);
+  void scale;
+}
+
+export function applyCandidate(idx) {
+  const r = lastList && lastList[idx];
+  if (r) applyOrientation(r);
+}
+
+export function applyOrientation(r) {
+  if (!state.mesh) return;
+  const geom = state.mesh.geometry;
+  geom.applyQuaternion(r.q);
+  geom.computeBoundingBox();
+  const bb = geom.boundingBox;
+  const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
+  geom.translate(-cx, -bb.min.y, -cz);
+  geom.computeBoundingBox();
+  geom.computeBoundingSphere();
+  prev.mesh.quaternion.identity();
+  state.faces = computeFaceDataFull(geom.attributes.position.array);
+  // 保护面随几何保留（面索引不变），顶点色不变
+  state.analysis = null;
+  clearSupports(false);
+  bus.emit('sliceStats', null);
+  hideInspector();
+  bus.emit('orientResults', null);
+  log(`已应用朝向（评分 ${r.score}）：支撑体积 ${r.supportVol.toFixed(0)}mm³，请运行逐层分析`, 'ok');
+  toast('朝向已应用，请运行逐层分析');
+}

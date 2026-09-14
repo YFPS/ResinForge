@@ -107,7 +107,7 @@ export function paintAt(e) {
       }
     }
   }
-  if (added) { colorAttr.needsUpdate = true; log(`保护面 +${added}（共 ${state.protectedFaces.size} 面）`); }
+  if (added) { colorAttr.needsUpdate = true; bus.emit('protectedChanged'); log(`保护面 +${added}（共 ${state.protectedFaces.size} 面）`); }
 }
 export function clearProtectedFaces() {
   state.protectedFaces.clear();
@@ -116,6 +116,7 @@ export function clearProtectedFaces() {
     for (let i = 0; i < ca.array.length; i++) ca.array[i] = 1;
     ca.needsUpdate = true;
   }
+  bus.emit('protectedChanged');
   log('保护面已清除');
 }
 

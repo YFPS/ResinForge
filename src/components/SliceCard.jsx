@@ -1,18 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { Button, InputNumber } from '@arco-design/web-react';
+import { Button, InputNumber, Switch } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { bus } from '../store.js';
 import { runSliceAnalysis } from '../core/inspect.js';
 import { handleRaiseHChange } from '../core/model.js';
+import { setHeat } from '../core/heat.js';
 
 /* 切片与孤岛分析：层厚/悬空阈值/抬高/孤岛最小面积/最小附着面积 + sliceStats（订阅 bus 'sliceStats'）。
-   抬高变更副作用复刻旧监听：模型 position.y 更新 + clearSupports(false) + 清分析 + 隐藏检查器（core 内完成）。 */
+   抬高变更副作用复刻旧监听：模型 position.y 更新 + clearSupports(false) + 清分析 + 隐藏检查器（core 内完成）。
+   支撑热力图：模型表面按支撑需求强度着色（蓝→红），有分析数据时用 LDI 精确高差。 */
 export default function SliceCard() {
   const [params, setParam] = useParams();
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState(null);
+  const [heat, setHeatOn] = useState(false);
   useEffect(() => bus.on('sliceStats', setStats), []);
+  useEffect(() => bus.on('heat', setHeatOn), []);
 
   const start = async () => {
     setLoading(true);
@@ -34,6 +38,15 @@ export default function SliceCard() {
       <div className="row">
         <Button type="primary" long loading={loading} onClick={start}>运行逐层分析</Button>
       </div>
+      <div className="row" style={{ alignItems: 'center', marginTop: 6 }}>
+        <Switch checked={heat} onChange={v => setHeat(v)} />
+        <span style={{ fontSize: 12, color: '#8b949e' }}>支撑热力图（蓝=无需支撑 → 红=强需求）</span>
+      </div>
+      {heat && (
+        <div className="heat-legend">
+          <span>弱</span><div className="heat-bar" /><span>强</span>
+        </div>
+      )}
       {stats && (
         <div className="kvbox" style={{ marginTop: 6 }}>
           <div className="kv"><span>总层数</span><b>{stats.layers.toLocaleString()}</b></div>

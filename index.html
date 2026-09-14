@@ -92,8 +92,14 @@
     <div class="card">
       <h3><span class="step">5</span>支撑生成</h3>
       <div class="row">
-        <label class="f" style="margin:0"><span>尖端直径</span><input type="number" id="tipD" value="0.3" min="0.1" max="1" step="0.05">mm</label>
-        <label class="f" style="margin:0"><span>中段直径</span><input type="number" id="midD" value="0.8" min="0.2" max="3" step="0.1">mm</label>
+        <label class="f" style="margin:0"><span>顶部球头</span><input type="number" id="tipD" value="0.3" min="0.1" max="1" step="0.05" title="顶部球头直径（接触模型的球头）">mm</label>
+        <label class="f" style="margin:0"><span>嵌入深度</span><input type="number" id="pen" value="0.2" min="0" max="1" step="0.05" title="球头扎入模型表面的深度">mm</label>
+        <label class="f" style="margin:0"><span>中段直径</span><input type="number" id="midD" value="0.8" min="0.2" max="3" step="0.1" title="中部球头与主干直径">mm</label>
+      </div>
+      <div class="row">
+        <label class="f" style="margin:0"><span>锥头长度</span><input type="number" id="headLen" value="0.7" min="0.1" max="5" step="0.05">mm</label>
+        <label class="f" style="margin:0"><span>锥头顶宽</span><input type="number" id="headTopD" value="0.3" min="0.05" max="2" step="0.05" title="锥头顶部宽度，默认同顶部球头直径">mm</label>
+        <label class="f" style="margin:0"><span>锥头底宽</span><input type="number" id="headBotD" value="0.8" min="0.1" max="3" step="0.1" title="锥头底部宽度，默认同中段直径">mm</label>
       </div>
       <div class="row">
         <label class="f" style="margin:0"><span>底盘直径</span><input type="number" id="baseD" value="3" min="1" max="6" step="0.5">mm</label>
@@ -105,7 +111,7 @@
           <input type="checkbox" id="shortSup" checked style="accent-color:#38d996">短小支撑（锚定模型表面）
         </label>
       </div>
-      <div class="hint" style="margin-top:2px">支撑为三段式结构（销头→柱身→基座/锚头），尖端扎入表面微量深度。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到筏层（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
+      <div class="hint" style="margin-top:2px">支撑为分段结构（顶端→柱身→基座/底端），顶端球头扎入表面微量深度（嵌入深度可调）。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到筏层（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
       <div class="row">
         <button id="btnGenSup" class="primary" style="flex:1">自动生成支撑</button>
         <button id="btnClearSup">清空</button>
@@ -133,10 +139,10 @@
     <canvas id="gl"></canvas>
     <div id="dropHint">松开以载入 STL 文件</div>
     <div id="modeBar">
-      <button id="mOrbit" class="mode on" title="旋转视角">🖱 旋转</button>
-      <button id="mPaint" class="mode" title="在模型表面涂保护面">🖌 保护面</button>
-      <button id="mAdd" class="mode" title="点击模型表面手动加支撑">➕ 加支撑</button>
-      <button id="mDel" class="mode" title="点击支撑删除">✂ 删支撑</button>
+      <button id="mOrbit" class="mode on" title="左键/右键拖拽旋转视角（任意模式下右键均可旋转）">🖱 旋转</button>
+      <button id="mPaint" class="mode" title="左键在模型表面涂保护面；右键旋转视角">🖌 保护面</button>
+      <button id="mAdd" class="mode" title="左键点击模型表面手动加支撑；右键旋转视角">➕ 加支撑</button>
+      <button id="mDel" class="mode" title="左键点击支撑删除；右键旋转视角">✂ 删支撑</button>
     </div>
     <div id="toast"></div>
     <div id="inspector">

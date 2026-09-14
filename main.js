@@ -39,6 +39,9 @@ camera.position.set(95, 75, 95);
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 22, 0);
 controls.enableDamping = true; controls.dampingFactor = 0.12;
+// 鼠标键位：右键始终以模型中心旋转视角（各模式通用）；左键仅在「旋转」模式下旋转，其余模式留给涂画/加删支撑
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+canvas.addEventListener('contextmenu', e => e.preventDefault());   // 右键拖拽旋转时不弹系统菜单
 
 scene.add(new THREE.HemisphereLight(0xcdd9e5, 0x0d1117, 1.15));
 const dl = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -724,10 +727,10 @@ function setGeometry(geom, name) {
   $('modelInfo').innerHTML = `<div class="kv"><span>文件</span><b>${name}</b></div>
     <div class="kv"><span>尺寸</span><b>${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm</b></div>
     <div class="kv"><span>三角形</span><b>${nf.toLocaleString()}</b></div>`;
-  // 相机适配
+  // 相机适配；旋转中心 = 模型包围盒中心（世界系，含抬高）
   const r = Math.max(size.x, size.y, size.z);
   camera.position.set(r * 1.4, r * 1.15, r * 1.4);
-  controls.target.set(0, size.y * 0.35, 0);
+  controls.target.set(0, raiseH() + size.y / 2, 0);
   log(`模型已载入：${name}（${nf.toLocaleString()} 面，${size.y.toFixed(1)}mm 高）`, 'ok');
   if (nf > 120000) log('⚠ 面数较大，分析可能较慢', 'warn');
   const pX = parseFloat($('plateX').value) || 150, pZ = parseFloat($('plateZ').value) || 85;
@@ -1172,40 +1175,42 @@ function updateSupStats() {
     <div class="kv"><span>保护面</span><b>${prot.toLocaleString()} 面</b></div>`;
 }
 /* PrusaSlicer 风格分段支撑，落板支撑从上到下六部位：
-   顶部球头(r_pin) → 锥头(切线裙边) → 中部球头(r_back) → 主干(柱身) → 锥底(基座锥台) → 底板(筏层)
-   锚定短小支撑底部为「反向销头」（底部球头 + 锥头镜像），无锥底、不倾斜。
-   平滑合并三原则（对应 PrusaSlicer SupportTreeMesher 的 pinhead 切线几何）：
-   ① 锥头与两球头在切线圆处相接：半锥角 α = asin((r_back − r_pin) / 球心距)，相切无折角
+   顶部球头(r_pin) → 锥头(独立圆台裙边) → 中部球头(r_back) → 主干(柱身) → 锥底(基座锥台) → 底板(筏层)
+   顶部球头 + 锥头合称「顶端」；锚定短小支撑下部为「底端」（底部球头 + 锥头镜像，与顶端同构），无锥底；顶端与底端均可倾斜。
+   平滑合并三原则（对应 PrusaSlicer SupportTreeMesher 的 pinhead 结构 + CHITUBOX 式重叠搭接）：
+   ① 锥头为独立圆台（长度/顶宽/底宽均可调），两端没入完整球头内部（球心距 = 锥头长度）——任意宽度组合都无破面、无环缝
    ② 主干端部嵌入中部球头的球心，柱半径 = 球半径，球赤道与柱面自然相切
    ③ 不做布尔并集，重叠实体在切片偶奇填充下自然合并（同 its_merge），导出 STL 被下游切片器兼容
-   销头自动朝向（对应 PrusaSlicer Head.dir）：沿接触面外法线倾斜，限锥角 = 自支撑角 selfAngle；
-   极点 = 接触点 + 轴·pen（沿轴扎入），主干保持垂直、接驳在倾斜销头的中部球头球心处（落点随倾角水平偏移，属预期行为） */
+   顶端/底端自动朝向（对应 PrusaSlicer Head.dir）：顶端沿被托面外法线、底端沿承载面外法线倾斜，限锥角 = 自支撑角 selfAngle；
+   极点 = 接触点 + 轴·pen（沿轴扎入）；落板支撑主干垂直、接驳在顶端的中部球头球心处，短小支撑主干连接两端球心（双端倾斜时斜置，落点随倾角水平偏移，均属预期行为） */
 function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null, nrmBot = null) {
   const tipR = Math.max(0.05, parseFloat($('tipD').value) / 2);       // 顶部球头半径 r_pin
   const midR = Math.max(tipR * 1.5, parseFloat($('midD').value) / 2); // 中部球头半径 r_back = 主干半径
   const baseR = Math.max(midR, parseFloat($('baseD').value) / 2);     // 锥底底半径
-  const pen = Math.min(0.3, Math.max(0.1, tipR));                     // 扎入深度
+  const penRaw = parseFloat($('pen').value);
+  const pen = Math.min(1, Math.max(0, isNaN(penRaw) ? 0.2 : penRaw)); // 球头嵌入深度（扎入模型表面）
+  const coneTopR = Math.max(0.03, (parseFloat($('headTopD').value) || tipR * 2) / 2);   // 锥头顶部半径
+  const coneBotR = Math.max(0.03, (parseFloat($('headBotD').value) || midR * 2) / 2);   // 锥头底部半径
   const nHeadsG = anchored ? 2 : 1;
-  // 退化兜底：跨度容不下全部销头（+锥头 0.12 下限 + 0.15 余量）时拒绝生成，
-  // 否则锥头压扁、主干消失，渲染成一对互相贯穿的对顶销头（实测 Arm_Left 羽毛尖端 0.99mm 断支撑）
+  // 退化兜底：跨度容不下顶端+底端（+锥头 0.12 下限 + 0.15 余量）时拒绝生成，
+  // 否则锥头压扁、主干消失，渲染成一对互相贯穿的对顶球头（实测 Arm_Left 羽毛尖端 0.99mm 断支撑）
   if (yTip - yBase < nHeadsG * (tipR + midR) + 0.15 + 0.12 * nHeadsG) return null;
   const span = yTip - yBase;
   const nHeads = nHeadsG;
-  let robe = Math.max(0.4, midR * 1.8);
+  const headLenRaw = parseFloat($('headLen').value);
+  let robe = Math.max(0.12, isNaN(headLenRaw) ? 0.7 : headLenRaw);    // 锥头长度（两球心距）
   robe = Math.min(robe, Math.max(0.12, (span - nHeads * (tipR + midR) - 0.15) / nHeads));
-  const alpha = Math.asin(Math.min(0.9, (midR - tipR) / robe));       // 锥头半锥角（切线几何）
-  const a1 = Math.PI / 2 - alpha, sinA = Math.sin(alpha), cosA = Math.cos(alpha);
   const parts = [];
   const SEG = 12;
-  // 销头规范形：极点在原点、体沿 −Y 展开（顶部球头只露切线圆以上，中部球头露切线圆以下，锥头沿切线连接）
+  // 顶端规范形（底端同构、镜像使用）：极点在原点、体沿 −Y 展开。球头为完整球，锥头圆台两端没入球心——
+  // 任意宽度组合都无破面，重叠实体在切片偶奇填充下自然合并（同 CHITUBOX 标准件的搭接方式）
   const pinC = -tipR, backC = -(tipR + robe);
-  const yA = pinC + tipR * sinA, yB = backC + midR * sinA;            // 两端切线圆高度
   const headGeom = mergeGeoms([
-    { g: new THREE.SphereGeometry(tipR, SEG, 8, 0, Math.PI * 2, 0, a1), y: pinC },                         // 顶部球头
-    { g: new THREE.SphereGeometry(midR, SEG, 10, 0, Math.PI * 2, a1, Math.PI - a1), y: backC },            // 中部球头
-    { g: new THREE.CylinderGeometry(tipR * cosA, midR * cosA, yA - yB, SEG, 1, true), y: (yA + yB) / 2 },  // 锥头裙边
+    { g: new THREE.SphereGeometry(tipR, SEG, 8), y: pinC },                                            // 顶部球头
+    { g: new THREE.SphereGeometry(midR, SEG, 10), y: backC },                                          // 中部球头
+    { g: new THREE.CylinderGeometry(coneTopR, coneBotR, robe, SEG, 1, true), y: (pinC + backC) / 2 },  // 锥头圆台
   ]);
-  // 锥头朝向：轴 = −n（钝端→尖端）。上锥头以被托悬空面的外法线（朝下）为准，下锥头以承载面外法线（朝上）为准；
+  // 端头朝向：轴 = −n（钝端→尖端）。顶端以被托悬空面的外法线（朝下）为准，底端以承载面外法线（朝上）为准；
   // 限锥角 = 自支撑角；8° 死区（近平面不倾斜，吸收细分法线噪声）
   const cosSelf = Math.cos(parseFloat($('selfAngle').value) * Math.PI / 180);
   const cosDead = Math.cos(8 * Math.PI / 180);
@@ -1216,7 +1221,7 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
     return ok ? new THREE.Vector3(-n[0], -n[1], -n[2]).normalize() : null;
   };
   const axisT = headAxis(nrmTop, true);
-  // 上锥头：绕极点旋转（+Y → 轴）后放到极点。极点 = 接触点 + 轴·pen（沿轴扎入模型 pen 深；
+  // 顶端：绕极点旋转（+Y → 轴）后放到极点。极点 = 接触点 + 轴·pen（沿轴扎入模型 pen 深；
   // 垂直时退化为 (0, span+pen, 0)。若极点只沿 +Y 偏移，倾斜时顶部球头会甩到表面外侧——方向就反了）
   const axT = axisT ? axisT.x : 0, ayT = axisT ? axisT.y : 1, azT = axisT ? axisT.z : 0;
   const poleTX = axT * pen, poleTY = span + ayT * pen, poleTZ = azT * pen;
@@ -1227,7 +1232,7 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
   const jt = { x: poleTX - axT * (tipR + robe), y: poleTY - ayT * (tipR + robe), z: poleTZ - azT * (tipR + robe) };
   let jb, axisB = null;
   if (anchored) {
-    // 下锥头（反向销头）：沿承载面法线倾斜；极点 = 下接触点 + 轴·pen（扎入下方表面）
+    // 底端（顶端镜像）：沿承载面法线倾斜；极点 = 下接触点 + 轴·pen（扎入下方表面）
     axisB = headAxis(nrmBot, false);
     const axB = axisB ? axisB.x : 0, ayB = axisB ? axisB.y : -1, azB = axisB ? axisB.z : 0;
     const poleBX = axB * pen, poleBY = ayB * pen, poleBZ = azB * pen;
@@ -1252,13 +1257,13 @@ function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop = null,
   const geom = mergeGeoms(parts);
   const mesh = new THREE.Mesh(geom, anchored ? supMatAnchor : supMat);
   mesh.position.set(x, yBase, z);
-  mesh.userData.tiltDeg = axisT ? Math.round(Math.acos(ayT) * 180 / Math.PI) : 0;          // 上锥头倾角（调试/验证）
-  mesh.userData.tiltDegBot = axisB ? Math.round(Math.acos(-(axisB.y)) * 180 / Math.PI) : 0; // 下锥头倾角
+  mesh.userData.tiltDeg = axisT ? Math.round(Math.acos(ayT) * 180 / Math.PI) : 0;          // 顶端倾角（调试/验证）
+  mesh.userData.tiltDegBot = axisB ? Math.round(Math.acos(-(axisB.y)) * 180 / Math.PI) : 0; // 底端倾角
   mesh.userData.jx = jt.x; mesh.userData.jz = jt.z;   // 主干顶部球心（局部 XZ）：杆身防粘连的真实站位
   if (anchored) { mesh.userData.jbx = jb.x; mesh.userData.jbz = jb.z; }   // 主干底部球心（锚定）
   return mesh;
 }
-/* 微型短柱（CHITUBOX 标准件风格）：锚定跨度容不下双销头时的短支撑替代方案。
+/* 微型短柱（CHITUBOX 标准件风格）：锚定跨度容不下顶端+底端时的短支撑替代方案。
    实测 CHITUBOX 在同一模型上用 Ø0.8mm 球端微柱铺 0.5~2mm 短间隙（178 根），几何干净、易掰除；
    简单圆柱 + 两端半球，竖直不倾斜，永不退化。尖端/底端各扎入表面 0.1mm */
 function makeMicroPostMesh(x, yTip, z, yBase) {
@@ -1414,8 +1419,8 @@ $('btnGenSup').onclick = async () => {
   for (let i = 0; i < posL.length; i++) pos[i] = posL[i] + (i % 3 === 1 ? rh : 0);
   const nf = pos.length / 9;
   const useShort = $('shortSup').checked;
-  // 最小支撑跨度：双销头几何下限（2×(r_pin+r_back)+锥头下限与余量）+ 0.3mm 余量。
-  // 短于此跨度的锚定/落板支撑会退化为对顶销头疙瘩（实测 Arm_Left 羽毛尖端），直接按短跨豁免跳过
+  // 最小支撑跨度：顶端+底端几何下限（2×(r_pin+r_back)+锥头下限与余量）+ 0.3mm 余量。
+  // 短于此跨度的锚定/落板支撑会退化为对顶球头疙瘩（实测 Arm_Left 羽毛尖端），直接按短跨豁免跳过
   const tipR0 = Math.max(0.05, parseFloat($('tipD').value) / 2);
   const midR0 = Math.max(tipR0 * 1.5, parseFloat($('midD').value) / 2);
   const minSupLen = 2 * (tipR0 + midR0) + 0.39 + 0.3;
@@ -1466,7 +1471,7 @@ $('btnGenSup').onclick = async () => {
     }
     return bestY > -1e8 ? { y: bestY, f: bestF } : null;
   };
-  // 用途①贴面过滤②锚定底盘（命中任意距离的下方表面都优于落板贯穿模型）；返回 {y, f}（f=承载面索引，供下锥头朝向）
+  // 用途①贴面过滤②锚定底盘（命中任意距离的下方表面都优于落板贯穿模型）；返回 {y, f}（f=承载面索引，供底端朝向）
   const findBelow = (x, yTip, z) => rayDown(x, yTip - 0.05, z);
   // 接触面探测：从尖端上方 0.05mm 竖直向下取最近命中面——真实被触面，比「最近质心面」可靠
   const probeFace = (x, tipY, z) => {
@@ -1512,8 +1517,8 @@ $('btnGenSup').onclick = async () => {
     // （不能用向下射线的距离判定：射线起点若在实体内，会一路穿到实体底面而误判为悬空）
     if (isSolidAt(c.x, tipY - 0.15, c.z)) return 'flush';
     if (below !== null && tipY - below.y < 0.8) return 'held';   // 下方 0.8mm 内已有材料 → 桥接即可，不生成支撑（Formlabs 短跨豁免）
-    // 最小跨度过滤：跨度容不下双销头的锚定支撑 → 微型短柱（CHITUBOX 标准件风格）；
-    // 常规销头锚定仍要求可信承载面（法线过平的侧壁/悬空面拒绝）。落板支撑过短仍跳过（应从板面长起）
+    // 最小跨度过滤：跨度容不下顶端+底端的锚定支撑 → 微型短柱（CHITUBOX 标准件风格）；
+    // 常规底端锚定仍要求可信承载面（法线过平的侧壁/悬空面拒绝）。落板支撑过短仍跳过（应从板面长起）
     let micro = false;
     if (below !== null) {
       if (tipY - below.y >= minSupLen) {
@@ -1535,7 +1540,7 @@ $('btnGenSup').onclick = async () => {
     }
     const anchorY = below !== null ? below.y : null;
     if (anchorY !== null) anchoredN++;
-    // 锥头朝向法线：上锥头 = 射线探测真实接触面；下锥头 = 锚定射线的承载面（findBelow 命中面）
+    // 端头朝向法线：顶端 = 射线探测真实接触面；底端 = 锚定射线的承载面（findBelow 命中面）
     let nrmTop = null, nrmBot = null;
     if (faces) {
       const pf = probeFace(c.x, tipY, c.z);
@@ -1580,8 +1585,8 @@ $('btnGenSup').onclick = async () => {
   const isAnchoredLast = () => state.supports[state.supports.length - 1].anchored;
   // 杆身级防粘连（对所有支撑生效，含种子）：XY 净距 < 中段直径+0.4mm 且 Y 区间重叠 → 互斥。
   // 泊松盘只约束尖端点；支撑是有体积的杆，杆身/球头互撞必须显式判定。
-  // 站位用主干球心的真实 XZ（倾斜销头会让杆身偏离接触点，登记接触点会漏判）。
-  // Y 区间按实际网格范围外扩 0.2mm（销头扎入 pen 超出名义端点），间隙判据 0.1mm。
+  // 站位用主干球心的真实 XZ（倾斜端头会让杆身偏离接触点，登记接触点会漏判）。
+  // Y 区间按实际网格范围外扩 0.2mm（顶端/底端扎入 pen 超出名义端点），间隙判据 0.1mm。
   const shaftList = [];   // 已放置支撑的主干球心 {x, z, yLo, yHi}（Y 已外扩）
   const shaftClear = parseFloat($('midD').value) + 0.4;
   const shaftFused = (x, z, yLo, yHi) => {
@@ -1664,7 +1669,7 @@ $('btnGenSup').onclick = async () => {
       }
     }
   }
-  // 终检去重（最后执行）：放置期无法预知候选自身的球心偏移（倾斜相对的销头互甩），事后按真球心站位复核清冗。
+  // 终检去重（最后执行）：放置期无法预知候选自身的球心偏移（倾斜端头互甩），事后按真球心站位复核清冗。
   // 互粘对去冗策略：普通池优先于种子；同为种子（含兜底）不清——相邻孤岛被同一支撑钉住属可接受。
   let deduped = 0;
   {
@@ -1768,7 +1773,9 @@ $('btnExportSup').onclick = () => exportSTL(false, true, 'supports_only.stl');
 ================================================================ */
 function setMode(m) {
   state.mode = m;
-  controls.enabled = (m === 'orbit');
+  // 控制器常开：右键任何模式下都可绕模型中心旋转；左键只在「旋转」模式旋转，其他模式留给涂画/加/删支撑
+  controls.enabled = true;
+  controls.mouseButtons.LEFT = (m === 'orbit') ? THREE.MOUSE.ROTATE : null;
   for (const [id, mm] of [['mOrbit', 'orbit'], ['mPaint', 'paint'], ['mAdd', 'add'], ['mDel', 'del']]) {
     $(id).classList.toggle('on', mm === m);
   }
@@ -1780,6 +1787,7 @@ $('mAdd').onclick = () => setMode('add');
 $('mDel').onclick = () => setMode('del');
 
 canvas.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;   // 仅左键触发涂画/加/删支撑；右键由 OrbitControls 旋转视角
   if (state.mode === 'paint') { state.painting = true; paintAt(e); }
   else if (state.mode === 'add' && state.mesh) {
     const hits = pointerRay(e).intersectObject(state.mesh);
@@ -1787,7 +1795,7 @@ canvas.addEventListener('pointerdown', e => {
       const h = hits[0];
       const fi = h.face.a / 3;
       if (state.protectedFaces.has(fi)) { toast('该面为保护面，已阻止添加支撑'); return; }
-      // 命中面法线作为销头朝向（模型仅平移变换，几何面法线即世界系方向）
+      // 命中面法线作为顶端朝向（模型仅平移变换，几何面法线即世界系方向）
       const fn = h.face ? h.face.normal : null;
       addSupport(h.point.x, h.point.y, h.point.z, null, fn ? [fn.x, fn.y, fn.z] : null);
       log(`手动支撑 @ (${h.point.x.toFixed(1)}, ${h.point.y.toFixed(1)}, ${h.point.z.toFixed(1)})`);

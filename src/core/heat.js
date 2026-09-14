@@ -75,19 +75,73 @@ export function computeFaceHeat() {
     heat[f] = e2 * hFac;
   }
   state.faceHeat = heat;
+  state.vertHeatMap = null;   // 顶点映射随热度重算失效（几何或参数已变）
   return heat;
 }
 
-/* 把热度写入顶点色（保护面覆盖为紫） */
+/* 面热度 → 顶点热度：非索引几何的重复顶点按位置合并（量化 1e-4mm），
+   邻接面热度按面积加权平均；再做 2 轮邻域 Jacobi 扩散，得到连续渐变。
+   缓存于 state.vertHeatMap（随几何变化失效重建）。 */
+function buildVertexHeat(heat) {
+  const pos = state.mesh.geometry.attributes.position;
+  const n = pos.count;
+  const area = state.faces ? state.faces.area : null;
+  const vid = new Int32Array(n);
+  const map = new Map();
+  const acc = [];   // [热度×面积 Σ, 面积 Σ]
+  for (let v = 0; v < n; v++) {
+    const key = Math.round(pos.getX(v) * 1e4) + '_' + Math.round(pos.getY(v) * 1e4) + '_' + Math.round(pos.getZ(v) * 1e4);
+    let id = map.get(key);
+    if (id === undefined) { id = acc.length; map.set(key, id); acc.push([0, 0]); }
+    vid[v] = id;
+    const f = (v / 3) | 0, w = area ? area[f] : 1;
+    acc[id][0] += heat[f] * w; acc[id][1] += w;
+  }
+  const nu = acc.length;
+  let vh = new Float32Array(nu);
+  for (let i = 0; i < nu; i++) vh[i] = acc[i][1] > 0 ? acc[i][0] / acc[i][1] : 0;
+  // 唯一顶点邻接表（由三角形边建立）
+  const adj = new Map();
+  const link = (a, b) => {
+    if (a === b) return;
+    let s = adj.get(a); if (!s) adj.set(a, s = new Set());
+    s.add(b);
+  };
+  for (let f = 0; f < n / 3; f++) {
+    const a = vid[f * 3], b = vid[f * 3 + 1], c = vid[f * 3 + 2];
+    link(a, b); link(b, c); link(c, a);
+  }
+  // 2 轮 Jacobi 扩散（0.6 保留自身 + 0.4 邻域平均）：抹平色带边缘
+  for (let it = 0; it < 2; it++) {
+    const next = new Float32Array(vh);
+    for (const [i, s] of adj) {
+      let sum = 0;
+      for (const j of s) sum += vh[j];
+      next[i] = vh[i] * 0.6 + (sum / s.size) * 0.4;
+    }
+    vh = next;
+  }
+  state.vertHeatMap = { vid, vh };
+}
+
+/* 把热度写入顶点色（顶点级平滑：同一面三个顶点颜色不同，GPU 插值成渐变；保护面覆盖为紫） */
 export function applyHeatColors() {
   if (!state.mesh || !state.faceHeat) return;
+  if (!state.vertHeatMap || state.vertHeatMap.vid.length !== state.mesh.geometry.attributes.position.count) buildVertexHeat(state.faceHeat);
   const ca = state.mesh.geometry.attributes.color;
+  const { vid, vh } = state.vertHeatMap;
   const heat = state.faceHeat, prot = state.protectedFaces;
   const rgb = [0, 0, 0];
   for (let f = 0; f < heat.length; f++) {
-    const c = prot.has(f) ? PROT_HOT : heatRGB(heat[f], rgb);
     const v = f * 3;
-    for (let k = 0; k < 3; k++) ca.setXYZ(v + k, c[0], c[1], c[2]);
+    if (prot.has(f)) {
+      for (let k = 0; k < 3; k++) ca.setXYZ(v + k, PROT_HOT[0], PROT_HOT[1], PROT_HOT[2]);
+    } else {
+      for (let k = 0; k < 3; k++) {
+        const c = heatRGB(vh[vid[v + k]], rgb);
+        ca.setXYZ(v + k, c[0], c[1], c[2]);
+      }
+    }
   }
   ca.needsUpdate = true;
 }

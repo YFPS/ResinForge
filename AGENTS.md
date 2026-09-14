@@ -134,7 +134,7 @@ npm run build     # 产物到 dist/
 ### 支撑热力图（`heat.js`）
 
 - 逐面热度 = **悬空角超出量**（法线越过自支撑角的程度，阈值处 0 → 全朝下 1，经 0.6 次幂提亮低热区）× **悬空高差调制**（有精分析 LDI 时：下方 <0.8mm 有材料 = 已托住不热——与支撑生成的短跨豁免口径一致；高差越大越热，8mm 封顶）；无分析数据时退化为纯角度。
-- 顶点色写入：`computeFaceHeat` → `state.faceHeat`，`applyHeatColors` 按色带（亮灰蓝→青→绿→黄→橙红→红）写入；保护面覆盖为紫。`setHeat(false)` 恢复白+保护面红。
+- 顶点色写入：`computeFaceHeat` → `state.faceHeat`；**顶点级平滑**（非索引几何按位置合并重复顶点，邻接面热度按面积加权平均到顶点，再做 2 轮邻域 Jacobi 扩散）后 `applyHeatColors` 按色带（亮灰蓝→青→绿→黄→橙红→红）逐顶点写入，GPU 插值成连续渐变；保护面覆盖为紫。`setHeat(false)` 恢复白+保护面红。
 - 联动：分析完成（`sliceStats`）/ 更换模型（`modelInfo`）/ 保护面增减（`protectedChanged`）时若开关开着自动重算重绘；UI 开关在「切片与孤岛分析」卡片，附图例色条。
 
 ### 支撑生成

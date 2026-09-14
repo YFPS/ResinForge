@@ -37,6 +37,18 @@ export default function SupportCard() {
         <label className="f"><span>最小悬空面积</span><InputNumber value={params.minSupArea} min={0.5} max={50} step={0.5} onChange={v => setParam('minSupArea', v)} />mm²</label>
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
+        <Checkbox checked={params.gussetOn} onChange={v => setParam('gussetOn', v)}>柱顶加强筋板（gusset）</Checkbox>
+        <Checkbox checked={params.gussetBase} onChange={v => setParam('gussetBase', v)}>底部筋板代锥底</Checkbox>
+      </div>
+      {params.gussetOn && (
+        <div className="row">
+          <label className="f"><span>数量</span><InputNumber value={params.gussetN} min={2} max={8} step={1} onChange={v => setParam('gussetN', v)} /></label>
+          <label className="f"><span>高度</span><InputNumber value={params.gussetH} min={0.5} max={5} step={0.5} onChange={v => setParam('gussetH', v)} />mm</label>
+          <label className="f"><span>外展</span><InputNumber value={params.gussetL} min={0.5} max={4} step={0.1} onChange={v => setParam('gussetL', v)} />mm</label>
+          <label className="f"><span>厚度</span><InputNumber value={params.gussetT} min={0.2} max={1} step={0.05} onChange={v => setParam('gussetT', v)} />mm</label>
+        </div>
+      )}
+      <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（锚定模型表面）</Checkbox>
       </div>
       <div className="row" style={{ alignItems: 'center' }}>

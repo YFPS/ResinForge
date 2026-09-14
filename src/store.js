@@ -34,6 +34,13 @@ export const params = {
   spacing: 3,         // 支撑间距
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑（锚定模型表面）
+  /* gusset 加强筋板（e-Stage 风格：柱顶放射三角筋板连接主干 → 接触区） */
+  gussetOn: true,     // 顶部放射筋板（所有支撑）
+  gussetBase: true,   // 底部放射筋板替代锥底（仅落板支撑）
+  gussetN: 4,         // 每端筋板数量（放射均布）
+  gussetH: 2,         // 筋板高度（mm）
+  gussetL: 1.5,       // 筋板外展长度（mm）
+  gussetT: 0.4,       // 筋板厚度（mm）
   /* 脚手架（菱形格架，参考 e-Stage 开放菱形 + TANGO V-Support 墙片） */
   scaffoldOn: true,   // 启用脚手架格架（相邻落板立柱间连续菱形格）
   crossD: 0.5,        // 格架梁直径（mm）

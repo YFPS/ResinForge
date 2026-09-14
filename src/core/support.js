@@ -105,6 +105,42 @@ export function buildScaffold() {
   return beamN;
 }
 
+/* 加强筋板（gusset，e-Stage 风格）：直角三角棱柱——竖直边贴主干、顶边向外展开。
+   局部坐标：A=(0,-gH) 竖边底、B=(0,0) 竖边顶、C=(gL,0) 外端，厚度 ±t（沿 Z）。非索引 8 三角形。 */
+function makeGussetFin(gL, gH, t) {
+  const A = [0, -gH], B = [0, 0], C = [gL, 0];
+  const v = [];
+  const tri = (p1, p2, p3) => v.push(p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2]);
+  const p = (pt, z) => [pt[0], pt[1], z];
+  tri(p(A, t), p(B, t), p(C, t));            // 正面
+  tri(p(A, -t), p(C, -t), p(B, -t));         // 背面
+  tri(p(A, t), p(B, -t), p(B, t)); tri(p(A, t), p(A, -t), p(B, -t));   // 竖边侧
+  tri(p(B, t), p(C, -t), p(C, t)); tri(p(B, t), p(B, -t), p(C, -t));   // 顶边侧
+  tri(p(C, t), p(A, -t), p(A, t)); tri(p(C, t), p(C, -t), p(A, -t));   // 斜边侧
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(v), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/* 在指定球心处生成一圈放射 gusset 筋板（随主干方向倾斜）；center = 局部球心 {x,y,z}，up = 是否向上展开（false 向下） */
+function addGussets(parts, center, up, shaftDir, midR, span) {
+  const N = Math.max(2, Math.round(params.gussetN || 4));
+  const gH = Math.min(params.gussetH || 2, span * 0.35);
+  const gL = Math.min(params.gussetL || 1.5, span * 0.5);
+  const gT = Math.max(0.1, (params.gussetT || 0.4) / 2);
+  const r0 = midR * 0.35;   // 筋板内缘嵌入主干
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), shaftDir);
+  for (let k = 0; k < N; k++) {
+    const fin = makeGussetFin(gL, gH, gT);
+    if (!up) fin.applyMatrix4(new THREE.Matrix4().makeScale(1, -1, 1));   // 向下展开（底部）
+    fin.applyMatrix4(new THREE.Matrix4().makeTranslation(r0, 0, 0));
+    fin.applyMatrix4(new THREE.Matrix4().makeRotationY(k * 2 * Math.PI / N));
+    fin.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(q));
+    parts.push({ g: fin, x: center.x, y: center.y, z: center.z });
+  }
+}
+
 /* PrusaSlicer 风格分段支撑，落板支撑从上到下六部位：
    顶部球头(r_pin) → 锥头(独立圆台裙边) → 中部球头(r_back) → 主干(柱身) → 锥底(基座锥台) → 底板(筏层)
    顶部球头 + 锥头合称「顶端」；锚定短小支撑下部为「底端」（底部球头 + 锥头镜像，与顶端同构），无锥底；顶端与底端均可倾斜。
@@ -171,6 +207,9 @@ export function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop 
     anch.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axisB || new THREE.Vector3(0, -1, 0))));
     parts.push({ g: anch, x: poleBX, y: poleBY, z: poleBZ });
     jb = { x: poleBX - axB * (tipR + robe), y: poleBY - ayB * (tipR + robe), z: poleBZ - azB * (tipR + robe) };
+  } else if (params.gussetBase) {
+    // 底部 gusset 筋板替代锥底（e-Stage 风格）：主干直至板面，根部由放射筋板补强（见下方 gusset 块）
+    jb = { x: jt.x, y: 0, z: jt.z };
   } else {
     // 锥底（随主干水平偏移）
     const pedH = Math.min(1.2, Math.max(0.5, span * 0.15), span * 0.45);
@@ -184,6 +223,12 @@ export function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop 
     const pg = new THREE.CylinderGeometry(midR, midR, plen, SEG + 2);
     if (Math.abs(dx) + Math.abs(dz) > 1e-6) pg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / plen, dy / plen, dz / plen))));
     parts.push({ g: pg, x: jb.x + dx / 2, y: jb.y + dy / 2, z: jb.z + dz / 2 });
+  }
+  // gusset 加强筋板（e-Stage 风格）：柱顶放射筋板连接主干 → 模型接触区；落板支撑另加柱底筋板（替代锥底可选）
+  if (params.gussetOn && span >= 1.5 && plen > 0.1) {
+    const shaftDir = new THREE.Vector3(dx / plen, dy / plen, dz / plen);
+    addGussets(parts, jt, true, shaftDir, midR, span);                 // 顶部放射（所有支撑）
+    if (!anchored && params.gussetBase) addGussets(parts, { x: jb.x, y: 0, z: jb.z }, false, shaftDir, midR, span);   // 底部放射（仅落板，外端贴板面）
   }
   const geom = mergeGeoms(parts);
   const mesh = new THREE.Mesh(geom, anchored ? supMatAnchor : supMat);

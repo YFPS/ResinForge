@@ -220,14 +220,15 @@ export function addSupport(x, y, z, anchorY = null, nrmTop = null, nrmBot = null
   return mesh;   // 返回真值供调用方判定放置成功（null = 退化被拒）
 }
 
-export async function runGenSup() {
+export async function runGenSup(opts = {}) {
+  const islandsOnly = !!opts.islandsOnly;   // 自动孤岛支撑：只为孤岛位置补打（增量，不清空现有支撑）
   if (!state.analysis) return toast('请先运行逐层分析');
-  clearSupports(false);
+  if (!islandsOnly) clearSupports(false);
   const A = state.analysis;
   const spacing = Math.max(1, params.spacing);
-  // 合并两个来源：栅格悬空点 + 陡峭面重心
-  let all = [...A.overhang.map(o => ({ x: o.x, y: o.y, z: o.z })), ...A.steepPts];
-  if (!all.length) {
+  // 合并两个来源：栅格悬空点 + 陡峭面重心（孤岛模式不走普通候选池）
+  let all = islandsOnly ? [] : [...A.overhang.map(o => ({ x: o.x, y: o.y, z: o.z })), ...A.steepPts];
+  if (!all.length && !islandsOnly) {
     log('没有检测到需要支撑的悬空区域');
     updateSupStats();
     return;
@@ -263,9 +264,14 @@ export async function runGenSup() {
     all = all.filter((_, i) => (rootArea.get(find(candCell[i])) || 0) >= minSupArea);
     areaPruned = before - all.length;
   }
-  if (!all.length) {
+  if (!all.length && !islandsOnly) {
     log(`没有需要支撑的悬空区域（区域面积过滤 <${minSupArea}mm² 后为空）`);
     updateSupStats();
+    return;
+  }
+  // 孤岛模式：无孤岛关键点可放时直接提示返回（不清空、不动现有支撑）
+  if (islandsOnly && (!A.graph || !A.graph.nodes.some(n => n.island))) {
+    log('自动孤岛支撑：未检测到孤岛，无需补打');
     return;
   }
   setProgress(0.4, '均匀布点（泊松盘）…'); await nextFrame();
@@ -337,6 +343,8 @@ export async function runGenSup() {
   // 布点策略：孤岛关键点（周界+最低点）优先 → 普通悬空点体素聚类；尖端高度来自 LDI 区间入口（贴面精确）
   let suppressed = 0, placed = 0, anchoredN = 0, flushSkipped = 0, heldN = 0, stubN = 0, microN = 0;
   const MAX = 900;   // 抬高后模型底面轮廓会铺满布点，上限需覆盖底面 + 上层特征
+  const baseN = islandsOnly ? state.supports.filter(s => !s.scaffold).length : 0;   // 增量模式：上限含既有支撑
+  const ndMap = A.graph ? new Map(A.graph.nodes.map(n => [n.id, n])) : null;
   const posL = state.mesh.geometry.attributes.position.array;
   const rh = raiseH();
   // 世界系顶点（局部 + 抬高）：与分析产出的世界系悬空点、Y 分桶保持一致
@@ -528,14 +536,28 @@ export async function runGenSup() {
     shaftList.push({ x: c.x + (m.userData.jx || 0), z: c.z + (m.userData.jz || 0), yLo: yLo - 0.2, yHi: c.y + 0.2 });
     if (m.userData.jbx !== undefined) shaftList.push({ x: c.x + m.userData.jbx, z: c.z + m.userData.jbz, yLo: yLo - 0.2, yHi: c.y + 0.2 });
   };
+  // 增量模式：预登记现有支撑站位，新放支撑避开旧支撑（杆身防粘连）
+  if (islandsOnly) {
+    for (const s of state.supports) {
+      if (s.scaffold) continue;
+      const g = s.mesh.geometry; g.computeBoundingBox();
+      const yLo = g.boundingBox.min.y + s.mesh.position.y - 0.1, yHi = g.boundingBox.max.y + s.mesh.position.y + 0.1;
+      shaftList.push({ x: s.x + (s.mesh.userData.jx || 0), z: s.z + (s.mesh.userData.jz || 0), yLo, yHi });
+      if (s.mesh.userData.jbx !== undefined) shaftList.push({ x: s.x + s.mesh.userData.jbx, z: s.z + s.mesh.userData.jbz, yLo, yHi });
+    }
+  }
   // 第一相：孤岛关键点（种子预置，占位进泊松哈希 + 覆盖锥）。
   // 种子间同样做杆身互撞检查——多岛屿密集模型上「首根豁免」会让密集区种子互贴（实测 223 岛 1002 对互粘）；
   // 被挡种子的孤岛由相邻岛屿的支撑物理覆盖 rim（同一悬空区域的相邻区域），不强制补放。
   let keyPlaced = 0, seedFused = 0;
   let seedI = 0;
   for (const c of keypoints) {
-    if (placed >= MAX) break;
+    if (placed + baseN >= MAX) break;
     if (++seedI % 2000 === 0) { setProgress(0.45, '孤岛关键点布点…'); await nextFrame(); }   // 周期让帧，防主线程冻结
+    if (islandsOnly) {   // 增量：该孤岛附近已有支撑则跳过（同覆盖兜底 near 判据）
+      const nd = ndMap && ndMap.get(c.node);
+      if (nd && state.supports.some(s => !s.scaffold && Math.hypot(s.x - nd.cx, s.z - nd.cz) < 2 && Math.abs(s.y - nd.y) < 2)) continue;
+    }
     const below = useShort ? findBelow(c.x, c.y, c.z) : null;
     const yLo = below ? below.y : 0;
     if (shaftFused(c.x, c.z, yLo - 0.2, c.y + 0.2)) { seedFused++; continue; }
@@ -550,8 +572,8 @@ export async function runGenSup() {
   }
   let sampled = 0, covPruned = 0, fusePruned = 0, shaftPruned = 0;
   let poolI = 0;
-  for (const c of clusters) {
-    if (placed >= MAX) break;
+  for (const c of islandsOnly ? [] : clusters) {   // 孤岛模式：不走普通候选池
+    if (placed + baseN >= MAX) break;
     if (++poolI % 2000 === 0) { setProgress(0.5 + 0.15 * poolI / clusters.length, '布点过滤（泊松/覆盖锥/防粘连）…'); await nextFrame(); }   // 周期让帧，防主线程冻结
     if (!farFromPlaced(c.x, c.y, c.z)) continue;   // 泊松盘最小间距（3D）
     if (coveredBy(c)) { covPruned++; continue; }    // 覆盖锥过滤
@@ -583,7 +605,7 @@ export async function runGenSup() {
       if (near) continue;
       const kps = keypoints.filter(c => c.node === nd.id);   // 该孤岛的全部关键点逐个尝试，直到一根落地
       for (const kp of kps) {
-        if (placed >= MAX) break;
+        if (placed + baseN >= MAX) break;
         const r = tryPlace(kp, useShort ? findBelow(kp.x, kp.y, kp.z) : null);
         if (r === 'placed') {
           coverFix++; keyPlaced++;
@@ -597,7 +619,7 @@ export async function runGenSup() {
   // 终检去重（最后执行）：放置期无法预知候选自身的球心偏移（倾斜端头互甩），事后按真球心站位复核清冗。
   // 互粘对去冗策略：普通池优先于种子；同为种子（含兜底）不清——相邻孤岛被同一支撑钉住属可接受。
   let deduped = 0;
-  {
+  if (!islandsOnly) {   // 增量模式不清既有支撑，跳过终检去重（新放种子互贴同为 seed 本就不清）
     const ents = [];
     state.supports.forEach((s, idx) => {
       const g = s.mesh.geometry; g.computeBoundingBox();
@@ -631,7 +653,13 @@ export async function runGenSup() {
   }
   setProgress(null);
   const crossN = buildScaffold();   // 脚手架：相邻落板立柱间 X 形交叉横梁（幂等重建）
-  log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，微型短柱 ${microN}，过短跳过 ${stubN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
+  if (islandsOnly) {
+    const islTotal = A.graph ? A.graph.nodes.filter(n => n.island).length : 0;
+    if (!placed) log('自动孤岛支撑：所有孤岛附近均已有支撑，无需补打');
+    else log(`自动孤岛支撑：新增 ${placed} 根（孤岛 ${islTotal} 处 · 关键点补打 ${keyPlaced}，锚定 ${anchoredN}，落板 ${placed - anchoredN}，微型短柱 ${microN}，已托住跳过 ${heldN}，过短跳过 ${stubN}）`, 'ok');
+  } else {
+    log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，微型短柱 ${microN}，过短跳过 ${stubN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
+  }
   if (params.scaffoldOn) log(`脚手架横梁：${crossN} 根交叉梁（起始高 ${params.crossStartH}mm · Z 间距 ${params.crossZStep}mm · XY ≤ ${params.crossMaxXY}mm）`, crossN ? 'ok' : 'warn');
   updateSupStats();
   if (state.analysis) drawLayer();

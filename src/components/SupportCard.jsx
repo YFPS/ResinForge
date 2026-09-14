@@ -1,20 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Checkbox, InputNumber } from '@arco-design/web-react';
+import { Button, Checkbox, InputNumber, Tooltip } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { bus } from '../store.js';
 import { runGenSup, clearSupports, buildScaffold, updateSupStats } from '../core/support.js';
 
-/* 支撑生成：顶端/锥头/底盘/间距等几何参数 + 短小支撑开关 + 生成/清空 + supStats（订阅 bus 'supStats'） */
+/* 支撑生成：顶端/锥头/底盘/间距等几何参数 + 短小支撑开关 + 脚手架交叉横梁 +
+   自动支撑（全流程，清空重建）/ 自动孤岛支撑（只为孤岛位置增量补打）+ supStats（订阅 bus 'supStats'） */
 export default function SupportCard() {
   const [params, setParam] = useParams();
   const [loading, setLoading] = useState(false);
+  const [loadingIsl, setLoadingIsl] = useState(false);
   const [stats, setStats] = useState(null);
   useEffect(() => bus.on('supStats', setStats), []);
 
-  const start = async () => {
-    setLoading(true);
-    try { await runGenSup(); } finally { setLoading(false); }
+  const start = async (isl) => {
+    isl ? setLoadingIsl(true) : setLoading(true);
+    try { await runGenSup({ islandsOnly: isl }); } finally { isl ? setLoadingIsl(false) : setLoading(false); }
   };
 
   return (
@@ -50,7 +52,10 @@ export default function SupportCard() {
       )}
       <div className="hint" style={{ marginTop: 2 }}>支撑为分段结构（顶端→柱身→基座/底端），顶端球头扎入表面微量深度（嵌入深度可调）。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到筏层（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
       <div className="row">
-        <Button type="primary" style={{ flex: 1 }} loading={loading} onClick={start}>自动生成支撑</Button>
+        <Button type="primary" style={{ flex: 1 }} loading={loading} onClick={() => start(false)}>自动支撑</Button>
+        <Tooltip content="仅为检测到的孤岛位置补打支撑（不清空现有支撑）">
+          <Button style={{ flex: 1 }} loading={loadingIsl} onClick={() => start(true)}>自动孤岛支撑</Button>
+        </Tooltip>
         <Button onClick={() => clearSupports()}>清空</Button>
       </div>
       {stats && (

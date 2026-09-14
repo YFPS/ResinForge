@@ -175,11 +175,12 @@ npm run build     # 产物到 dist/
   3. 各段不做布尔并集，重叠实体在切片偶奇填充下自然合并（同 PrusaSlicer `its_merge`），合并为单一 Mesh
 - 支撑数量上限 900；抬高后模型底面轮廓会铺满布点，占用较多配额。
 
-### 脚手架（交叉横梁，`buildScaffold`）
+### 脚手架（菱形格架，`buildScaffold`）
 
-- 依据 CHITUBOX「交叉结构」体系：相邻**落板立柱**之间按 Z 层间隔生成 **X 形交叉斜梁**，把孤立立柱连成格架（抗摆刚性大幅提升，软料/大件必需）。锚定短小支撑不参与（两端已在模型上）。
-- 参数（对应 CHITUBOX）：`crossD` 交叉结构直径（默认 0.5mm）、`crossStartH` 交叉生成起始高度（默认 3mm，相对平台）、`crossZStep` Z 向最小间距（默认 5mm）、`crossMaxXY` XY 最大间距（默认 8mm）。
-- 算法：每根落板立柱连接 XY ≤ crossMaxXY 内最近 2 根（去重边）；每条边在「两柱主干共同高度 ∩ [起始高, 柱身尽端]」内按 crossZStep 布层，每层一对 X 斜梁（半高 ≤ min(zStep/2, 距离/2)，斜率 ≤45°）；梁两端没入立柱主干（重叠搭接不布尔）。全部横梁合并为单一 Mesh（绿色同落板支撑），`state.supports` 中登记为 `scaffold: true` 项（随清空/导出/点删一并处理；supStats 计数不含横梁）。
+- 结构参考 **Materialise e-Stage**（open diamond structure：开放菱形格防树脂滞留、省料易拆）与 **TANGO V-Support**（立柱 + 横梁组成连续栅栏墙片）：相邻**落板立柱**之间沿高度连续布置**菱形格**，横向连成墙片，整片支撑成为一体格架。锚定短小支撑不参与（两端已在模型上）。
+- **菱形格**：每根立柱连接 XY ≤ crossMaxXY 内最近 2 根（去重边）；每条边在「两柱主干共同高度 ∩ 起始高度以上」内按格高 crossZStep 逐格布置；**每格四梁汇于中心节点**（两柱上下端点 → 格中心）——中心节点是真实连接（四梁合一），比 X 交叉（空中相交无节点）刚性更好。
+- 参数：`crossD` 梁直径（默认 0.5mm）、`crossStartH` 起始高度（默认 3mm，相对平台）、`crossZStep` 菱形格高度（默认 5mm）、`crossMaxXY` 柱距上限（默认 8mm）。
+- 梁两端没入立柱主干（重叠搭接不布尔）；全部横梁合并为单一 Mesh（绿色同落板支撑），`state.supports` 中登记为 `scaffold: true` 项（随清空/导出/点删一并处理；supStats 计数不含横梁）。
 - 幂等重建：`runGenSup` 末尾自动调用；UI 开关切换时也会清旧重建。
 
 ### STL 导出

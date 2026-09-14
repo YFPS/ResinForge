@@ -40,7 +40,7 @@ export default function SupportCard() {
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（锚定模型表面）</Checkbox>
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.scaffoldOn} onChange={v => { setParam('scaffoldOn', v); buildScaffold(); updateSupStats(); }}>脚手架（立柱间交叉横梁）</Checkbox>
+        <Checkbox checked={params.scaffoldOn} onChange={v => { setParam('scaffoldOn', v); buildScaffold(); updateSupStats(); }}>脚手架（菱形格架，e-Stage 风格）</Checkbox>
       </div>
       {params.scaffoldOn && (
         <div className="row">

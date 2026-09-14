@@ -1,11 +1,14 @@
 /* ================================================================
    支撑热力图（heat.js）
    在模型表面用颜色梯度显示「哪里需要支撑、需要多强」：
-   - 热度 = 悬空角超出量（法线越过自支撑角的程度，越接近竖直朝下越热）
+   - 热度 = 悬空角超出量（越过自支撑角的程度，越接近竖直朝下越热）
            × 悬空高差调制（有精分析 LDI 时：下方 <0.8mm 有材料 = 已托住不热；
              高差越大越热，8mm 封顶——与支撑生成的「已托住豁免」口径一致）
-   - 无分析数据时退化为纯角度判定
-   配色：深蓝(无需支撑) → 青 → 绿 → 黄 → 红(强需求)；保护面在热力图模式下用紫色，
+   - 无分析数据时退化为纯角度
+   **平滑实现**：热度直接在「平滑顶点法线」上计算（非索引几何的重复顶点按位置合并，
+   邻接面法线按面积加权平均成连续法线场）——热度场天生光滑，不做「面热度→顶点平均」
+   的二次平滑（那会沿三角拓扑扩散出波浪纹）。最后仅 1 轮轻度邻域扩散去毛刺。
+   配色：亮灰蓝(无需支撑) → 青 → 绿 → 黄 → 橙红 → 红(强需求)；保护面在热力图模式下用紫色，
    避免与红色热点混淆（关闭后恢复红色）。
    联动：分析完成 / 换模型 / 保护面变更 时若开关开着则自动重算重绘。
 ================================================================ */
@@ -16,7 +19,7 @@ import { RAFT_T } from './model.js';
 let heatOn = false;
 export const isHeatOn = () => heatOn;
 
-/* 热力色带：t∈[0,1]，深蓝 → 青 → 绿 → 黄 → 红 */
+/* 热力色带：t∈[0,1]，亮灰蓝 → 青 → 绿 → 黄 → 橙红 → 红 */
 const STOPS = [
   [0.00, [0.36, 0.47, 0.62]],   // 无需支撑：亮灰蓝（保持模型体积感，顶点色乘算会压暗）
   [0.08, [0.10, 0.62, 0.95]],   // 青（弱需求很快显色）
@@ -43,64 +46,59 @@ const PROT_HOT = [0.80, 0.30, 0.95];   // 热力图模式下的保护面：紫
 const PROT_STD = [1, 0.38, 0.38];      // 常规模式保护面：红
 const protColor = () => heatOn ? PROT_HOT : PROT_STD;
 
-/* 逐面热度计算：写入 state.faceHeat（Float32Array，0..1；0 = 无需支撑） */
-export function computeFaceHeat() {
-  const faces = state.faces;
-  if (!state.mesh || !faces) return null;
-  const { nrm, cent } = faces;
-  const nf = nrm.length / 3;
-  const heat = new Float32Array(nf);
+/* 顶点热度计算（平滑法线场 + LDI 高差）：
+   输出 state.vertHeat = { vid, vh }——vid: 渲染顶点 → 唯一顶点；vh: 唯一顶点热度 0..1 */
+export function computeVertHeat() {
+  if (!state.mesh || !state.faces) return null;
+  const pos = state.mesh.geometry.attributes.position;
+  const n = pos.count;
+  const { nrm, area } = state.faces;
   const cosv = Math.cos(params.selfAngle * Math.PI / 180);
   const ld = state.analysis && state.analysis.ld ? state.analysis.ld : null;
   const raise = state.analysis ? state.analysis.raiseH : params.raiseH;
-  const floorY = params.raftOn ? RAFT_T : 0;   // 与支撑落点口径一致
-  for (let f = 0; f < nf; f++) {
-    const ny = nrm[f * 3 + 1];
-    if (ny >= -cosv) continue;                            // 未越过自支撑角：自支撑，无需支撑
-    const e = Math.min(1, (-ny - cosv) / (1 - cosv));     // 角度超出量：阈值处 0 → 全朝下 1
-    const e2 = Math.pow(e, 0.6);                          // 低热区提亮（大部分悬面并非全朝下）
-    let hFac = 1;                                         // 无分析数据：纯角度
-    if (ld) {
-      const wx = cent[f * 3], wy = cent[f * 3 + 1] + raise, wz = cent[f * 3 + 2];
-      const i = Math.min(ld.W - 1, Math.max(0, Math.floor((wx - ld.x0) / ld.sx)));
-      const j = Math.min(ld.H - 1, Math.max(0, Math.floor((wz - ld.z0) / ld.sz)));
-      const c = j * ld.W + i;
-      // 重心微下沉后查询所在材料区间；取不到（列边沿偏差）则按纯角度处理
-      const info = ldiGapAt(ld, c, wy - 0.02, floorY) || ldiGapAt(ld, c, wy, floorY);
-      if (info) {
-        if (info.gap < 0.8) { heat[f] = 0; continue; }    // 下方 0.8mm 内有材料：已托住
-        hFac = 0.35 + 0.65 * Math.min(1, info.gap / 8);   // 高差越大越热，8mm 封顶
-      }
-    }
-    heat[f] = e2 * hFac;
-  }
-  state.faceHeat = heat;
-  state.vertHeatMap = null;   // 顶点映射随热度重算失效（几何或参数已变）
-  return heat;
-}
+  const floorY = params.raftOn ? RAFT_T : 0;
 
-/* 面热度 → 顶点热度：非索引几何的重复顶点按位置合并（量化 1e-4mm），
-   邻接面热度按面积加权平均；再做 2 轮邻域 Jacobi 扩散，得到连续渐变。
-   缓存于 state.vertHeatMap（随几何变化失效重建）。 */
-function buildVertexHeat(heat) {
-  const pos = state.mesh.geometry.attributes.position;
-  const n = pos.count;
-  const area = state.faces ? state.faces.area : null;
+  // 1) 唯一顶点合并（量化 1e-4mm）+ 平滑顶点法线（邻接面法线按面积加权）
   const vid = new Int32Array(n);
   const map = new Map();
-  const acc = [];   // [热度×面积 Σ, 面积 Σ]
+  const accN = [];   // [Σnx·w, Σny·w, Σnz·w]
+  const upos = [];   // 唯一顶点局部坐标（首个代表）
   for (let v = 0; v < n; v++) {
-    const key = Math.round(pos.getX(v) * 1e4) + '_' + Math.round(pos.getY(v) * 1e4) + '_' + Math.round(pos.getZ(v) * 1e4);
+    const x = pos.getX(v), y = pos.getY(v), z = pos.getZ(v);
+    const key = Math.round(x * 1e4) + '_' + Math.round(y * 1e4) + '_' + Math.round(z * 1e4);
     let id = map.get(key);
-    if (id === undefined) { id = acc.length; map.set(key, id); acc.push([0, 0]); }
+    if (id === undefined) { id = accN.length; map.set(key, id); accN.push([0, 0, 0]); upos.push(x, y, z); }
     vid[v] = id;
-    const f = (v / 3) | 0, w = area ? area[f] : 1;
-    acc[id][0] += heat[f] * w; acc[id][1] += w;
+    const f = (v / 3) | 0, w = area[f] || 1;
+    accN[id][0] += nrm[f * 3] * w; accN[id][1] += nrm[f * 3 + 1] * w; accN[id][2] += nrm[f * 3 + 2] * w;
   }
-  const nu = acc.length;
+  const nu = accN.length;
+
+  // 2) 逐唯一顶点热度：平滑法线 y → 角度超出量（0.6 次幂提亮低热区）× LDI 高差调制
   let vh = new Float32Array(nu);
-  for (let i = 0; i < nu; i++) vh[i] = acc[i][1] > 0 ? acc[i][0] / acc[i][1] : 0;
-  // 唯一顶点邻接表（由三角形边建立）
+  for (let i = 0; i < nu; i++) {
+    const nx = accN[i][0], ny = accN[i][1], nz = accN[i][2];
+    const len = Math.hypot(nx, ny, nz) || 1;
+    const sny = ny / len;
+    if (sny >= -cosv) continue;                            // 未越过自支撑角：自支撑
+    const e = Math.min(1, (-sny - cosv) / (1 - cosv));
+    const e2 = Math.pow(e, 0.6);
+    let hFac = 1;
+    if (ld) {
+      const wx = upos[i * 3], wy = upos[i * 3 + 1] + raise, wz = upos[i * 3 + 2];
+      const ci = Math.min(ld.W - 1, Math.max(0, Math.floor((wx - ld.x0) / ld.sx)));
+      const cj = Math.min(ld.H - 1, Math.max(0, Math.floor((wz - ld.z0) / ld.sz)));
+      const c = cj * ld.W + ci;
+      const info = ldiGapAt(ld, c, wy - 0.02, floorY) || ldiGapAt(ld, c, wy, floorY);
+      if (info) {
+        if (info.gap < 0.8) { vh[i] = 0; continue; }       // 下方 0.8mm 内有材料：已托住
+        hFac = 0.35 + 0.65 * Math.min(1, info.gap / 8);    // 高差越大越热，8mm 封顶
+      }
+    }
+    vh[i] = e2 * hFac;
+  }
+
+  // 3) 1 轮轻度邻域 Jacobi 扩散（0.75 自身 + 0.25 邻域平均）：去 LDI 栅格毛刺，不引入拓扑波浪
   const adj = new Map();
   const link = (a, b) => {
     if (a === b) return;
@@ -111,28 +109,29 @@ function buildVertexHeat(heat) {
     const a = vid[f * 3], b = vid[f * 3 + 1], c = vid[f * 3 + 2];
     link(a, b); link(b, c); link(c, a);
   }
-  // 2 轮 Jacobi 扩散（0.6 保留自身 + 0.4 邻域平均）：抹平色带边缘
-  for (let it = 0; it < 2; it++) {
+  {
     const next = new Float32Array(vh);
     for (const [i, s] of adj) {
       let sum = 0;
       for (const j of s) sum += vh[j];
-      next[i] = vh[i] * 0.6 + (sum / s.size) * 0.4;
+      next[i] = vh[i] * 0.75 + (sum / s.size) * 0.25;
     }
     vh = next;
   }
-  state.vertHeatMap = { vid, vh };
+  state.vertHeat = { vid, vh };
+  state.faceHeat = null;   // 兼容字段：顶点模式不再使用逐面热度
+  return state.vertHeat;
 }
 
-/* 把热度写入顶点色（顶点级平滑：同一面三个顶点颜色不同，GPU 插值成渐变；保护面覆盖为紫） */
+/* 把热度写入顶点色（同一面三个顶点颜色不同，GPU 插值成连续渐变；保护面覆盖为紫） */
 export function applyHeatColors() {
-  if (!state.mesh || !state.faceHeat) return;
-  if (!state.vertHeatMap || state.vertHeatMap.vid.length !== state.mesh.geometry.attributes.position.count) buildVertexHeat(state.faceHeat);
+  if (!state.mesh || !state.vertHeat) return;
   const ca = state.mesh.geometry.attributes.color;
-  const { vid, vh } = state.vertHeatMap;
-  const heat = state.faceHeat, prot = state.protectedFaces;
+  const { vid, vh } = state.vertHeat;
+  const prot = state.protectedFaces;
+  const nf = vid.length / 3;
   const rgb = [0, 0, 0];
-  for (let f = 0; f < heat.length; f++) {
+  for (let f = 0; f < nf; f++) {
     const v = f * 3;
     if (prot.has(f)) {
       for (let k = 0; k < 3; k++) ca.setXYZ(v + k, PROT_HOT[0], PROT_HOT[1], PROT_HOT[2]);
@@ -161,7 +160,7 @@ export function restoreColors() {
 
 function refresh() {
   if (!state.mesh) return;
-  computeFaceHeat();
+  computeVertHeat();
   applyHeatColors();
 }
 

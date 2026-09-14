@@ -20,12 +20,17 @@ export const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
 camera.position.set(95, 75, 95);
 
 /* 光照 = 方向光塑形 + 环境光（IBL）兜底：RoomEnvironment 经 PMREM 预滤波后作 scene.environment，
-   等效简单全局光照——背光面/底面不再死黑（热力图在阴影区也可读）。envMapIntensity 按材质微调。 */
-scene.add(new THREE.HemisphereLight(0xcdd9e5, 0x0d1117, 0.4));
+   等效简单全局光照。支撑检查要求任意角度不死黑：
+   - 半球光地面色用中灰蓝（非近黑）——底面/侧下面的基础补光
+   - 底部反向填充光（dl3，从下往上打）——抬亮正下方视角
+   envMapIntensity 按材质微调。 */
+scene.add(new THREE.HemisphereLight(0xcdd9e5, 0x55677e, 0.55));
 const dl = new THREE.DirectionalLight(0xffffff, 1.1);
 dl.position.set(60, 120, 40); scene.add(dl);
 const dl2 = new THREE.DirectionalLight(0x8899aa, 0.35);
 dl2.position.set(-80, 40, -60); scene.add(dl2);
+const dl3 = new THREE.DirectionalLight(0xaabbcc, 0.5);   // 底部填充：正下视角不死黑
+dl3.position.set(-20, -100, 30); scene.add(dl3);
 scene.add(new THREE.AxesHelper(12));
 
 export const modelGroup = new THREE.Group(); scene.add(modelGroup);

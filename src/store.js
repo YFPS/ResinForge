@@ -38,9 +38,9 @@ export const params = {
   /* gusset 加强筋板（e-Stage 风格：柱顶放射三角筋板连接主干 → 接触区） */
   gussetOn: true,     // 顶部放射筋板（所有支撑）
   gussetBase: true,   // 底部放射筋板替代锥底（仅落板支撑）
-  gussetN: 4,         // 每端筋板数量（放射均布）
-  gussetH: 2,         // 筋板高度（mm）
-  gussetL: 1.5,       // 筋板外展长度（mm）
+  gussetN: 4,         // 柱顶筋板数量（放射均布；柱底固定 2 片对置）
+  gussetH: 1.5,       // 筋板高度（mm）
+  gussetL: 0.8,       // 筋板外展长度（mm，小外展才像 e-Stage 筋板而非喇叭裙）
   gussetT: 0.4,       // 筋板厚度（mm）
   /* 支撑塔模式（e-Stage 块状格架单元：底座 + 四角主柱镂空晶格塔 + 顶部放射接触杆） */
   towerOn: false,     // 支撑塔模式开关（落板支撑聚类为格架塔，替代独立 pin）

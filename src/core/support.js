@@ -238,9 +238,9 @@ function makeGussetFin(gL, gH, t) {
   return g;
 }
 
-/* 在指定球心处生成一圈放射 gusset 筋板（随主干方向倾斜）；center = 局部球心 {x,y,z}，up = 是否向上展开（false 向下） */
-function addGussets(parts, center, up, shaftDir, midR, span) {
-  const N = Math.max(2, Math.round(params.gussetN || 4));
+/* 在指定球心处生成一圈放射 gusset 筋板（随主干方向倾斜）；center = 局部球心 {x,y,z}，up = 是否向上展开（false 向下），n = 筋板数量 */
+function addGussets(parts, center, up, shaftDir, midR, span, n) {
+  const N = Math.max(2, Math.round(n || params.gussetN || 4));
   const gH = Math.min(params.gussetH || 2, span * 0.35);
   const gL = Math.min(params.gussetL || 1.5, span * 0.5);
   const gT = Math.max(0.1, (params.gussetT || 0.4) / 2);
@@ -346,7 +346,7 @@ export function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop 
   if (params.gussetOn && span >= 1.5 && plen > 0.1) {
     const shaftDir = new THREE.Vector3(dx / plen, dy / plen, dz / plen);
     addGussets(parts, jt, true, shaftDir, midR, span);                 // 顶部放射（所有支撑）
-    if (!anchored && params.gussetBase) addGussets(parts, { x: jb.x, y: 0, z: jb.z }, false, shaftDir, midR, span);   // 底部放射（仅落板，外端贴板面）
+    if (!anchored && params.gussetBase) addGussets(parts, { x: jb.x, y: 0, z: jb.z }, false, shaftDir, midR, span, 2);   // 底部筋板（仅落板）：2 片对置小三角（e-Stage 底撑形态），外端贴板面
   }
   const geom = mergeGeoms(parts);
   const mesh = new THREE.Mesh(geom, anchored ? supMatAnchor : supMat);

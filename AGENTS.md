@@ -186,9 +186,9 @@ npm run build     # 产物到 dist/
 
 ### 支撑塔模式（`buildTowers`，e-Stage 块状格架单元）
 
-- 按支撑结构分解图复刻：**底座（T）**（四面墙体框：上/下轨 + 两侧立柱 + 中心**菱形孔边框**（4 斜杆围出菱孔））+ **镂空支撑塔**（四角主柱 + 四面斜杆菱形晶格，复用 `diamondRun`；主柱截面同主干规则）+ **顶部接触杆（C）**（塔内每个接触点一根锥杆：底径 `rodR` → 尖径 r_pin，从塔顶框最近点斜拉到接触面，尖端沿杆轴扎入 pen）。
+- 按支撑结构分解图及其参考实现复刻：**底座（T）**（四壁**实体板冲菱形孔**——Shape holes + ExtrudeGeometry 真冲孔，孔径按底座高收敛防越界丢弃，加顶/底板）+ **镂空支撑塔**（四角方柱 + 四面 **X 交叉方杆晶格**（节距 towerCellH，方杆截面 towerBar））+ **顶部接触杆（C）**（塔内每个接触点一根锥杆：底径 `rodR` → 尖径 r_pin，从塔顶框最近点斜拉到接触面，尖端沿杆轴扎入 pen）。
 - 落板支撑点按塔格（`towerW`，默认 6mm）XZ 聚类，每格一座塔；塔顶高度 = 格内最高接触点 − 接触杆预留（≈2×rodR 或跨度 20%）；塔间重叠按 its_merge 语义自然合并成连续格架块。
-- 参数：`towerOn`（默认关，切换后需重新生成）、`towerW` 塔宽 6mm、`towerPostR` 角柱半径 0.5mm、`towerCellH` 晶格层高 4mm、`rodR` 接触杆底径 0.5mm、`baseT` 底座高 1mm。
+- 参数：`towerOn`（默认关，切换后需重新生成）、`towerW` 塔宽 6mm、`towerPostR` 角柱半径 0.5mm、`towerCellH` 晶格节距 4mm、`rodR` 接触杆底径 0.5mm、`baseT` 底座高 1.5mm、`towerBar` 斜杆截面 0.5mm、`towerWall` 底座壁厚 0.6mm、`towerHole` 菱孔对角线 0.9mm。
 - 塔登记为 `tower: true` 支撑项（随清空/导出/点删处理）；锚定短小支撑不受影响；塔模式下脚手架格架跳过。
 
 ### STL 导出

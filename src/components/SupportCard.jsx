@@ -50,6 +50,13 @@ export default function SupportCard() {
           <label className="f"><span>底座高</span><InputNumber value={params.baseT} min={0.5} max={3} step={0.1} onChange={v => setParam('baseT', v)} />mm</label>
         </div>
       )}
+      {params.towerOn && (
+        <div className="row">
+          <label className="f"><span>斜杆截面</span><InputNumber value={params.towerBar} min={0.2} max={1.5} step={0.1} onChange={v => setParam('towerBar', v)} />mm</label>
+          <label className="f"><span>底座壁厚</span><InputNumber value={params.towerWall} min={0.3} max={1.5} step={0.1} onChange={v => setParam('towerWall', v)} />mm</label>
+          <label className="f"><span>菱孔对角线</span><InputNumber value={params.towerHole} min={0.5} max={3} step={0.1} onChange={v => setParam('towerHole', v)} />mm</label>
+        </div>
+      )}
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.gussetOn} onChange={v => setParam('gussetOn', v)}>柱顶加强筋板（gusset）</Checkbox>
         <Checkbox checked={params.gussetBase} onChange={v => setParam('gussetBase', v)}>底部筋板代锥底</Checkbox>

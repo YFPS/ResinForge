@@ -108,11 +108,44 @@ export function buildScaffold() {
   return parts.length;
 }
 
+/* 两点间方截面杆（斜杆/晶格用，e-Stage 方杆）；beamTo 为圆杆版本 */
+function beamBoxTo(parts, size, px, py, pz, qx, qy, qz) {
+  const dx = qx - px, dy = qy - py, dz = qz - pz;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 0.2) return;
+  const g = new THREE.BoxGeometry(size, len, size);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(
+    new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len))));
+  parts.push({ g, x: px + dx / 2, y: py + dy / 2, z: pz + dz / 2 });
+}
+/* 带菱形孔的墙板（参考实现 basePanel）：Shape 矩形 + 菱形 holes + ExtrudeGeometry（真冲孔，非边框近似）。
+   局部：x∈[-width/2, width/2]，y∈[0, height]，沿 +Z 挤出 wall 厚。 */
+function basePanelGeom(width, height, wall, hole) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-width / 2, 0); shape.lineTo(width / 2, 0);
+  shape.lineTo(width / 2, height); shape.lineTo(-width / 2, height);
+  shape.closePath();
+  const s = hole / 2;
+  const margin = hole * 0.9;
+  const usable = Math.max(hole, width - 2 * margin);
+  const count = Math.max(1, Math.round(usable / (hole * 1.9)));
+  for (let i = 0; i < count; i++) {
+    const hx = -usable / 2 + usable * (i + 0.5) / count;
+    const cy = height / 2;
+    const p = new THREE.Path();
+    p.moveTo(hx, cy - s); p.lineTo(hx + s, cy); p.lineTo(hx, cy + s); p.lineTo(hx - s, cy);
+    p.closePath();
+    shape.holes.push(p);
+  }
+  return new THREE.ExtrudeGeometry(shape, { depth: wall, bevelEnabled: false });
+}
+
 /* ================================================================
-   支撑塔模式（e-Stage 块状格架单元——按支撑结构分解图复刻）：
-   底座（T：上/下口字框 + 四面斜撑成菱孔）+ 镂空支撑塔（四角主柱 + 四面斜杆晶格）+ 顶部接触杆（C：放射锥杆）。
-   落板支撑点按塔格（towerW）聚类，每格一座塔；塔内每个接触点一根锥杆从塔顶框斜拉到接触面。
-   塔间重叠按 its_merge 语义自然合并（连续格架块）；锚定短小支撑不受影响。
+   支撑塔模式（e-Stage 块状格架单元——按支撑结构分解图及其参考实现复刻）：
+   底座（T：四壁实体板冲菱形孔 + 顶/底板）+ 镂空支撑塔（四角方柱 + 四面 X 交叉方杆晶格）
+   + 顶部接触杆（C：放射锥杆，底径 rodR → 尖径，外倾斜拉到接触面）。
+   落板支撑点按塔格（towerW）聚类，每格一座塔；塔间重叠按 its_merge 语义自然合并（连续格架块）；
+   锚定短小支撑不受影响。
 ================================================================ */
 function makeTowerMesh(cx, yTopContact, cz, cellPts) {
   const yB = baseY();
@@ -139,38 +172,36 @@ function makeTowerMesh(cx, yTopContact, cz, cellPts) {
       x: ox, y: yB + (yTowerTop - yB) / 2, z: oz
     });
   }
-  // 底座（T，按详图③）：四面墙体，每墙 = 上/下轨 + 两侧立柱 + 中心菱形孔边框（4 斜杆围出菱孔）
-  const railT = Math.max(0.2, postR * 0.8);
-  const yW0 = yB, yW1 = yB + baseT;                    // 墙体下/上沿
+  // 底座（T，按参考实现 buildBase）：四壁 = 实体板冲菱形孔（Shape holes + Extrude），加顶/底板
+  const wall = Math.max(0.3, params.towerWall || 0.6);
+  const hole = Math.max(0.4, Math.min(params.towerHole || 1.2, baseT - 0.4));   // 孔必须小于墙高，否则越界被三角化丢弃
+  const wallW = W;   // 墙板宽 = 塔宽（对齐参考：墙在塔身外侧面上）
   for (let f = 0; f < 4; f++) {
-    const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
-    const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz) + postR * 2;
-    const ang = -Math.atan2(dz, dx);
-    const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
-    const rail = (y) => {
-      const g = new THREE.BoxGeometry(len, railT, railT);
-      g.applyMatrix4(new THREE.Matrix4().makeRotationY(ang));
-      parts.push({ g, x: mx, y, z: mz });
-    };
-    rail(yW0 + railT / 2); rail(yW1 - railT / 2);      // 上/下轨
-    for (const [px, pz] of [[x1, z1], [x2, z2]]) {     // 两侧立柱
-      parts.push({ g: new THREE.BoxGeometry(railT, baseT - railT * 2, railT), x: px, y: (yW0 + yW1) / 2, z: pz });
-    }
-    // 菱孔边框：墙内菱形四顶点（左/上/右/下）顺次连斜杆
-    const inL = Math.min(len / 2 - railT, baseT / 2);  // 菱形半宽（受墙高限制）
-    const ux = dx / (len - postR * 2), uz = dz / (len - postR * 2);   // 墙面方向单位向量
-    const midY = (yW0 + yW1) / 2, halfH = baseT / 2 - railT;
-    const L = [mx - ux * inL, midY, mz - uz * inL], Tp = [mx, midY + halfH, mz];
-    const Rt = [mx + ux * inL, midY, mz + uz * inL], Bt = [mx, midY - halfH, mz];
-    beamTo(parts, railT * 0.7, L[0], L[1], L[2], Tp[0], Tp[1], Tp[2]);
-    beamTo(parts, railT * 0.7, Tp[0], Tp[1], Tp[2], Rt[0], Rt[1], Rt[2]);
-    beamTo(parts, railT * 0.7, Rt[0], Rt[1], Rt[2], Bt[0], Bt[1], Bt[2]);
-    beamTo(parts, railT * 0.7, Bt[0], Bt[1], Bt[2], L[0], L[1], L[2]);
+    const g = basePanelGeom(wallW, baseT, wall, hole);
+    g.applyMatrix4(new THREE.Matrix4().makeRotationY(f * Math.PI / 2));
+    // 墙板局部：x∈[-W/2,W/2]、y∈[0,baseT]、z∈[0,wall]（挤出向内）；旋转 f·90° 后平移到对应侧面
+    const off = [                          // 目标：外侧面与塔身边线平齐（z/x = ±W/2）
+      [0, yB, W / 2 - wall],               // f=0 +Z 面
+      [W / 2 - wall, yB, 0],               // f=1 +X 面
+      [0, yB, -(W / 2 - wall)],            // f=2 −Z 面
+      [-(W / 2 - wall), yB, 0],            // f=3 −X 面
+    ][f];
+    parts.push({ g, x: off[0], y: off[1], z: off[2] });
   }
-  // 四面斜杆晶格（底座上轨 → 塔顶，复用菱形格）
+  parts.push({ g: new THREE.BoxGeometry(W, wall, W), x: 0, y: yB + baseT - wall / 2, z: 0 });   // 顶板
+  parts.push({ g: new THREE.BoxGeometry(W, wall, W), x: 0, y: yB + wall / 2, z: 0 });           // 底板
+  // 四面斜杆晶格（按参考 buildLatticeFace：每格 X 形双斜杆，方杆截面 barA，节距 cellH）
+  const barA = Math.max(0.2, params.towerBar || 0.5);
   for (let f = 0; f < 4; f++) {
     const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
-    diamondRun(parts, x1, z1, x2, z2, yB + baseT, yTowerTop, postR * 0.8, cellH);
+    const yS = yB + baseT, yE = yTowerTop;
+    const cells = Math.max(1, Math.round((yE - yS) / cellH));
+    const ch = (yE - yS) / cells;
+    for (let i = 0; i < cells; i++) {
+      const y0 = yS + i * ch, y1 = y0 + ch;
+      beamBoxTo(parts, barA, x1, y0, z1, x2, y1, z2);   // X 形双斜杆
+      beamBoxTo(parts, barA, x1, y1, z1, x2, y0, z2);
+    }
   }
   // 顶部接触杆（C）：塔内每个接触点一根锥杆——从塔顶框最近点（内缩 rodR）斜拉到接触面，
   // 底径 rodR → 尖径 tipR，尖端沿杆轴扎入模型 pen（同顶端嵌入语义）

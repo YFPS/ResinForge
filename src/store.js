@@ -48,7 +48,10 @@ export const params = {
   towerPostR: 0.5,    // 角柱半径（mm）
   towerCellH: 4,      // 晶格层高（mm）
   rodR: 0.5,          // 接触杆底部半径（mm，尖径 = 顶部球头半径）
-  baseT: 1,           // 底座高度（mm）
+  baseT: 1.5,         // 底座高度（mm，须 > 菱孔对角线 + 0.4 才能冲出孔）
+  towerBar: 0.5,      // 塔身晶格斜杆截面（mm，方杆）
+  towerWall: 0.6,     // 底座壁厚（mm）
+  towerHole: 0.9,     // 底座菱形孔对角线（mm，自动按底座高收敛）
   /* 脚手架（菱形格架，参考 e-Stage 开放菱形 + TANGO V-Support 墙片） */
   scaffoldOn: true,   // 启用脚手架格架（相邻落板立柱间连续菱形格）
   crossD: 0.5,        // 格架梁直径（mm）

@@ -41,6 +41,13 @@ export const params = {
   gussetH: 2,         // 筋板高度（mm）
   gussetL: 1.5,       // 筋板外展长度（mm）
   gussetT: 0.4,       // 筋板厚度（mm）
+  /* 支撑塔模式（e-Stage 块状格架单元：底座 + 四角主柱镂空晶格塔 + 顶部放射接触杆） */
+  towerOn: false,     // 支撑塔模式开关（落板支撑聚类为格架塔，替代独立 pin）
+  towerW: 6,          // 塔截面边长（mm，方形 W=D）
+  towerPostR: 0.5,    // 角柱半径（mm）
+  towerCellH: 4,      // 晶格层高（mm）
+  rodR: 0.5,          // 接触杆底部半径（mm，尖径 = 顶部球头半径）
+  baseT: 1,           // 底座高度（mm）
   /* 脚手架（菱形格架，参考 e-Stage 开放菱形 + TANGO V-Support 墙片） */
   scaffoldOn: true,   // 启用脚手架格架（相邻落板立柱间连续菱形格）
   crossD: 0.5,        // 格架梁直径（mm）

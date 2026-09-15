@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Button, Checkbox, InputNumber, Tooltip } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
-import { bus } from '../store.js';
+import { bus, toast } from '../store.js';
 import { runGenSup, clearSupports, buildScaffold, updateSupStats } from '../core/support.js';
 
 /* 支撑生成：顶端/锥头/底盘/间距等几何参数 + 短小支撑开关 + 脚手架交叉横梁 +
@@ -36,6 +36,17 @@ export default function SupportCard() {
         <label className="f"><span>支撑间距</span><InputNumber value={params.spacing} min={1} max={10} step={0.5} onChange={v => setParam('spacing', v)} />mm</label>
         <label className="f"><span>最小悬空面积</span><InputNumber value={params.minSupArea} min={0.5} max={50} step={0.5} onChange={v => setParam('minSupArea', v)} />mm²</label>
       </div>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <Checkbox checked={params.towerOn} onChange={v => { setParam('towerOn', v); toast('支撑塔设置已变更，请重新生成支撑'); }}>支撑塔模式（格架塔 + 放射接触杆）</Checkbox>
+      </div>
+      {params.towerOn && (
+        <div className="row">
+          <label className="f"><span>塔宽</span><InputNumber value={params.towerW} min={3} max={20} step={0.5} onChange={v => setParam('towerW', v)} />mm</label>
+          <label className="f"><span>角柱半径</span><InputNumber value={params.towerPostR} min={0.2} max={1.5} step={0.1} onChange={v => setParam('towerPostR', v)} />mm</label>
+          <label className="f"><span>晶格高</span><InputNumber value={params.towerCellH} min={2} max={10} step={0.5} onChange={v => setParam('towerCellH', v)} />mm</label>
+          <label className="f"><span>底座高</span><InputNumber value={params.baseT} min={0.5} max={3} step={0.1} onChange={v => setParam('baseT', v)} />mm</label>
+        </div>
+      )}
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.gussetOn} onChange={v => setParam('gussetOn', v)}>柱顶加强筋板（gusset）</Checkbox>
         <Checkbox checked={params.gussetBase} onChange={v => setParam('gussetBase', v)}>底部筋板代锥底</Checkbox>

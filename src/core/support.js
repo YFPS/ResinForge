@@ -23,6 +23,29 @@ export function updateSupStats() {
   bus.emit('supStats', { n, anchored, prot });
 }
 
+/* 两点间圆柱梁（推入 parts）；diamondRun：两柱间连续菱形格（e-Stage 开放菱形，脚手架与支撑塔复用） */
+function beamTo(parts, r, px, py, pz, qx, qy, qz, seg = 8) {
+  const dx = qx - px, dy = qy - py, dz = qz - pz;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 0.2) return;
+  const g = new THREE.CylinderGeometry(r, r, len, seg);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(
+    new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len))));
+  parts.push({ g, x: px + dx / 2, y: py + dy / 2, z: pz + dz / 2 });
+}
+function diamondRun(parts, ax, az, bx, bz, yS, yE, r, zStep) {
+  const cx = (ax + bx) / 2, cz = (az + bz) / 2;   // 菱形中心节点 XZ
+  for (let y0 = yS; y0 < yE - 1e-6; y0 += zStep) {
+    const y1 = Math.min(y0 + zStep, yE);
+    const ym = (y0 + y1) / 2;
+    // 菱形四梁：两柱上下端点 → 中心节点（四梁汇一，真实连接）
+    beamTo(parts, r, ax, y0, az, cx, ym, cz);
+    beamTo(parts, r, bx, y0, bz, cx, ym, cz);
+    beamTo(parts, r, ax, y1, az, cx, ym, cz);
+    beamTo(parts, r, bx, y1, bz, cx, ym, cz);
+  }
+}
+
 /* ================================================================
    脚手架（菱形格架——参考 Materialise e-Stage「open diamond structure」与 TANGO V-Support 栅栏墙片）
    相邻落板立柱之间沿高度连续布置**菱形格**：每格四梁汇于中心节点（真实连接，四梁合一）——
@@ -30,6 +53,7 @@ export function updateSupStats() {
    相邻柱的菱形格横向连续成墙片（TANGO V-Support 的栅栏墙特征），整片支撑成为一体格架。
    参数：crossD 梁直径 / crossStartH 起始高度（相对平台）/ crossZStep 菱形格高度 / crossMaxXY 柱距上限。
    梁两端没入立柱主干（重叠搭接不布尔）；锚定短小支撑不参与（两端已在模型上）。
+   支撑塔模式（towerOn）下跳过——塔自带晶格。
 ================================================================ */
 export function buildScaffold() {
   // 先清旧横梁（幂等：重复调用安全）
@@ -39,7 +63,7 @@ export function buildScaffold() {
     else rest.push(s);
   }
   state.supports = rest;
-  if (!params.scaffoldOn) return 0;
+  if (!params.scaffoldOn || params.towerOn) return 0;
 
   const yBase = baseY();
   const headLoss = params.tipD / 2 + (params.headLen || 0.7);   // 主干上端 ≈ 尖端 − (r_pin + 锥头长)
@@ -69,40 +93,116 @@ export function buildScaffold() {
   const startH = Math.max(0, params.crossStartH || 0);
   const zStep = Math.max(1, params.crossZStep || 5);   // 菱形格竖直对角（层高）
   const parts = [];
-  let beamN = 0;
-  const SEG = 8;
-  const beam = (px, py, pz, qx, qy, qz) => {
-    const dx = qx - px, dy = qy - py, dz = qz - pz;
-    const len = Math.hypot(dx, dy, dz);
-    if (len < 0.2) return;
-    const g = new THREE.CylinderGeometry(r, r, len, SEG);
-    g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(
-      new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len))));
-    parts.push({ g, x: px + dx / 2, y: py + dy / 2, z: pz + dz / 2 });
-    beamN++;
-  };
   for (const [i, j] of edges.values()) {
     const A = posts[i], B = posts[j];
     const yS = Math.max(startH, A.yLo, B.yLo);         // 格架起始：起始高度且两柱均有主干
     const yE = Math.min(A.yHi, B.yHi);                 // 格架终止：任一柱主干尽端
     if (yE - yS < 0.8) continue;
-    const cx = (A.ax + B.ax) / 2, cz = (A.az + B.az) / 2;   // 菱形中心节点 XZ
-    for (let y0 = yS; y0 < yE - 1e-6; y0 += zStep) {
-      const y1 = Math.min(y0 + zStep, yE);
-      const ym = (y0 + y1) / 2;
-      // 菱形四梁：两柱上下端点 → 中心节点（四梁汇一，真实连接）
-      beam(A.ax, y0, A.az, cx, ym, cz);
-      beam(B.ax, y0, B.az, cx, ym, cz);
-      beam(A.ax, y1, A.az, cx, ym, cz);
-      beam(B.ax, y1, B.az, cx, ym, cz);
-    }
+    diamondRun(parts, A.ax, A.az, B.ax, B.az, yS, yE, r, zStep);
   }
   if (!parts.length) return 0;
   const mesh = new THREE.Mesh(mergeGeoms(parts), supMat);
   mesh.userData.scaffold = true;
   supportGroup.add(mesh);
   state.supports.push({ mesh, x: 0, z: 0, y: 0, anchored: false, scaffold: true });
-  return beamN;
+  return parts.length;
+}
+
+/* ================================================================
+   支撑塔模式（e-Stage 块状格架单元——按支撑结构分解图复刻）：
+   底座（T：上/下口字框 + 四面斜撑成菱孔）+ 镂空支撑塔（四角主柱 + 四面斜杆晶格）+ 顶部接触杆（C：放射锥杆）。
+   落板支撑点按塔格（towerW）聚类，每格一座塔；塔内每个接触点一根锥杆从塔顶框斜拉到接触面。
+   塔间重叠按 its_merge 语义自然合并（连续格架块）；锚定短小支撑不受影响。
+================================================================ */
+function makeTowerMesh(cx, yTopContact, cz, cellPts) {
+  const yB = baseY();
+  const W = Math.max(2, params.towerW || 6);
+  const postR = Math.max(0.2, params.towerPostR || 0.5);
+  const cellH = Math.max(1, params.towerCellH || 4);
+  const rodR = Math.max(0.2, params.rodR || 0.5);
+  const baseT = Math.max(0.4, params.baseT || 1);
+  const tipR = Math.max(0.05, params.tipD / 2);
+  const pen = Math.min(1, Math.max(0, params.pen ?? 0.2));
+  // 塔顶高度：最高接触点 − 接触杆预留长度（接触杆斜拉，预留 ≈ 2×杆底径 或跨度 20%）
+  const yTowerTop = yTopContact - Math.min(rodR * 2 + tipR, Math.max(1, (yTopContact - yB) * 0.2));
+  if (yTowerTop - yB < baseT + 1) return null;   // 跨度退化：塔容不下底座+一层晶格
+  const w2 = W / 2 - postR;
+  const parts = [];
+  const corners = [[w2, w2], [w2, -w2], [-w2, -w2], [-w2, w2]];
+  // 四角主柱（板面 → 塔顶）
+  for (const [ox, oz] of corners) {
+    parts.push({ g: new THREE.CylinderGeometry(postR, postR, yTowerTop - yB, 8), x: ox, y: yB + (yTowerTop - yB) / 2, z: oz });
+  }
+  // 底座（T）：上/下口字框 + 每面一对斜撑（开放菱孔观感，无实体墙——排水）
+  const railT = Math.max(0.2, postR * 0.8);
+  const ring = (y) => {
+    for (let f = 0; f < 4; f++) {
+      const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
+      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz) + postR * 2;
+      const g = new THREE.BoxGeometry(len, railT, railT);
+      g.applyMatrix4(new THREE.Matrix4().makeRotationY(-Math.atan2(dz, dx)));
+      parts.push({ g, x: (x1 + x2) / 2, y, z: (z1 + z2) / 2 });
+    }
+  };
+  ring(yB + railT / 2);      // 下轨
+  ring(yB + baseT);          // 上轨
+  for (let f = 0; f < 4; f++) {   // 面内 V 斜撑（下轨中点 ↔ 上轨两角，形成菱孔）
+    const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
+    const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+    beamTo(parts, railT * 0.7, mx, yB + railT / 2, mz, x1, yB + baseT, z1);
+    beamTo(parts, railT * 0.7, mx, yB + railT / 2, mz, x2, yB + baseT, z2);
+  }
+  // 四面斜杆晶格（底座上轨 → 塔顶，复用菱形格）
+  for (let f = 0; f < 4; f++) {
+    const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
+    diamondRun(parts, x1, z1, x2, z2, yB + baseT, yTowerTop, postR * 0.8, cellH);
+  }
+  // 顶部接触杆（C）：塔内每个接触点一根锥杆——从塔顶框最近点（内缩 rodR）斜拉到接触面，
+  // 底径 rodR → 尖径 tipR，尖端沿杆轴扎入模型 pen（同顶端嵌入语义）
+  for (const pt of cellPts) {
+    const lx = pt.x - cx, lz = pt.z - cz;
+    const ax = Math.max(-w2, Math.min(w2, lx)), az = Math.max(-w2, Math.min(w2, lz));   // 夹到塔顶方形
+    const dx = lx - ax, dy = pt.y - yTowerTop, dz = lz - az;
+    const len0 = Math.hypot(dx, dy, dz);
+    if (len0 < 0.3) continue;
+    const ux = dx / len0, uy = dy / len0, uz = dz / len0;
+    const len = len0 + pen;   // 尖端扎入
+    const g = new THREE.CylinderGeometry(tipR, rodR, len, 10);
+    g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(
+      new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(ux, uy, uz))));
+    parts.push({ g, x: ax + ux * len / 2, y: yTowerTop + uy * len / 2, z: az + uz * len / 2 });
+  }
+  const mesh = new THREE.Mesh(mergeGeoms(parts), supMat);
+  mesh.position.set(cx, 0, cz);   // parts 的 y 已是世界系绝对值（yB 内含底板高度）
+  mesh.userData.tower = true;
+  return mesh;
+}
+
+/* 支撑塔后处理（runGenSup 布点完成后调用）：落板支撑 pin 替换为格架塔 */
+export function buildTowers() {
+  const board = state.supports.filter(s => !s.anchored && !s.scaffold && !s.tower);
+  if (!board.length) return 0;
+  const W = Math.max(2, params.towerW || 6);
+  const cells = new Map();   // 塔格聚类：XZ 按 W 分格
+  for (const s of board) {
+    const k = Math.floor(s.x / W) + '_' + Math.floor(s.z / W);
+    let c = cells.get(k); if (!c) cells.set(k, c = []);
+    c.push(s);
+  }
+  for (const s of board) { supportGroup.remove(s.mesh); s.mesh.geometry.dispose(); }
+  state.supports = state.supports.filter(s => s.anchored || s.scaffold);
+  let n = 0;
+  for (const pts of cells.values()) {
+    const cx = pts.reduce((a, s) => a + s.x, 0) / pts.length;
+    const cz = pts.reduce((a, s) => a + s.z, 0) / pts.length;
+    const yTop = Math.max(...pts.map(s => s.y));
+    const mesh = makeTowerMesh(cx, yTop, cz, pts);
+    if (!mesh) continue;
+    supportGroup.add(mesh);
+    state.supports.push({ mesh, x: cx, z: cz, y: yTop, anchored: false, tower: true });
+    n++;
+  }
+  return n;
 }
 
 /* 加强筋板（gusset，e-Stage 风格）：直角三角棱柱——竖直边贴主干、顶边向外展开。
@@ -705,7 +805,9 @@ export async function runGenSup(opts = {}) {
     }
   }
   setProgress(null);
-  const crossN = buildScaffold();   // 脚手架：相邻落板立柱间 X 形交叉横梁（幂等重建）
+  let towerN = 0;
+  if (params.towerOn) towerN = buildTowers();   // 支撑塔模式：落板 pin 按塔格聚类替换为格架塔（幂等，已转换的塔跳过）
+  const crossN = buildScaffold();   // 脚手架：相邻落板立柱间菱形格（幂等重建；塔模式下跳过——塔自带晶格）
   if (islandsOnly) {
     const islTotal = A.graph ? A.graph.nodes.filter(n => n.island).length : 0;
     if (!placed) log('自动孤岛支撑：所有孤岛附近均已有支撑，无需补打');
@@ -713,7 +815,8 @@ export async function runGenSup(opts = {}) {
   } else {
     log(`支撑生成：${placed} 根（候选 ${all.length}（区域面积滤除 ${areaPruned}） → 泊松抽样 ${sampled}，孤岛关键点 ${keyPlaced}/${keypoints.length}，覆盖锥滤除 ${covPruned}，锥底防粘连滤除 ${fusePruned}，杆身防粘连滤除 ${shaftPruned + seedFused}，终检去重 ${deduped}，覆盖补放 ${coverFix}，已托住跳过 ${heldN}，微型短柱 ${microN}，过短跳过 ${stubN}，短小支撑锚定 ${anchoredN}，落板 ${placed - anchoredN}，贴面跳过 ${flushSkipped}，保护面抑制 ${suppressed} 处）`, 'ok');
   }
-  if (params.scaffoldOn) log(`脚手架格架：${crossN} 根菱形格梁（起始高 ${params.crossStartH}mm · 格高 ${params.crossZStep}mm · 柱距 ≤ ${params.crossMaxXY}mm）`, crossN ? 'ok' : 'warn');
+  if (params.towerOn) log(`支撑塔：${towerN} 座格架塔（塔宽 ${params.towerW}mm · 晶格高 ${params.towerCellH}mm · 底座 ${params.baseT}mm）`, towerN ? 'ok' : 'warn');
+  if (params.scaffoldOn && !params.towerOn) log(`脚手架格架：${crossN} 根菱形格梁（起始高 ${params.crossStartH}mm · 格高 ${params.crossZStep}mm · 柱距 ≤ ${params.crossMaxXY}mm）`, crossN ? 'ok' : 'warn');
   updateSupStats();
   if (state.analysis) drawLayer();
 }

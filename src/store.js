@@ -27,6 +27,7 @@ export const params = {
   tipD: 0.3,          // 顶部球头直径（接触模型的球头）
   pen: 0.2,           // 球头嵌入深度（扎入模型表面）
   midD: 0.8,          // 中段直径（中部球头与主干）
+  shaftRect: true,    // 主干矩形截面（e-Stage 方针，边长 1.77·r 等截面积；false = 圆柱）
   headLen: 0.7,       // 锥头长度（两球心距）
   headTopD: 0.3,      // 锥头顶宽（默认同顶部球头直径）
   headBotD: 0.8,      // 锥头底宽（默认同中段直径）

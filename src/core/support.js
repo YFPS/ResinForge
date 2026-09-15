@@ -129,28 +129,43 @@ function makeTowerMesh(cx, yTopContact, cz, cellPts) {
   const w2 = W / 2 - postR;
   const parts = [];
   const corners = [[w2, w2], [w2, -w2], [-w2, -w2], [-w2, w2]];
-  // 四角主柱（板面 → 塔顶）
+  // 四角主柱（板面 → 塔顶；shaftRect 时矩形截面，边长 1.77·r 等截面积）
+  const postSide = postR * 1.77;
   for (const [ox, oz] of corners) {
-    parts.push({ g: new THREE.CylinderGeometry(postR, postR, yTowerTop - yB, 8), x: ox, y: yB + (yTowerTop - yB) / 2, z: oz });
+    parts.push({
+      g: params.shaftRect !== false
+        ? new THREE.BoxGeometry(postSide, yTowerTop - yB, postSide)
+        : new THREE.CylinderGeometry(postR, postR, yTowerTop - yB, 8),
+      x: ox, y: yB + (yTowerTop - yB) / 2, z: oz
+    });
   }
-  // 底座（T）：上/下口字框 + 每面一对斜撑（开放菱孔观感，无实体墙——排水）
+  // 底座（T，按详图③）：四面墙体，每墙 = 上/下轨 + 两侧立柱 + 中心菱形孔边框（4 斜杆围出菱孔）
   const railT = Math.max(0.2, postR * 0.8);
-  const ring = (y) => {
-    for (let f = 0; f < 4; f++) {
-      const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
-      const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz) + postR * 2;
-      const g = new THREE.BoxGeometry(len, railT, railT);
-      g.applyMatrix4(new THREE.Matrix4().makeRotationY(-Math.atan2(dz, dx)));
-      parts.push({ g, x: (x1 + x2) / 2, y, z: (z1 + z2) / 2 });
-    }
-  };
-  ring(yB + railT / 2);      // 下轨
-  ring(yB + baseT);          // 上轨
-  for (let f = 0; f < 4; f++) {   // 面内 V 斜撑（下轨中点 ↔ 上轨两角，形成菱孔）
+  const yW0 = yB, yW1 = yB + baseT;                    // 墙体下/上沿
+  for (let f = 0; f < 4; f++) {
     const [x1, z1] = corners[f], [x2, z2] = corners[(f + 1) % 4];
+    const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz) + postR * 2;
+    const ang = -Math.atan2(dz, dx);
     const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
-    beamTo(parts, railT * 0.7, mx, yB + railT / 2, mz, x1, yB + baseT, z1);
-    beamTo(parts, railT * 0.7, mx, yB + railT / 2, mz, x2, yB + baseT, z2);
+    const rail = (y) => {
+      const g = new THREE.BoxGeometry(len, railT, railT);
+      g.applyMatrix4(new THREE.Matrix4().makeRotationY(ang));
+      parts.push({ g, x: mx, y, z: mz });
+    };
+    rail(yW0 + railT / 2); rail(yW1 - railT / 2);      // 上/下轨
+    for (const [px, pz] of [[x1, z1], [x2, z2]]) {     // 两侧立柱
+      parts.push({ g: new THREE.BoxGeometry(railT, baseT - railT * 2, railT), x: px, y: (yW0 + yW1) / 2, z: pz });
+    }
+    // 菱孔边框：墙内菱形四顶点（左/上/右/下）顺次连斜杆
+    const inL = Math.min(len / 2 - railT, baseT / 2);  // 菱形半宽（受墙高限制）
+    const ux = dx / (len - postR * 2), uz = dz / (len - postR * 2);   // 墙面方向单位向量
+    const midY = (yW0 + yW1) / 2, halfH = baseT / 2 - railT;
+    const L = [mx - ux * inL, midY, mz - uz * inL], Tp = [mx, midY + halfH, mz];
+    const Rt = [mx + ux * inL, midY, mz + uz * inL], Bt = [mx, midY - halfH, mz];
+    beamTo(parts, railT * 0.7, L[0], L[1], L[2], Tp[0], Tp[1], Tp[2]);
+    beamTo(parts, railT * 0.7, Tp[0], Tp[1], Tp[2], Rt[0], Rt[1], Rt[2]);
+    beamTo(parts, railT * 0.7, Rt[0], Rt[1], Rt[2], Bt[0], Bt[1], Bt[2]);
+    beamTo(parts, railT * 0.7, Bt[0], Bt[1], Bt[2], L[0], L[1], L[2]);
   }
   // 四面斜杆晶格（底座上轨 → 塔顶，复用菱形格）
   for (let f = 0; f < 4; f++) {
@@ -317,10 +332,13 @@ export function makeSupportMesh(x, yTip, z, yBase = 0, anchored = false, nrmTop 
     jb = { x: jt.x, y: pedH, z: jt.z };
   }
   // 主干：连接上下中部球头球心（锚定且双头倾斜时可斜置；两端藏于球内，斜置无缝）；跨度退化已在函数头拒绝生成
+  // 矩形截面（e-Stage 方针，默认）：边长 1.77·r_back（√π 等截面积换算）；shaftRect=false 回退圆柱
   const dx = jt.x - jb.x, dy = jt.y - jb.y, dz = jt.z - jb.z;
   const plen = Math.hypot(dx, dy, dz);
   if (plen > 0.1) {
-    const pg = new THREE.CylinderGeometry(midR, midR, plen, SEG + 2);
+    const pg = params.shaftRect !== false
+      ? new THREE.BoxGeometry(midR * 1.77, plen, midR * 1.77)
+      : new THREE.CylinderGeometry(midR, midR, plen, SEG + 2);
     if (Math.abs(dx) + Math.abs(dz) > 1e-6) pg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / plen, dy / plen, dz / plen))));
     parts.push({ g: pg, x: jb.x + dx / 2, y: jb.y + dy / 2, z: jb.z + dz / 2 });
   }

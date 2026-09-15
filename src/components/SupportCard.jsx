@@ -37,6 +37,9 @@ export default function SupportCard() {
         <label className="f"><span>最小悬空面积</span><InputNumber value={params.minSupArea} min={0.5} max={50} step={0.5} onChange={v => setParam('minSupArea', v)} />mm²</label>
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
+        <Checkbox checked={params.shaftRect} onChange={v => { setParam('shaftRect', v); toast('主干截面已变更，请重新生成支撑'); }}>矩形主干（e-Stage 方针）</Checkbox>
+      </div>
+      <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.towerOn} onChange={v => { setParam('towerOn', v); toast('支撑塔设置已变更，请重新生成支撑'); }}>支撑塔模式（格架塔 + 放射接触杆）</Checkbox>
       </div>
       {params.towerOn && (

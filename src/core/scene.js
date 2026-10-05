@@ -10,8 +10,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
 import { loadDemo, loadSTLBuffer } from './model.js';
-import { addSupport, updateSupStats } from './support.js';
-import { drawLayer } from './inspect.js';
+import { addSupportPoint, deleteSupportNear } from './support.js';
 
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d1117);
@@ -41,6 +40,7 @@ export const modelMat = new THREE.MeshStandardMaterial({
 });
 export const supMat = new THREE.MeshStandardMaterial({ color: 0x38d996, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
 export const supMatAnchor = new THREE.MeshStandardMaterial({ color: 0xffb020, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
+export const supMatBase = new THREE.MeshStandardMaterial({ color: 0x7d8aa0, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.4 });   // 格架底座整板
 
 /* 预览渲染器（朝向候选缩略图；preserveDrawingBuffer 供 toDataURL 出图，React 渲染 <img>） */
 export const prevRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -123,7 +123,7 @@ export function clearProtectedFaces() {
 ================================================================ */
 export function setMode(m) {
   state.mode = m;
-  // 控制器常开：右键任何模式下都可绕模型中心旋转；左键只在「旋转」模式旋转，其他模式留给涂画/加/删支撑
+  // 控制器常开：右键任何模式下都可拖动平移视角、中键拖动旋转；左键只在「旋转」模式旋转，其他模式留给涂画/加/删支撑
   controls.enabled = true;
   controls.mouseButtons.LEFT = (m === 'orbit') ? THREE.MOUSE.ROTATE : null;
   canvas.style.cursor = m === 'orbit' ? 'grab' : 'crosshair';
@@ -146,38 +146,30 @@ export function initScene(canvasEl) {
   controls = new OrbitControls(camera, canvas);
   controls.target.set(0, 22, 0);
   controls.enableDamping = true; controls.dampingFactor = 0.12;
-  // 鼠标键位：右键始终以模型中心旋转视角（各模式通用）；左键仅在「旋转」模式下旋转，其余模式留给涂画/加删支撑
-  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
-  canvas.addEventListener('contextmenu', e => e.preventDefault());   // 右键拖拽旋转时不弹系统菜单
+  // 鼠标键位（切片软件惯例）：按住右键拖动平移视角、中键拖动旋转（各模式通用），滚轮缩放；
+  // 左键仅在「旋转」模式下旋转，其余模式留给涂画/加删支撑
+  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+  controls.screenSpacePanning = true;   // 平移沿屏幕平面（上下拖 = 画面上下移），不是沿地面
+  canvas.addEventListener('contextmenu', e => e.preventDefault());   // 右键拖动平移时不弹系统菜单
   window.addEventListener('resize', resize);
 
   canvas.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return;   // 仅左键触发涂画/加/删支撑；右键由 OrbitControls 旋转视角
+    if (e.button !== 0) return;   // 仅左键触发涂画/加/删支撑；右键（平移）/ 中键（旋转）交给 OrbitControls
     if (state.mode === 'paint') { state.painting = true; paintAt(e); }
     else if (state.mode === 'add' && state.mesh) {
       const hits = pointerRay(e).intersectObject(state.mesh);
       if (hits.length) {
         const h = hits[0];
-        const fi = h.face.a / 3;
-        if (state.protectedFaces.has(fi)) { toast('该面为保护面，已阻止添加支撑'); return; }
-        // 命中面法线作为顶端朝向（模型仅平移变换，几何面法线即世界系方向）
+        if (state.protectedFaces.has(h.faceIndex)) { toast('该面为保护面，已阻止添加支撑'); return; }
+        // 命中面法线作为接触端朝向（模型仅平移变换，几何面法线即世界系方向）；朝上的面无从支撑
         const fn = h.face ? h.face.normal : null;
-        addSupport(h.point.x, h.point.y, h.point.z, null, fn ? [fn.x, fn.y, fn.z] : null);
-        log(`手动支撑 @ (${h.point.x.toFixed(1)}, ${h.point.y.toFixed(1)}, ${h.point.z.toFixed(1)})`);
-        if (state.analysis) drawLayer();
+        if (fn && fn.y > 0.3) { toast('只能在朝下（悬空）的表面添加支撑点'); return; }
+        // 加点后整体重建结构（树/格架分支互连，不能单根追加）——与 PrusaSlicer 的支撑点编辑一致
+        addSupportPoint(h.point, fn ? [fn.x, fn.y, fn.z] : null);
       }
     } else if (state.mode === 'del' && state.supports.length) {
       const hits = pointerRay(e).intersectObjects(supportGroup.children);
-      if (hits.length) {
-        const mesh = hits[0].object;
-        const idx = state.supports.findIndex(s => s.mesh === mesh);
-        if (idx >= 0) {
-          supportGroup.remove(mesh); mesh.geometry.dispose();
-          state.supports.splice(idx, 1);
-          updateSupStats();
-          if (state.analysis) drawLayer();
-        }
-      }
+      if (hits.length) deleteSupportNear(hits[0].point);   // 删除最近的支撑点并重建结构
     }
   });
   canvas.addEventListener('pointermove', e => {

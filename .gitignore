@@ -11,3 +11,6 @@ kimi-debug-session_*.zip
 # 前端工程
 node_modules/
 dist/
+
+# 参考数据（第三方逆向样本，不入库）
+.ref/

@@ -126,7 +126,7 @@ export function drawLayer(l) {
     if (l >= lMin && comp.length >= A.minIslPx) {
       let ov = 0;
       if (occPrev) for (const c of comp) if (occPrev[c]) ov++;
-      if (ov < A.attachPx) { islandCount++; for (const c of comp) islandMask[c] = 1; }
+      if (ov < Math.min(A.attachPx, Math.ceil(comp.length * 0.5))) { islandCount++; for (const c of comp) islandMask[c] = 1; }   // 同 analyze 判据
     }
   }
   // 绘制（叠加显示：红=孤岛，蓝=本层附着材料，暗青=下层残影——直观看出每块材料脚下是否有支撑）
@@ -150,14 +150,15 @@ export function drawLayer(l) {
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.drawImage(tmp, 0, 0, cv.width, cv.height);
-    // 支撑叠加
-    ctx.strokeStyle = 'rgba(56,217,150,.9)'; ctx.fillStyle = 'rgba(56,217,150,.9)';
+    // 支撑点叠加：绿 = 已生成结构，琥珀 = 锚定模型/微型短柱，红 = 头部无法放置/无法路由
     const spanX = W * sx, spanZ = H * szg;
-    for (const s of state.supports) {
+    const col = { ground: 'rgba(56,217,150,.95)', mesh: 'rgba(255,176,32,.95)', micro: 'rgba(255,176,32,.95)' };
+    for (const s of state.supportPoints || []) {
+      ctx.fillStyle = col[s.state] || 'rgba(255,72,72,.95)';
       const px = (s.x - x0) / spanX * cv.width, pz = (s.z - z0) / spanZ * cv.height;
       ctx.beginPath(); ctx.arc(px, pz, 2.5, 0, Math.PI * 2); ctx.fill();
     }
   }
   const z = A.grid.minY + (l - 0.5) * A.grid.layerH;
-  bus.emit('layerLabel', `层 ${l}/${A.grid.layers} · y=${z.toFixed(2)}mm · 本层孤岛 ${islandCount} 处 · 支撑 ${state.supports.length}`);
+  bus.emit('layerLabel', `层 ${l}/${A.grid.layers} · y=${z.toFixed(2)}mm · 本层孤岛 ${islandCount} 处 · 支撑点 ${(state.supportPoints || []).length}`);
 }

@@ -1,101 +1,124 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Checkbox, InputNumber, Tooltip } from '@arco-design/web-react';
+import { Button, Checkbox, InputNumber, Radio, Tooltip } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
-import { bus, toast } from '../store.js';
-import { runGenSup, clearSupports, buildScaffold, updateSupStats } from '../core/support.js';
+import { bus, state } from '../store.js';
+import { runGenSup, clearSupports, rebuildStructure } from '../core/support.js';
 
-/* 支撑生成：顶端/锥头/底盘/间距等几何参数 + 短小支撑开关 + 脚手架交叉横梁 +
-   自动支撑（全流程，清空重建）/ 自动孤岛支撑（只为孤岛位置增量补打）+ supStats（订阅 bus 'supStats'） */
+/* 支撑生成：结构模式（树状 PrusaSlicer / 支撑塔 e-Stage）+ 支撑点参数 + 两套结构参数 +
+   自动支撑（清空重建）/ 自动孤岛支撑（增量补点）/ 按当前参数重建结构（复用已有支撑点）+ supStats */
 export default function SupportCard() {
   const [params, setParam] = useParams();
-  const [loading, setLoading] = useState(false);
-  const [loadingIsl, setLoadingIsl] = useState(false);
+  const [busy, setBusy] = useState('');
   const [stats, setStats] = useState(null);
   useEffect(() => bus.on('supStats', setStats), []);
 
-  const start = async (isl) => {
-    isl ? setLoadingIsl(true) : setLoading(true);
-    try { await runGenSup({ islandsOnly: isl }); } finally { isl ? setLoadingIsl(false) : setLoading(false); }
-  };
+  const run = async (kind, fn) => { setBusy(kind); try { await fn(); } finally { setBusy(''); } };
+  const hasPoints = () => (state.supportPoints || []).length > 0;
+  const setMode = v => { setParam('supMode', v); if (hasPoints()) run('rebuild', rebuildStructure); };
+  const num = (k, label, min, max, step, unit = 'mm', title) => (
+    <label className="f"><span>{label}</span><InputNumber value={params[k]} min={min} max={max} step={step} title={title} onChange={v => setParam(k, v)} />{unit}</label>
+  );
+  const tree = params.supMode !== 'tower';
+  const fail = stats ? (stats.noHead || 0) + (stats.unroutable || 0) : 0;
 
   return (
     <Card step={5} title="支撑生成">
-      <div className="row">
-        <label className="f"><span>顶部球头</span><InputNumber value={params.tipD} min={0.1} max={1} step={0.05} title="顶部球头直径（接触模型的球头）" onChange={v => setParam('tipD', v)} />mm</label>
-        <label className="f"><span>嵌入深度</span><InputNumber value={params.pen} min={0} max={1} step={0.05} title="球头扎入模型表面的深度" onChange={v => setParam('pen', v)} />mm</label>
-        <label className="f"><span>中段直径</span><InputNumber value={params.midD} min={0.2} max={3} step={0.1} title="中部球头与主干直径" onChange={v => setParam('midD', v)} />mm</label>
-      </div>
-      <div className="row">
-        <label className="f"><span>锥头长度</span><InputNumber value={params.headLen} min={0.1} max={5} step={0.05} onChange={v => setParam('headLen', v)} />mm</label>
-        <label className="f"><span>锥头顶宽</span><InputNumber value={params.headTopD} min={0.05} max={2} step={0.05} title="锥头顶部宽度，默认同顶部球头直径" onChange={v => setParam('headTopD', v)} />mm</label>
-        <label className="f"><span>锥头底宽</span><InputNumber value={params.headBotD} min={0.1} max={3} step={0.1} title="锥头底部宽度，默认同中段直径" onChange={v => setParam('headBotD', v)} />mm</label>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <Radio.Group type="button" size="small" value={tree ? 'tree' : 'tower'} onChange={setMode}>
+          <Radio value="tree">树状支撑</Radio>
+          <Radio value="tower">e-Stage 支撑塔</Radio>
+        </Radio.Group>
       </div>
       <div className="row">
-        <label className="f"><span>底盘直径</span><InputNumber value={params.baseD} min={1} max={6} step={0.5} onChange={v => setParam('baseD', v)} />mm</label>
-        <label className="f"><span>支撑间距</span><InputNumber value={params.spacing} min={1} max={10} step={0.5} onChange={v => setParam('spacing', v)} />mm</label>
-        <label className="f"><span>最小悬空面积</span><InputNumber value={params.minSupArea} min={0.5} max={50} step={0.5} onChange={v => setParam('minSupArea', v)} />mm²</label>
+        {num('spacing', '支撑间距', 1, 10, 0.5)}
+        {num('minSupArea', '最小悬空面积', 0.5, 50, 0.5, 'mm²')}
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.shaftRect} onChange={v => { setParam('shaftRect', v); toast('主干截面已变更，请重新生成支撑'); }}>矩形主干（e-Stage 方针）</Checkbox>
+        <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（竖直下方被模型挡住时锚到模型表面）</Checkbox>
       </div>
-      <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.towerOn} onChange={v => { setParam('towerOn', v); toast('支撑塔设置已变更，请重新生成支撑'); }}>支撑塔模式（格架塔 + 放射接触杆）</Checkbox>
-      </div>
-      {params.towerOn && (
-        <div className="row">
-          <label className="f"><span>塔宽</span><InputNumber value={params.towerW} min={3} max={20} step={0.5} onChange={v => setParam('towerW', v)} />mm</label>
-          <label className="f"><span>角柱半径</span><InputNumber value={params.towerPostR} min={0.2} max={1.5} step={0.1} onChange={v => setParam('towerPostR', v)} />mm</label>
-          <label className="f"><span>晶格高</span><InputNumber value={params.towerCellH} min={2} max={10} step={0.5} onChange={v => setParam('towerCellH', v)} />mm</label>
-          <label className="f"><span>底座高</span><InputNumber value={params.baseT} min={0.5} max={3} step={0.1} onChange={v => setParam('baseT', v)} />mm</label>
-        </div>
+      {tree ? (
+        <>
+          <div className="row">
+            {num('tipD', '前端球直径', 0.1, 1.5, 0.05, 'mm', '接触模型的前端球（PrusaSlicer head front diameter）')}
+            {num('pen', '嵌入深度', 0, 1, 0.05, 'mm', '前端球扎入模型表面的深度')}
+            {num('headLen', '支撑头长度', 0.3, 5, 0.1, 'mm', '前后两球心距（= 前端半径 + 头宽 + 后端半径）')}
+          </div>
+          <div className="row">
+            {num('midD', '分支直径', 0.3, 3, 0.05, 'mm', '叶分支与支撑头后端球直径（pillar diameter）')}
+            {num('maxBranchD', '最大分支直径', 0.3, 5, 0.1, 'mm', '分支随负载加粗的上限')}
+            {num('widening', '加宽系数', 0, 1, 0.05, '', '分支半径 = 0.05 × 系数 × 负载（累计路径长）')}
+          </div>
+          <div className="row">
+            {num('baseD', '底座直径', 1, 8, 0.5)}
+            {num('baseH', '底座高度', 0, 3, 0.1)}
+            {num('maxBridgeLen', '最大桥接长', 1, 15, 0.5, 'mm', '落地避让斜段上限')}
+          </div>
+          <div className="row">
+            {num('maxBranchLen', '最大分支长', 2, 30, 1, 'mm', '合并距离与单段下行上限')}
+            {num('maxWeightOnModel', '模型最大负载', 0, 100, 1, 'mm', '分支累计长度超过此值不锚到模型')}
+          </div>
+          <div className="hint">PrusaSlicer branching tree：支撑头（前端球 + 切线锥 + 后端球）沿被托面法线外伸，分支按 45° 临界锥两两合并、逐级汇聚落到底座；全程胶囊体避让，走不通的子树整体剔除。</div>
+        </>
+      ) : (
+        <>
+          <div className="row">
+            {num('esCell', '菱形宽', 1.5, 8, 0.5, 'mm', 'Diamond width：格架最小菱形宽 = 墙距')}
+            {num('esDiamAngle', '菱形角', 25, 80, 5, '°', 'Diamond angle：菱形斜边仰角（不低于自支撑临界角）')}
+            {num('esGap', '离模净距', 0, 3, 0.1, 'mm', 'Margin to part：格架（节点 / 板条）与模型保持的最小净距，支撑头与连接杆不受此限')}
+          </div>
+          <div className="row">
+            {num('esBarW', '边宽', 0.15, 2, 0.05, 'mm', 'Edge width：菱形边在墙面内的宽度')}
+            {num('esBarT', '边厚', 0.15, 1.5, 0.05, 'mm', 'Edge thickness：墙厚（专利取激光束宽）')}
+            {num('esColRatio', '柱高宽比', 2, 20, 1, '', 'Column height to width ratio：展宽前柱内菱形数（手册推荐 7）')}
+          </div>
+          <div className="row">
+            {num('esHullRed', '壳层缩减', 0, 3, 1, '级', 'Hull reduction：每下降一个柱高，菱形宽翻倍一次（孔洞放大省料、利于排液），最多翻倍这么多级（0=关闭）')}
+            {num('esTowerMaxR', '最大展宽', 0, 10, 1, '格', '每下降一个柱高（柱高宽比 × 菱形宽）向四周展宽一格，每侧最多展宽的格数')}
+            {num('esNeedleMax', '针最大长', 1, 12, 0.5, 'mm', '格架节点到接触点的十字针最大长度')}
+          </div>
+          <div className="row">
+            {num('esConnW', '连接宽', 0.1, 1.5, 0.05, 'mm', 'Connection width：十字针针身板宽（默认同边宽）')}
+            {num('esNeedleT', '针板厚', 0.1, 1, 0.05, 'mm', '十字针「+」截面的板厚（默认同边厚）')}
+            {num('esTipW', '接触宽', 0.05, 1, 0.05, 'mm', 'Contact width：针尖接触模型处的宽度')}
+          </div>
+          <div className="row">
+            {num('esContactMargin', '接触边距', 0, 2, 0.1, 'mm', 'Contact margin：贴模型前保持接触宽的细直段长')}
+            {num('esTaper', '过渡段长', 0.2, 3, 0.1, 'mm', '连接宽 → 接触宽 的渐缩长度')}
+            {num('pen', '渗透长度', 0, 1, 0.05, 'mm', 'Penetration length：针尖沿针轴扎入模型的深度')}
+          </div>
+          <div className="row">
+            {num('esFoundH', '基础带高', 0, 3, 0.1, 'mm', 'Foundation maximum height：塔底墙下沿实心带高')}
+            {num('esNotchH', '缺口高', 0, 2, 0.1, 'mm', 'Foundation maximum notch height：基础带底边三角缺口高')}
+          </div>
+          <div className="row" style={{ alignItems: 'center' }}>
+            <Checkbox checked={params.esMidBars} onChange={v => setParam('esMidBars', v)}>菱形竖直对角线（墙上每半格一根竖杆）</Checkbox>
+          </div>
+          <div className="hint">Materialise e-Stage 支撑塔（依据专利 US8903533B2 与 e-Stage 7.0 手册）：正交竖直墙上两组斜边交叉成闭合菱形，减去外扩净距的模型；每个支撑点沿竖杆 / 菱形斜边找到落地路径（被模型挡住时绕行），路径所在格随深度展宽，相邻支撑点的格并成连续塔块；自平台逐层向上只保留有支撑的节点（无打印孤岛），接入点下为尖顶、往下铺满；杆件在节点处经节点板圆滑相接；孔洞按壳层缩减逐级放大；塔底为带三角缺口的基础带。十字针自格架节点直通接触点（十字板对齐格架墙向）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 扎入渗透长度（手册 Top connection）；接不上格架的点由树状支撑兜底。</div>
+        </>
       )}
-      {params.towerOn && (
-        <div className="row">
-          <label className="f"><span>斜杆截面</span><InputNumber value={params.towerBar} min={0.2} max={1.5} step={0.1} onChange={v => setParam('towerBar', v)} />mm</label>
-          <label className="f"><span>底座壁厚</span><InputNumber value={params.towerWall} min={0.3} max={1.5} step={0.1} onChange={v => setParam('towerWall', v)} />mm</label>
-          <label className="f"><span>菱孔对角线</span><InputNumber value={params.towerHole} min={0.5} max={3} step={0.1} onChange={v => setParam('towerHole', v)} />mm</label>
-        </div>
-      )}
-      <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.gussetOn} onChange={v => setParam('gussetOn', v)}>柱顶加强筋板（gusset）</Checkbox>
-        <Checkbox checked={params.gussetBase} onChange={v => setParam('gussetBase', v)}>底部筋板代锥底</Checkbox>
-      </div>
-      {params.gussetOn && (
-        <div className="row">
-          <label className="f"><span>数量</span><InputNumber value={params.gussetN} min={2} max={8} step={1} onChange={v => setParam('gussetN', v)} /></label>
-          <label className="f"><span>高度</span><InputNumber value={params.gussetH} min={0.5} max={5} step={0.5} onChange={v => setParam('gussetH', v)} />mm</label>
-          <label className="f"><span>外展</span><InputNumber value={params.gussetL} min={0.5} max={4} step={0.1} onChange={v => setParam('gussetL', v)} />mm</label>
-          <label className="f"><span>厚度</span><InputNumber value={params.gussetT} min={0.2} max={1} step={0.05} onChange={v => setParam('gussetT', v)} />mm</label>
-        </div>
-      )}
-      <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（锚定模型表面）</Checkbox>
-      </div>
-      <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.scaffoldOn} onChange={v => { setParam('scaffoldOn', v); buildScaffold(); updateSupStats(); }}>脚手架（菱形格架，e-Stage 风格）</Checkbox>
-      </div>
-      {params.scaffoldOn && (
-        <div className="row">
-          <label className="f"><span>横梁直径</span><InputNumber value={params.crossD} min={0.2} max={2} step={0.1} onChange={v => setParam('crossD', v)} />mm</label>
-          <label className="f"><span>起始高度</span><InputNumber value={params.crossStartH} min={0} max={20} step={0.5} onChange={v => setParam('crossStartH', v)} />mm</label>
-          <label className="f"><span>Z 间距</span><InputNumber value={params.crossZStep} min={2} max={20} step={0.5} onChange={v => setParam('crossZStep', v)} />mm</label>
-          <label className="f"><span>XY 间距</span><InputNumber value={params.crossMaxXY} min={3} max={20} step={0.5} onChange={v => setParam('crossMaxXY', v)} />mm</label>
-        </div>
-      )}
-      <div className="hint" style={{ marginTop: 2 }}>支撑为分段结构（顶端→柱身→基座/底端），顶端球头扎入表面微量深度（嵌入深度可调）。悬空点下方有模型表面时锚定到该表面（琥珀色），否则落到底板（绿色）。下方 0.8mm 内已有材料的点视为已托住，不生成支撑。</div>
       <div className="row">
-        <Button type="primary" style={{ flex: 1 }} loading={loading} onClick={() => start(false)}>自动支撑</Button>
-        <Tooltip content="仅为检测到的孤岛位置补打支撑（不清空现有支撑）">
-          <Button style={{ flex: 1 }} loading={loadingIsl} onClick={() => start(true)}>自动孤岛支撑</Button>
+        <Button type="primary" style={{ flex: 1 }} loading={busy === 'auto'} onClick={() => run('auto', () => runGenSup())}>自动支撑</Button>
+        <Tooltip content="只为孤岛位置补支撑点（不清空现有支撑点），然后重建结构">
+          <Button style={{ flex: 1 }} loading={busy === 'isl'} onClick={() => run('isl', () => runGenSup({ islandsOnly: true }))}>自动孤岛支撑</Button>
+        </Tooltip>
+      </div>
+      <div className="row">
+        <Tooltip content="复用现有支撑点，按当前模式与参数重新生成结构">
+          <Button style={{ flex: 1 }} loading={busy === 'rebuild'} onClick={() => run('rebuild', rebuildStructure)}>按当前参数重建结构</Button>
         </Tooltip>
         <Button onClick={() => clearSupports()}>清空</Button>
       </div>
-      {stats && (
+      {stats && stats.points !== undefined && (
         <div className="kvbox">
-          <div className="kv"><span>当前支撑数</span><b className={stats.n ? 'good' : ''}>{stats.n}</b></div>
-          <div className="kv"><span>锚定短小支撑</span><b style={{ color: '#ffb020' }}>{stats.anchored}</b></div>
-          <div className="kv"><span>落板支撑</span><b style={{ color: '#38d996' }}>{stats.n - stats.anchored}</b></div>
+          <div className="kv"><span>支撑点</span><b className={stats.points ? 'good' : ''}>{stats.points}</b></div>
+          {stats.ok !== undefined && <div className="kv"><span>已生成结构</span><b className="good">{stats.ok}</b></div>}
+          {stats.mode === 'tree' && <div className="kv"><span>落地柱 / 合并</span><b style={{ color: '#38d996' }}>{stats.ground} / {stats.merges}</b></div>}
+          {stats.mode === 'tower' && <div className="kv"><span>十字针 / 塔块</span><b style={{ color: '#38d996' }}>{stats.needles} / {stats.towers}</b></div>}
+          {stats.mode === 'tower' && <div className="kv"><span>格架节点 / 杆件</span><b>{stats.nodes} / {stats.bars}</b></div>}
+          {stats.mode === 'tower' && stats.fallback > 0 && <div className="kv"><span>树状兜底点</span><b>{stats.fallback}</b></div>}
+          {stats.anchors !== undefined && <div className="kv"><span>锚定模型 / 微型短柱</span><b style={{ color: '#ffb020' }}>{stats.anchors} / {stats.micro}</b></div>}
+          {stats.ok !== undefined && <div className="kv"><span>无法支撑</span><b className={fail ? 'warn' : 'good'}>{fail}</b></div>}
           <div className="kv"><span>保护面</span><b>{stats.prot.toLocaleString()} 面</b></div>
         </div>
       )}

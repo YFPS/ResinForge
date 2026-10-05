@@ -7,10 +7,10 @@ import { setLayerCanvas, drawLayer } from '../core/inspect.js';
 const RadioGroup = Radio.Group;
 
 const MODES = [
-  { value: 'orbit', label: '🖱 旋转', tip: '左键/右键拖拽旋转视角（任意模式下右键均可旋转）' },
-  { value: 'paint', label: '🖌 保护面', tip: '左键在模型表面涂保护面；右键旋转视角' },
-  { value: 'add', label: '➕ 加支撑', tip: '左键点击模型表面手动加支撑；右键旋转视角' },
-  { value: 'del', label: '✂ 删支撑', tip: '左键点击支撑删除；右键旋转视角' },
+  { value: 'orbit', label: '🖱 旋转', tip: '左键 / 中键拖动旋转视角，按住右键拖动平移视角，滚轮缩放' },
+  { value: 'paint', label: '🖌 保护面', tip: '左键在模型表面涂保护面；按住右键拖动平移视角，中键拖动旋转' },
+  { value: 'add', label: '➕ 加支撑', tip: '左键点击模型表面手动加支撑；按住右键拖动平移视角，中键拖动旋转' },
+  { value: 'del', label: '✂ 删支撑', tip: '左键点击支撑删除；按住右键拖动平移视角，中键拖动旋转' },
 ];
 
 function ModeBar() {

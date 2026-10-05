@@ -192,7 +192,9 @@ export function analyze(pos, q, opts) {
           supportVol += gap * cellArea;
           const wx = g.x0 + (i0c + 0.5) * sx, wz = g.z0 + (j0c + 0.5) * sz;
           if (detail) {
-            if (overhang.length < 40000) overhang.push({ x: wx, z: wz, y: surfY, gap });
+            // 不设上限：旧实现在 40000 处静默截断，逐层自下而上收集——抬高后的整片底面就能把配额吃光，
+            // 上部结构的悬空点全部丢失（实测悬臂雕像 90836 点只收 40000，横梁/球底候选为 0）
+            overhang.push({ x: wx, z: wz, y: surfY, gap });
           } else {
             let iso = true;
             for (let dj = -1; dj <= 1 && iso; dj++) {
@@ -240,8 +242,10 @@ export function analyze(pos, q, opts) {
           let outW = 0;
           const edges = [];
           for (const [t, w] of ovBy) { edges.push({ t, w }); outW += w; }
-          // 与下层的接触面积不足阈值 → 视为孤岛（单像素搭接强度不够，剥离会撕裂）
-          const isIsl = l >= lMin && comp.length >= minIslPx && outW < attachPx;
+          // 与下层的接触面积不足阈值 → 视为孤岛（单像素搭接强度不够，剥离会撕裂）。
+          // 阈值取「最小附着面积」与「自身面积一半」的较小者：小截面（尖顶/球顶/细柱顶 < 1mm²）完全落在下层材料上时
+          // 重叠必然 < 1mm²，只用前者会被一律误判为孤岛（实测悬臂雕像球顶 76/76 像素全重叠仍判孤岛）
+          const isIsl = l >= lMin && comp.length >= minIslPx && outW < Math.min(attachPx, Math.ceil(comp.length * 0.5));
           graph.nodes.push({
             id: nid, layer: l, y: z, px: comp.length, area: comp.length * cellArea,
             cx: g.x0 + (si / comp.length + 0.5) * sx,
@@ -326,7 +330,8 @@ export function steepFaces(facesF, q, selfAngleDeg, prot, protW, collectPts) {
           x: rot[0] * cx + rot[4] * cy + rot[8] * cz,
           y: rot[1] * cx + rot[5] * cy + rot[9] * cz,
           z: rot[2] * cx + rot[6] * cy + rot[10] * cz,
-          area: area[f]   // 面面积：供区域面积过滤
+          area: area[f],  // 面面积：供区域面积过滤
+          f               // 面索引：支撑点法线直取 + 大三角形细分采样
         });
       }
     }

@@ -29,6 +29,8 @@ export function setGeometry(geom, name) {
   hideInspector();
 
   if (geom.index) geom = geom.toNonIndexed();
+  // 重算法线：部分软件导出的 STL 法线字段全为 0（实测 HeyGears 样例 166308/166308），直接沿用会让光照全黑
+  geom.computeVertexNormals();
   geom.computeBoundingBox();
   const bb = geom.boundingBox;
   const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;

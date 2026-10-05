@@ -23,41 +23,41 @@ export const params = {
   raiseH: 4,          // 模型抬高（mm）
   minIslArea: 0.5,    // 孤岛最小面积（mm²）
   minAttach: 1,       // 最小附着面积（mm²）
-  /* 支撑几何 */
-  tipD: 0.3,          // 顶部球头直径（接触模型的球头）
-  pen: 0.2,           // 球头嵌入深度（扎入模型表面）
-  midD: 0.8,          // 中段直径（中部球头与主干）
-  shaftRect: true,    // 主干矩形截面（e-Stage 方针，边长 1.77·r 等截面积；false = 圆柱）
-  headLen: 0.7,       // 锥头长度（两球心距）
-  headTopD: 0.3,      // 锥头顶宽（默认同顶部球头直径）
-  headBotD: 0.8,      // 锥头底宽（默认同中段直径）
-  baseD: 3,           // 底盘直径
-  spacing: 3,         // 支撑间距
+  /* 支撑点（两种结构共用） */
+  spacing: 3,         // 支撑间距（泊松盘最小间距，mm）
   minSupArea: 2,      // 最小悬空区域面积（mm²）
-  shortSup: true,     // 短小支撑（锚定模型表面）
-  /* gusset 加强筋板（e-Stage 风格：柱顶放射三角筋板连接主干 → 接触区） */
-  gussetOn: true,     // 顶部放射筋板（所有支撑）
-  gussetBase: true,   // 底部放射筋板替代锥底（仅落板支撑）
-  gussetN: 4,         // 柱顶筋板数量（放射均布；柱底固定 2 片对置）
-  gussetH: 1.5,       // 筋板高度（mm）
-  gussetL: 0.8,       // 筋板外展长度（mm，小外展才像 e-Stage 筋板而非喇叭裙）
-  gussetT: 0.4,       // 筋板厚度（mm）
-  /* 支撑塔模式（e-Stage 块状格架单元：底座 + 四角主柱镂空晶格塔 + 顶部放射接触杆） */
-  towerOn: false,     // 支撑塔模式开关（落板支撑聚类为格架塔，替代独立 pin）
-  towerW: 6,          // 塔截面边长（mm，方形 W=D）
-  towerPostR: 0.5,    // 角柱半径（mm）
-  towerCellH: 4,      // 晶格层高（mm）
-  rodR: 0.5,          // 接触杆底部半径（mm，尖径 = 顶部球头半径）
-  baseT: 1.5,         // 底座高度（mm，须 > 菱孔对角线 + 0.4 才能冲出孔）
-  towerBar: 0.5,      // 塔身晶格斜杆截面（mm，方杆）
-  towerWall: 0.6,     // 底座壁厚（mm）
-  towerHole: 0.9,     // 底座菱形孔对角线（mm，自动按底座高收敛）
-  /* 脚手架（菱形格架，参考 e-Stage 开放菱形 + TANGO V-Support 墙片） */
-  scaffoldOn: true,   // 启用脚手架格架（相邻落板立柱间连续菱形格）
-  crossD: 0.5,        // 格架梁直径（mm）
-  crossStartH: 3,     // 格架起始高度（mm，相对平台）
-  crossZStep: 5,      // 菱形格高度（mm）
-  crossMaxXY: 8,      // 柱距上限（mm）
+  shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
+  supMode: 'tree',    // 支撑结构：'tree' 树状（PrusaSlicer branching）/ 'tower' 支撑塔（Materialise e-Stage 菱形格架）
+  /* 树状支撑（PrusaSlicer branching tree，默认值取 PrusaSlicer branchingsupport_*） */
+  tipD: 0.4,          // 前端球直径（head_front_diameter，接触模型）
+  pen: 0.2,           // 嵌入深度（head_penetration）
+  headLen: 1.0,       // 支撑头长度（前后球心距 = r_pin + head_width + r_back）
+  midD: 0.65,         // 分支起始直径（pillar_diameter，后端球 / 叶分支）
+  maxBranchD: 2.0,    // 分支最大直径（负载加粗上限）
+  widening: 0.5,      // 加宽系数（pillar_widening_factor：分支半径随负载线性增长的斜率）
+  baseD: 3,           // 底座直径（base_diameter）
+  baseH: 1,           // 底座高度（base_height）
+  maxBridgeLen: 5,    // 最大桥接长度（落地避让斜段上限，max_bridge_length）
+  maxBranchLen: 10,   // 最大分支长度（合并距离 / 单段下行上限，max_pillar_link_distance）
+  maxWeightOnModel: 10, // 模型上支撑最大负载（max_weight_on_model：分支累计长度超过则不锚到模型）
+  /* 支撑塔（Materialise e-Stage 菱形格架；参数名对齐 e-Stage 7.0 手册 Grid / Top connection / Foundation） */
+  esCell: 3.5,        // 菱形宽（Diamond width：格架最小菱形宽 = 墙距）
+  esDiamAngle: 45,    // 菱形角（Diamond angle：菱形斜边仰角，不低于自支撑临界角）
+  esBarW: 0.45,       // 边宽（Edge width：菱形边在墙面内的宽度）
+  esBarT: 0.35,       // 边厚（Edge thickness：墙厚，专利取激光束宽）
+  esMidBars: true,    // 菱形竖直对角线（墙上每半格一根竖杆，专利「vertical diagonal」）
+  esGap: 1.2,         // 离模净距（Margin to part：格架与模型保持的最小净距，针不受此限）
+  esColRatio: 7,      // 柱高宽比（Column height to width ratio：展宽前柱内菱形数，手册推荐 7）
+  esTowerMaxR: 4,     // 最大展宽（每侧格数：每下降一个柱高向四周展宽一格，最多展宽这么多格）
+  esHullRed: 1,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个菱形允许菱形宽翻倍；0=关闭）
+  esConnW: 0.45,      // 连接宽（Connection width：十字针针身板宽；默认同边宽，竖直针即格架竖杆的延伸）
+  esNeedleT: 0.35,    // 针板厚（十字针「+」截面板厚；默认同边厚）
+  esTipW: 0.3,        // 接触宽（Contact width：针尖接触模型处的宽度）
+  esContactMargin: 0.5, // 接触边距（Contact margin：贴模型前保持接触宽的细直段长）
+  esTaper: 1,         // 过渡段长（连接宽 → 接触宽 的渐缩长度）
+  esNeedleMax: 6,     // 针最大长度（格架节点到接触点）
+  esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
+  esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）
   /* 筏层 */
   raftOn: false,      // 实心筏层开关（厚 1.2mm，默认关闭）
   raftMargin: 3,      // 筏层边距（mm）
@@ -72,7 +72,9 @@ export const params = {
 export const state = {
   mesh: null,               // 模型 Mesh（非索引 geometry，底部贴 y=0）
   protectedFaces: new Set(),
-  supports: [],             // {mesh,x,z,y}
+  supports: [],             // 结构网格 {mesh, kind: 'ground'|'anchor'|'base'}
+  supportPoints: [],        // 支撑点（可编辑数据）{x,y,z,n,island,manual,state}
+  supportStats: null,       // 最近一次结构生成统计
   analysis: null,           // 详细分析结果
   orientResult: null,       // 当前最佳朝向候选
   mode: 'orbit',

@@ -19,15 +19,19 @@
    3. 自平台逐层向上：节点只有在至少一根下行杆连到已保留节点时才保留（无打印孤岛），两端都保留的杆件全部收录
       （菱形闭合）；规划路径上的杆件强制收录，保证每个接入节点都连到平台
    4. 接入节点后，只保留自各接入节点沿下行杆的闭包——顶部收成尖顶、往下铺满成块，多余格架不生成
-   接触（专利 FIG.13/14 + 手册 Top connection）：十字截面针自格架节点直通接触点——连接宽 → 过渡段渐缩 → 接触宽
-   （接触边距段）→ 沿针轴扎入渗透长度；十字板对齐格架墙向，针脚在节点高度切齐；针身胶囊体 + 过渡段锥台做净空判定
+   接触（专利 FIG.13/14 + 手册 Top connection）：十字截面直针自格架节点到接触点——连接宽 → 过渡段渐缩 → 接触宽
+   （接触边距段）→ 沿针轴扎入渗透长度；针身胶囊体 + 过渡段锥台做净空判定。
+   - 格架同向针（优先，专利「connection is made along one of the directions of the mesh edges」/ FIG.13b）：
+     针轴竖直（与「+」柱同轴）或落在节点所在墙面内，与格架杆件同宽同厚、经节点圆角板无缝相接；
+     接触点重定义为针轴延长线与模型的首个交点（偏移受限）
+   - 自由直针（兜底，FIG.13a 斜向连接）：接触点不动；错切十字柱，针脚截面与「+」柱顶一致（FIG.13c 截面 A-A′）
    基础带（手册 Foundation）：底层节点按墙线连成段，墙下沿实心带，相邻竖杆之间的底边开三角缺口
    连不上格架的支撑点：专利做法为连回模型自身——此处交给树状支撑（锚定模型 / 绕行落地）兜底，不留悬空点
 ================================================================ */
 import * as THREE from 'three';
-import { pointDist, capsuleClear, coneClear, ldiInside } from './collide.js';
+import { pointDist, capsuleClear, coneClear, ldiInside, raycast } from './collide.js';
 import { buildBranchingTree } from './supportTree.js';
-import { mergeParts } from './supportKit.js';
+import { mergeParts, dirCandidates, tipCone } from './supportKit.js';
 
 /* ---------- 三角形缓冲：板条/针/基础带直接写顶点，避免成千上万个 three 几何对象 ---------- */
 class TriBuf {
@@ -68,15 +72,17 @@ class TriBuf {
 }
 
 /* 变截面板：A→B；两端截面（宽 w 沿 e、厚 t 沿 m）沿杆轴投影到过端点、法线 nA / nB 的端面上
-   （法线取杆轴 = 垂直切；取 Y = 水平切，用于杆端齐平在节点高度） */
-function bar(buf, A, B, e, m, w0, t0, w1, t1, nA, nB) {
+   （法线取杆轴 = 垂直切；取 Y = 水平切，用于杆端齐平在节点高度）。
+   o0 / o1：两端截面中心沿 e 的侧移（板宽不对称时用：一侧按边宽、另一侧切齐到相邻墙面） */
+function bar(buf, A, B, e, m, w0, t0, w1, t1, nA, nB, o0 = 0, o1 = 0) {
   const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], l = Math.hypot(u[0], u[1], u[2]) || 1;
   u[0] /= l; u[1] /= l; u[2] /= l;
   const c = [];
-  for (const [P, w, th, np] of [[A, w0, t0, nA], [B, w1, t1, nB]]) {
+  for (const [P, w, th, np, o] of [[A, w0, t0, nA, o0], [B, w1, t1, nB, o1]]) {
     const un = u[0] * np[0] + u[1] * np[1] + u[2] * np[2];
     for (const i of [-1, 1]) for (const j of [-1, 1]) {
-      const X = [P[0] + e[0] * i * w / 2 + m[0] * j * th / 2, P[1] + e[1] * i * w / 2 + m[1] * j * th / 2, P[2] + e[2] * i * w / 2 + m[2] * j * th / 2];
+      const ei = o + i * w / 2;
+      const X = [P[0] + e[0] * ei + m[0] * j * th / 2, P[1] + e[1] * ei + m[1] * j * th / 2, P[2] + e[2] * ei + m[2] * j * th / 2];
       const k = ((P[0] - X[0]) * np[0] + (P[1] - X[1]) * np[1] + (P[2] - X[2]) * np[2]) / un;
       c.push([X[0] + u[0] * k, X[1] + u[1] * k, X[2] + u[2] * k]);
     }
@@ -224,72 +230,179 @@ export function buildEStageTowers(ctx, points, P) {
     if (best.tail) { const [a, bb, n] = path[path.length - 1]; for (let k = n - 1; k >= 0; k--) path.push([a, bb, k]); }
     return path;
   };
-  // 接入候选：接触点下方、针不陡于临界锥、长度 ≤ 针最大长；代价 = 针长 + 0.6 × 水平偏移（优先更竖直的针）
-  const needleCost = (p, N) => {
-    const dy = p.y - N[1], dh = Math.hypot(p.x - N[0], p.z - N[2]);
+  // 接触方向（自接触点指向外，朝下）：被托面外法线按「接触朝向 / 接触最大倾角」钳制（tipCone）。替补：竖直
+  const tc = tipCone(P);
+  const tipDirs = p => {
+    const d0 = dirCandidates(p.n, -1, tc.tilt, 8 * Math.PI / 180, tc.fixed)[0];
+    return d0[1] < -0.999 ? [d0] : [d0, [0, -1, 0]];
+  };
+  const clamp1 = x => Math.max(-1, Math.min(1, x));
+  /* ---- 格架同向针（专利 FIG.13b + 正文「connection is made along one of the directions of the mesh edges」）----
+     针轴只取格架自身的方向：① 竖直，与「+」柱 / 墙内竖杆同轴；② 墙面内斜向（针轴落在节点所在的墙面里，倾角 ≤ 接触最大倾角 ∩ 临界锥）。
+     十字截面与格架对齐（专利 FIG.13c 截面 A-A′）：一片板就在墙面内、与墙内杆件同宽同厚，经节点圆角板无缝相接；另一片板垂直墙面。
+     接触点按专利做法重定义：针轴延长线与模型的首个交点（「structure 125 is virtually prolonged until it intersects with the object」），
+     偏移受限（普通点 ≤ min(1.2, 0.4·菱形宽)；手动点 ≤ 0.4；孤岛种子不得上移 > 0.1——最低点先打印）。
+     旧实现让直针朝法线任意方位斜出：十字板离开墙面、针脚水平切口外露，节点处出现小方块 / 台阶（用户截图红框指出）。 */
+  const thMax = Math.min(tc.tilt, tiltMax);              // 墙面内斜针最大倾角
+  const shiftOf = p => (p.manual ? 0.4 : Math.min(1.2, 0.4 * w));
+  const arP = Math.ceil(Lmax * Math.tan(thMax) / ws) + 1;
+  const triNrm = f => {                                  // 三角形外法线（世界系，与 computeFaceDataFull 同绕序）
+    const T = bvh.tri, i = f * 9;
+    return nrm(cross([T[i + 3] - T[i], T[i + 4] - T[i + 1], T[i + 5] - T[i + 2]], [T[i + 6] - T[i], T[i + 7] - T[i + 1], T[i + 8] - T[i + 2]]));
+  };
+  // 候选（按代价升序）：nodeAt(a, b, n) 判定节点可用（规划阶段 = 细格存在；接入阶段 = 已保留格架）。
+  // 针轴偏离期望方向 ≤ 25°（同自由直针上限）——超出时宁可用方向精确的自由直针：曾因角度权重过低，
+  // 平面上选出 40° 斜针、斜面上选出朝侧面 / 反方向倾斜的针（方位差 50°~166°）。
+  // 代价 = 针长 + 8 × 针轴偏离期望方向（弧度）+ 2 × 接触点偏移估计（mm）
+  const DEV_AL = 25 * Math.PI / 180;
+  const alignedCands = (p, pi, nodeAt) => {
+    const out = [], n = p.n || [0, -1, 0], sMax = shiftOf(p);
+    const d0 = dirsOf[pi][0], uw = [-d0[0], -d0[1], -d0[2]];   // 期望针轴（自节点指向接触点）
+    // ① 竖直针：接触点附近的竖杆柱；接触高度按切平面估计
+    for (let a = Math.ceil((p.x - sMax) / ws); a <= Math.floor((p.x + sMax) / ws); a++)
+      for (let bb = Math.ceil((p.z - sMax) / ws); bb <= Math.floor((p.z + sMax) / ws); bb++) {
+        if (!vert2(a, bb)) continue;
+        const dx = a * ws - p.x, dz = bb * ws - p.z;
+        const yt = Math.abs(n[1]) > 0.3 ? p.y - (n[0] * dx + n[2] * dz) / n[1] : p.y;
+        const sh = Math.hypot(dx, yt - p.y, dz);
+        if (sh > sMax) continue;
+        const dev = Math.acos(clamp1(uw[1]));
+        if (dev > DEV_AL) continue;
+        for (let nn = Math.floor((yt - 0.3 - baseTop) / hs), k = 0; nn >= 0 && k < 3; nn--) {
+          if (!nodeAt(a, bb, nn)) continue;
+          const N = pos(a, bb, nn), L = yt - N[1];
+          if (L > Lmax) break;
+          out.push({ kind: 'v', a, b: bb, n: nn, N, u: [0, 1, 0], L, cost: L + 8 * dev + 2 * sh });
+          k++;
+        }
+      }
+    // ② 墙面内斜针：pl 0 = z 固定墙（z = 偶数半格，针沿 x 倾斜）/ 1 = x 固定墙（针沿 z 倾斜）
+    if (thMax > 0.02) for (const pl of [0, 1]) {
+      const c0 = pl === 0 ? p.z : p.x, ni = pl === 0 ? n[0] : n[2], nw = pl === 0 ? n[2] : n[0];
+      const den = ni * ni + n[1] * n[1];
+      if (den < 0.05) continue;                          // 被托面正对墙法向：移到墙面内要沿表面爬太远
+      // 墙面内表面切向（面内坐标 (s, y)）：目标点可沿它再挪 ±0.6——孤岛周界点垂直墙面挪进来时可能落到边缘外，切向挪一点就能打中
+      const tl = Math.hypot(n[1], ni) || 1, ts = n[1] / tl, ty = -ni / tl;
+      for (let wi = Math.ceil((c0 - sMax) / w); wi <= Math.floor((c0 + sMax) / w); wi++) {
+        // 切平面上离支撑点最近、且落在该墙面内的点
+        const dc = wi * w - c0, ds0 = -nw * dc * ni / den, dy0 = -nw * dc * n[1] / den, iw = 2 * wi;
+        for (const dl of [0, 0.6, -0.6]) {
+          const ds = ds0 + ts * dl, dy = dy0 + ty * dl, sh = Math.hypot(ds, dy, dc);
+          if (sh > sMax) continue;
+          const sT = (pl === 0 ? p.x : p.z) + ds, yT = p.y + dy;
+          const ci = Math.round(sT / ws);
+          const nHi = Math.floor((yT - 0.3 - baseTop) / hs), nLo = Math.max(0, Math.ceil((yT - Lmax - baseTop) / hs));
+          for (let nn = nHi; nn >= nLo; nn--) for (let i = ci - arP; i <= ci + arP; i++) {
+            const a = pl === 0 ? i : iw, bb = pl === 0 ? iw : i;
+            const hsft = sT - i * ws, vy = yT - (baseTop + nn * hs);
+            if (vy < 0.3 || Math.abs(hsft) < 1e-3 || Math.abs(hsft) > vy * Math.tan(thMax) + 1e-6) continue;   // 正上方 = 竖直针，由 ① 覆盖
+            const L = Math.hypot(hsft, vy);
+            if (L > Lmax || !nodeAt(a, bb, nn)) continue;
+            const u = pl === 0 ? [hsft / L, vy / L, 0] : [0, vy / L, hsft / L];
+            const dev = Math.acos(clamp1(u[0] * uw[0] + u[1] * uw[1] + u[2] * uw[2]));
+            if (dev > DEV_AL) continue;
+            out.push({ kind: 'p', pl, a, b: bb, n: nn, N: pos(a, bb, nn), u, L, cost: L + 8 * dev + 2 * sh });
+          }
+        }
+      }
+    }
+    return out.sort((x, y) => x.cost - y.cost);
+  };
+  // 候选核验：自节点沿针轴求首个命中 = 重定义后的接触点；偏移 / 孤岛种子不上移 / 掠射 / 保护面 / 针净空
+  const why = st.alignWhy = { hit: 0, shift: 0, rise: 0, graze: 0, prot: 0, clear: 0, path: 0, none: 0 };   // 同向针未采用的原因（自检）
+  const verifyAligned = (p, c) => {
+    const N = c.N, u = c.u;
+    const hit = raycast(bvh, N[0], N[1], N[2], u[0], u[1], u[2], 0.05, c.L + 1.5);
+    if (!hit || hit.t < 0.3) { why.hit++; return null; }
+    const C = [N[0] + u[0] * hit.t, N[1] + u[1] * hit.t, N[2] + u[2] * hit.t];
+    const shift = Math.hypot(C[0] - p.x, C[1] - p.y, C[2] - p.z);
+    if (shift > shiftOf(p)) { why.shift++; return null; }
+    if (p.island !== null && p.island !== undefined && C[1] > p.y + 0.1) { why.rise++; return null; }
+    let fn = triNrm(hit.f);
+    if (fn[0] * u[0] + fn[1] * u[1] + fn[2] * u[2] > 0) fn = [-fn[0], -fn[1], -fn[2]];   // 绕序反了的 STL
+    if (-(fn[0] * u[0] + fn[1] * u[1] + fn[2] * u[2]) < 0.3) { why.graze++; return null; }   // 掠射：针轴与表面夹角 < 17.5°
+    if (ctx.protNear && ctx.protNear({ x: C[0], y: C[1], z: C[2] })) { why.prot++; return null; }
+    if (!needleClear(C, N)) { why.clear++; return null; }
+    return { ...c, C, L: hit.t, shift, fn };
+  };
+  /* ---- 自由直针（兜底：格架同向针在偏移限度内接不上时，接触点不动，节点 → 支撑点直连）---- */
+  const DEV_MAX = 25 * Math.PI / 180;
+  const needleCost = (p, N, d) => {
+    const dy = p.y - N[1], hx = N[0] - p.x, hz = N[2] - p.z, dh = Math.hypot(hx, hz);
     if (dy < 0.3 || dh > dy * tanT + 1e-6) return -1;
     const L = Math.hypot(dh, dy);
-    return L <= Lmax ? L + 0.6 * dh : -1;
+    if (L > Lmax) return -1;
+    const dev = Math.acos(clamp1((hx * d[0] - dy * d[1] + hz * d[2]) / L));
+    if (dev > DEV_MAX) return -1;
+    // + 斜向偏移（X、Z 同时偏）惩罚：只沿一个墙向倾斜时，十字针一片板始终留在墙面内、与格架共面
+    return L + 0.6 * dh + 6 * dev + 0.8 * Math.min(Math.abs(hx), Math.abs(hz));
   };
-  // 针轴曲线：二次贝塞尔——自格架节点竖直起步（与下面的竖杆相切，针脚处无折角），平滑转向接触点；
-  // 控制点竖直抬高 k，切向倾角沿曲线单调增大，末端（接触方向）不超过临界锥
+  // 自由直针针轴：节点 → 接触点的直线（错切十字直杆 + 过渡段 + 接触段），渗透段沿针轴扎入
   const needleCurve = (p, N) => {
-    const P2 = [p.x, p.y, p.z], dy = p.y - N[1], dh = Math.hypot(p.x - N[0], p.z - N[2]);
-    const k = Math.max(0, Math.min(0.2 * dy, dy - dh / tanT - 0.05));   // k 小：只在根部收一个小圆弧，针身大体笔直，针尖不打弯
-    const P1 = [N[0], N[1] + k, N[2]];
-    const m = k > 0.05 && dh > 0.02 ? 8 : 1;
-    const pts = [], acc = [0];
-    for (let i = 0; i <= m; i++) {
-      const s = i / m, c0 = (1 - s) * (1 - s), c1 = 2 * (1 - s) * s, c2 = s * s;
-      pts.push([c0 * N[0] + c1 * P1[0] + c2 * P2[0], c0 * N[1] + c1 * P1[1] + c2 * P2[1], c0 * N[2] + c1 * P1[2] + c2 * P2[2]]);
-      if (i) acc.push(acc[i - 1] + len(sub(pts[i], pts[i - 1])));
-    }
-    const L = acc[m], tEnd = nrm(sub(P2, m > 1 ? P1 : N));
-    const posAt = s => {                             // 弧长 s 处的点；s > L 沿末端切向外推（渗透段）
-      if (s >= L) return [P2[0] + tEnd[0] * (s - L), P2[1] + tEnd[1] * (s - L), P2[2] + tEnd[2] * (s - L)];
+    const P4 = [p.x, p.y, p.z];
+    const pts = [N, P4], acc = [0, len(sub(P4, N))];
+    const m = 1, L = acc[1], tEnd = nrm(sub(P4, N));
+    const posAt = s => {                             // 弧长 s 处的点；s > L 沿接触方向外推（渗透段，扎入模型）
+      if (s >= L) return [P4[0] + tEnd[0] * (s - L), P4[1] + tEnd[1] * (s - L), P4[2] + tEnd[2] * (s - L)];
       let i = 1; while (i < m && acc[i] < s) i++;
       const f = (s - acc[i - 1]) / ((acc[i] - acc[i - 1]) || 1), A = pts[i - 1], B = pts[i];
       return [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f, A[2] + (B[2] - A[2]) * f];
     };
     return { pts, acc, L, posAt };
   };
-  // 针净空：针身（节点 → 过渡段起点）沿曲线折线逐段按十字截面外接圆 + 0.1 做胶囊体判定；
+  // 针净空（直针，接触点 C、节点 N）：针身（节点 → 过渡段起点）按十字截面外接圆 + 0.1 做胶囊体判定；
   // 过渡段按锥台（接触端 tipW/2 → 起点 rCross，+0.1），自接触点起豁免「接触边距 + 0.2」（接触段本就贴住 / 扎入表面）
-  const needleClear = (p, N) => {
-    const cv = needleCurve(p, N), s1 = Math.max(0, cv.L - taper - cMargin);
-    let prev = cv.pts[0];
-    for (let i = 1; i < cv.pts.length && cv.acc[i - 1] < s1; i++) {
-      const B = cv.acc[i] <= s1 ? cv.pts[i] : cv.posAt(s1);
-      if (len(sub(B, prev)) > 0.02 && !capsuleClear(bvh, prev[0], prev[1], prev[2], B[0], B[1], B[2], rCross + 0.1)) return false;
-      prev = B;
-    }
-    const S1 = cv.posAt(s1);
-    return coneClear(bvh, p.x, p.y, p.z, tipW / 2 + 0.1, S1[0], S1[1], S1[2], rCross + 0.1, cMargin + 0.2);
+  const needleClear = (C, N) => {
+    const L = len(sub(C, N)), u = nrm(sub(C, N)), s1 = Math.max(0, L - taper - cMargin);
+    const S1 = [N[0] + u[0] * s1, N[1] + u[1] * s1, N[2] + u[2] * s1];
+    if (s1 > 0.02 && !capsuleClear(bvh, N[0], N[1], N[2], S1[0], S1[1], S1[2], rCross + 0.1)) return false;
+    return coneClear(bvh, C[0], C[1], C[2], tipW / 2 + 0.1, S1[0], S1[1], S1[2], rCross + 0.1, cMargin + 0.2);
   };
 
   /* ---------- 1. 每个支撑点：针最省、可落地的接入节点 + 柱化路径 ---------- */
   const plan = new Array(points.length).fill(null);
   const ar = Math.ceil(Lmax * tanT / ws) + 1;
+  const dirsOf = points.map(tipDirs);                // 每点的接触方向（主方向 + 竖直替补）
   for (let pi = 0; pi < points.length; pi++) {
     const p = points[pi];
-    const nHi = Math.floor((p.y - 0.3 - baseTop) / hs), nLo = Math.max(0, Math.ceil((p.y - Lmax - baseTop) / hs));
-    if (nHi < 0) continue;
-    const ca = Math.round(p.x / ws), cb = Math.round(p.z / ws);
-    const cand = [];
-    for (let n = nHi; n >= nLo; n--) for (let a = ca - ar; a <= ca + ar; a++) for (let bb = cb - ar; bb <= cb + ar; bb++) {
-      if (!exists2(a, bb, n)) continue;
-      const N = pos(a, bb, n), cost = needleCost(p, N);
-      if (cost >= 0) cand.push({ a, b: bb, n, cost, N });
-    }
-    cand.sort((x, y) => x.cost - y.cost);
+    // 优先：格架同向针（竖直 / 墙面内斜向，接触点重定义）
     let tries = 0;
-    for (const c of cand) {
-      if (tries >= 16) break;
+    const ac = alignedCands(p, pi, exists2);
+    if (!ac.length) why.none++;
+    for (const c of ac) {
+      if (tries >= 24) break;
       if (!nodeOK(c.a, c.b, c.n)) continue;
       tries++;
-      if (!needleClear(p, c.N)) continue;
+      const v = verifyAligned(p, c);
+      if (!v) continue;
       const path = findPath(c.a, c.b, c.n);
-      if (path) { plan[pi] = { top: c, path }; break; }
+      if (path) { plan[pi] = { top: v, path }; break; }
+      why.path++;
+    }
+    if (plan[pi]) continue;
+    // 兜底：自由直针（接触点不动）
+    const C = [p.x, p.y, p.z];
+    for (const d of dirsOf[pi]) {
+      const nHi = Math.floor((p.y - 0.3 - baseTop) / hs), nLo = Math.max(0, Math.ceil((p.y - Lmax - baseTop) / hs));
+      if (nHi < 0) continue;
+      const ca = Math.round(p.x / ws), cb = Math.round(p.z / ws);
+      const cand = [];
+      for (let n = nHi; n >= nLo; n--) for (let a = ca - ar; a <= ca + ar; a++) for (let bb = cb - ar; bb <= cb + ar; bb++) {
+        if (!exists2(a, bb, n)) continue;
+        const N = pos(a, bb, n), cost = needleCost(p, N, d);
+        if (cost >= 0) cand.push({ kind: 'free', a, b: bb, n, cost, N, C });
+      }
+      cand.sort((x, y) => x.cost - y.cost);
+      tries = 0;
+      for (const c of cand) {
+        if (tries >= 16) break;
+        if (!nodeOK(c.a, c.b, c.n)) continue;
+        tries++;
+        if (!needleClear(C, c.N)) continue;
+        const path = findPath(c.a, c.b, c.n);
+        if (path) { plan[pi] = { top: c, path }; break; }
+      }
+      if (plan[pi]) break;
     }
   }
 
@@ -399,22 +512,33 @@ export function buildEStageTowers(ctx, points, P) {
     const p = points[pi], g = plan[pi];
     let hook = null;
     if (g && G.has(k3(g.top.a, g.top.b, g.top.n))) hook = g.top;
-    if (!hook) {
+    if (!hook) {                                     // 格架同向针接已保留节点
+      let tries = 0;
+      for (const c of alignedCands(p, pi, (a, bb, n) => G.has(k3(a, bb, n)))) {
+        if (tries++ >= 24) break;
+        const v = verifyAligned(p, c);
+        if (v) { hook = v; break; }
+      }
+    }
+    if (!hook) {                                     // 自由直针接已保留节点
+      const C = [p.x, p.y, p.z];
       const ci = Math.floor(p.x / hc), cj = Math.floor(p.y / hc), ck = Math.floor(p.z / hc);
       const cand = [];
       for (let da = -1; da <= 1; da++) for (let db = -1; db <= 1; db++) for (let dc = -1; dc <= 1; dc++) {
         const arr = gHash.get((ci + da) + ',' + (cj + db) + ',' + (ck + dc));
         if (!arr) continue;
-        for (const [a, bb, n, x, y, z] of arr) {
-          const N = [x, y, z], cost = needleCost(p, N);
-          if (cost >= 0) cand.push({ a, b: bb, n, cost, N });
+        for (const [a, bb, n, x, y, z] of arr) for (const d of dirsOf[pi]) {
+          const N = [x, y, z], cost = needleCost(p, N, d);
+          if (cost >= 0) cand.push({ kind: 'free', a, b: bb, n, cost, N, C });
         }
       }
       cand.sort((x, y) => x.cost - y.cost);
-      for (let i = 0; i < cand.length && i < 24; i++) if (needleClear(p, cand[i].N)) { hook = cand[i]; break; }
+      for (let i = 0; i < cand.length && i < 24; i++) if (needleClear(C, cand[i].N)) { hook = cand[i]; break; }
     }
-    if (hook) needles.push({ pi, a: hook.a, b: hook.b, n: hook.n, N: hook.N });
-    else fallbackIdx.push(pi);
+    if (hook) {
+      const u = hook.u || nrm(sub(hook.C, hook.N)), L = hook.kind === 'free' ? len(sub(hook.C, hook.N)) : hook.L;
+      needles.push({ pi, kind: hook.kind, pl: hook.pl, a: hook.a, b: hook.b, n: hook.n, N: hook.N, C: hook.C, u, L, fn: hook.fn, shift: hook.shift || 0 });
+    } else fallbackIdx.push(pi);
   }
 
   /* ---------- 5. 只保留自各接入节点沿下行杆的闭包（顶部收成尖顶，多余格架不生成） ---------- */
@@ -447,12 +571,26 @@ export function buildEStageTowers(ctx, points, P) {
       addInc(kA, pl, ds / l, dy / l, l); addInc(kB, pl, -ds / l, -dy / l, l);
     }
   }
-  // 接针节点：针自节点竖直起步，在已有格架杆的墙面内当作一根向上的杆参与节点圆角（针与格架圆滑相接）
-  const needleNode = new Set(needles.map(nd => k3(nd.a, nd.b, nd.n)));
-  for (const kN of needleNode) for (const pl of [0, 1]) {
-    const arr = incid.get(kN * 2 + pl);
-    if (arr && arr.length && !arr.some(d => d[1] > 0.999)) arr.push([0, 1, 0.8]);
+  // 格架自身在各墙面的入射数（不含针）：针脚是否需要自墙厚放宽的判定用
+  const latCnt = new Map();
+  for (const [kk, arr] of incid) latCnt.set(kk, arr.length);
+  const addNeedleInc = (kN, pl, s, y, L) => {
+    const kk = kN * 2 + pl;
+    let arr = incid.get(kk); if (!arr) incid.set(kk, arr = []);
+    if (!arr.some(d => d[0] * s + d[1] * y > 0.999)) arr.push([s, y, L]);   // 同节点同向多根针只记一次
+  };
+  // 格架同向针：针轴就在墙面内，按真实方向当作该墙面的一根杆参与节点圆角（与格架杆件同宽同厚，节点处无缝）；
+  // 竖直针在柱所在的每面墙里都是一根向上的竖杆
+  for (const nd of needles) {
+    const kN = k3(nd.a, nd.b, nd.n);
+    if (nd.kind === 'p') addNeedleInc(kN, nd.pl, nd.pl === 0 ? nd.u[0] : nd.u[2], nd.u[1], nd.L);
+    else if (nd.kind === 'v') {
+      if ((nd.b & 1) === 0) addNeedleInc(kN, 0, 0, 1, nd.L);
+      if ((nd.a & 1) === 0) addNeedleInc(kN, 1, 0, 1, nd.L);
+    }
   }
+  // 自由直针（兜底）不登记入射：它是错切十字柱，针脚水平截面与下面「+」柱顶完全相同，在节点处直接弯折接出即连续；
+  // 若按针轴投影方向登记，节点板会沿投影方向伸出一截与针截面对不上的假杆头（小方块 / 台阶，用户截图红框指出）
   // 圆角节点板（同一墙面内 ≥2 根杆的节点）：入射杆按极角排序，相邻两杆夹角 Δ < π 的一侧（凹角）做半径 r 的圆角，
   // 切点距节点 a = (b/2 + r)/tan(Δ/2)；Δ > π 的一侧（凸侧）以节点为心、半径 b/2 的圆弧收头；共线直通的两杆不需要节点板。
   // 每根杆修剪到两侧切点中较远者（e），杆端面恰为节点板的一条边——墙面成为孔角倒圆的连续穿孔板，节点处无直棱、无外伸。
@@ -484,6 +622,23 @@ export function buildEStageTowers(ctx, points, P) {
   const Y = [0, 1, 0];
   const termAt = (k, pl) => (incid.get(k * 2 + pl) || []).length === 1;   // 该墙面内只有这一根杆到此为止
   const wallAt = (k, pl) => (incid.get(k * 2 + pl) || []).length >= 2;    // 该墙面在此节点有连续的杆（节点板或直通）
+  // 侧边切齐：墙面 pl 在节点处没有朝 s·sg > 0 一侧的杆（本墙到此为止，例如塔块外墙上与之正交的墙），而另一面墙在此确实向一侧延伸——
+  // 该侧板宽切齐到另一面墙的墙面（s = sg·t/2）。否则边宽（0.45）比墙厚（0.35）宽：外墙上整根「+」柱凸出 0.05 成一条棱、
+  // 节点板凸侧圆弧凸出 0.05 成小盖子（用户截图：「立柱是共用一根还是多根重复」「节点合并不够完美」）。两面墙都不延伸 = 独立「+」柱，不切
+  const armDir = (k, pl, sg, ys) => (incid.get(k * 2 + pl) || []).some(d => d[0] * sg > 0.1 && (!ys || d[1] * ys > 0.1));
+  // 「墙面 pl 在柱子 sg 一侧有菱形格」：本节点有朝 sg 的杆，或下方 q/2 个节点内有朝 sg 上行的斜边、上方 q/2 内有朝 sg 下行的斜边
+  // （柱即菱形竖直对角线，斜边只每隔 q/2 个节点接到柱上，中间节点只有竖杆直通；按方向判定——塔块下宽上窄，
+  //  下方菱形格朝 sg 下行的斜边不代表上面这段旁边也有格）
+  const sideWall = (k, pl, sg) => {
+    if (armDir(k, pl, sg, 0)) return true;
+    const [a, bb, n] = unk(k), h = Math.max(1, (qAt(a, bb, n) || 2) >> 1);
+    for (let d = 1; d <= h; d++) {
+      if (n - d >= 0 && armDir(k3(a, bb, n - d), pl, sg, 1)) return true;
+      if (armDir(k3(a, bb, n + d), pl, sg, -1)) return true;
+    }
+    return false;
+  };
+  const clipSide = (k, pl, sg) => !sideWall(k, pl, sg) && (sideWall(k, 1 - pl, 1) || sideWall(k, 1 - pl, -1));
   // 杆件：扁平板条修剪到两端节点板边缘；单杆端头水平切齐到节点。单杆端头若是「+」柱的一臂在此终止、另一面墙在此连续：
   // 臂宽（b，比墙厚 t 宽）在这一段内收到墙厚，端面整个收进另一面墙里——否则两侧各露出 (b−t)/2 的小平台
   for (const e of used) {
@@ -493,11 +648,22 @@ export function buildEStageTowers(ctx, points, P) {
       const us = pl === 0 ? u[0] : u[2];
       const eA = trimAt(kA, pl, us, u[1]), eB = trimAt(kB, pl, -us, -u[1]);
       if (eA + eB >= L - 1e-3) continue;               // 杆被两端节点板覆盖
-      const wn = pl === 0 ? Z : X;
+      const wn = pl === 0 ? Z : X, ex = nrm(cross(wn, u));
       const wA = termAt(kA, pl) && wallAt(kA, 1 - pl) ? Math.min(b, t) : b;
       const wB = termAt(kB, pl) && wallAt(kB, 1 - pl) ? Math.min(b, t) : b;
+      // 竖杆两侧在两端的实际外缘（面内水平坐标 s）：该侧被切齐到相邻墙面时为 t/2
+      let pA = wA / 2, mA = wA / 2, pB = wB / 2, mB = wB / 2;
+      if (e.kind === 'v') {
+        if (clipSide(kA, pl, 1)) pA = Math.min(pA, t / 2);
+        if (clipSide(kA, pl, -1)) mA = Math.min(mA, t / 2);
+        if (clipSide(kB, pl, 1)) pB = Math.min(pB, t / 2);
+        if (clipSide(kB, pl, -1)) mB = Math.min(mB, t / 2);
+        // 两侧都收到墙厚：整根落在另一面墙的竖杆里（「+」柱另一片板 b × t 已覆盖），不必再出
+        if (e.vx && e.vz && pA <= t / 2 && mA <= t / 2 && pB <= t / 2 && mB <= t / 2) continue;
+      }
+      const es = (pl === 0 ? ex[0] : ex[2]) >= 0 ? 1 : -1;   // 板宽方向 e 与面内 +s 同向 / 反向
       bar(buf, [A[0] + u[0] * eA, A[1] + u[1] * eA, A[2] + u[2] * eA], [B[0] - u[0] * eB, B[1] - u[1] * eB, B[2] - u[2] * eB],
-        nrm(cross(wn, u)), wn, wA, t, wB, t, eA > 0 ? u : Y, eB > 0 ? u : Y);
+        ex, wn, pA + mA, t, pB + mB, t, eA > 0 ? u : Y, eB > 0 ? u : Y, es * (pA - mA) / 2, es * (pB - mB) / 2);
     }
   }
   // 节点板几何：轮廓（面内坐标，绕节点逆时针、对节点星形）→ 以节点为中心扇形三角化 → 沿墙法线挤出 ±t/2
@@ -534,8 +700,20 @@ export function buildEStageTowers(ctx, points, P) {
         for (let j = 0; j <= nseg; j++) { const ang = b1 + (nseg ? extra * j / nseg : 0); raw.push([b / 2 * Math.cos(ang), b / 2 * Math.sin(ang)]); }
       }
     }
+    let poly0 = raw;
+    // 侧边切齐（见 clipSide）：轮廓按半平面 s·sg ≤ t/2 裁切（节点在半平面内，裁后仍对节点星形，扇形三角化照旧）
+    for (const sg of [1, -1]) {
+      if (!clipSide(kN, pl, sg)) continue;
+      const out = [];
+      for (let i = 0; i < poly0.length; i++) {
+        const A = poly0[i], B = poly0[(i + 1) % poly0.length], da = A[0] * sg - t / 2, db = B[0] * sg - t / 2;
+        if (da <= 0) out.push(A);
+        if ((da < 0 && db > 0) || (da > 0 && db < 0)) { const f = da / (da - db); out.push([A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f]); }
+      }
+      poly0 = out;
+    }
     const poly = [];
-    for (const q of raw) { const p0 = poly[poly.length - 1]; if (!p0 || Math.hypot(q[0] - p0[0], q[1] - p0[1]) > 1e-6) poly.push(q); }
+    for (const q of poly0) { const p0 = poly[poly.length - 1]; if (!p0 || Math.hypot(q[0] - p0[0], q[1] - p0[1]) > 1e-6) poly.push(q); }
     while (poly.length > 1 && Math.hypot(poly[0][0] - poly[poly.length - 1][0], poly[0][1] - poly[poly.length - 1][1]) <= 1e-6) poly.pop();
     const m = poly.length;
     if (m < 3) continue;
@@ -555,37 +733,86 @@ export function buildEStageTowers(ctx, points, P) {
       buf.quad(W(q[0], q[1], t / 2), W(q2[0], q2[1], t / 2), W(q2[0], q2[1], -t / 2), W(q[0], q[1], -t / 2), pl === 0 ? [dy2, -ds2, 0] : [0, -ds2, dy2]);
     }
   }
-  // 十字针（e-Stage Top connection）：自格架节点直通接触点——针身（连接宽）→ 过渡段（渐缩到接触宽）→
-  // 接触段（接触宽，长 = 接触边距）→ 沿针轴扎入渗透长度。
-  // 错切十字柱：每层水平截面都是对齐墙向的「+」（板 Z：宽沿 X、厚沿 Z；板 X：宽沿 Z、厚沿 X），沿针轴曲线平移——
-  // 针脚截面与格架竖杆 / 节点板顶边完全一致、起步方向竖直，斜向的接触点也无缝、无折角接上（逐层打印时本就是这个形状）。
+  // 十字针（e-Stage Top connection，专利 FIG.13/14）：自格架节点沿直线到接触点——针身（连接宽）→ 过渡段（渐缩到接触宽）→
+  // 接触段（接触宽，长 = 接触边距）→ 沿针轴扎入渗透长度。十字截面与格架对齐（FIG.13c 截面 A-A′）。
   // 节点在某墙面内没有格架时，该向的针板自墙厚起步、在 fadeLen 内放宽到连接宽，针脚不露小平台
   const fadeLen = 0.6;
-  const latticeIn = (k, pl, a, bb, n) => (incid.get(k * 2 + pl) || []).length > 0
+  const latticeIn = (k, pl, a, bb, n) => (latCnt.get(k * 2 + pl) || 0) > 0
     || (n === 0 && (pl === 0 ? md(bb, qAt(a, bb, 0) || 2) === 0 : md(a, qAt(a, bb, 0) || 2) === 0));
+  st.needlesV = 0; st.needlesP = 0; st.needlesFree = 0; st.shiftSum = 0; st.shiftMax = 0;
+  const emitted = new Set();                         // 同节点同向的格架同向针几何相同（孤岛周界种子可能密于间距、选中同一根竖杆），只出一份
   for (const nd of needles) {
-    const p = points[nd.pi], N = nd.N, kN = k3(nd.a, nd.b, nd.n);
-    const cv = needleCurve(p, N), L = cv.L, at = cv.posAt;
+    const p = points[nd.pi], N = nd.N, kN = k3(nd.a, nd.b, nd.n), u = nd.u, L = nd.L;
     const s1 = Math.max(0, L - taper - cMargin), s2 = Math.max(s1, L - cMargin), s3 = L + pen;
-    // 沿针轴的截面（宽、厚）：针身 → 过渡段线性渐缩 → 接触段
-    const prof = s => {
-      if (s <= s1) return [connW, needleT];
-      if (s >= s2) return [tipW, tipT];
-      const f = (s - s1) / (s2 - s1);
-      return [connW + (tipW - connW) * f, needleT + (tipT - needleT) * f];
-    };
-    for (const pl of [0, 1]) {
-      const eW = pl === 0 ? X : Z, eT = pl === 0 ? Z : X;
-      const fade = latticeIn(kN, pl, nd.a, nd.b, nd.n) ? 0 : Math.min(fadeLen, s3 * 0.5);
-      const ss = [...new Set([...cv.acc, fade, s1, s2, s3].filter(s => s >= 0 && s <= s3))].sort((x, y) => x - y);
-      const wAt = s => { const [w, th] = prof(s); return [fade > 0 && s < fade ? Math.min(w, t + (w - t) * (s / fade)) : w, th]; };
+    const dupKey = nd.kind === 'free' ? null : `${kN}|${u.map(v => Math.round(v * 200)).join(',')}`;
+    if (dupKey && emitted.has(dupKey)) { pointState[nd.pi] = 'ground'; continue; }
+    if (dupKey) emitted.add(dupKey);
+    // 板片：{ e 板宽方向, m 板厚方向, s0 起点（沿针轴）, rP / rM 根部朝 +e / −e 的外缘, tR 根部板厚, fl 根部 → 针身的过渡长,
+    //        sheared 错切（自由直针：每层水平截面对齐墙向，端面一律水平）}。根部外缘取与之相接的格架截面：
+    //   节点板 / 竖杆处 = 边宽/2（被侧边切齐的一侧 = 墙厚/2），该墙面无格架或「+」臂已收到墙厚 = 墙厚/2；之后在 fl 内放宽到 连接宽/2
+    const sheets = [];
+    const clipR = (pl, sg, base) => (clipSide(kN, pl, sg) ? Math.min(base, t / 2) : base);
+    if (nd.kind === 'free') {
+      for (const pl of [0, 1]) {
+        const eW = pl === 0 ? X : Z, eT = pl === 0 ? Z : X;   // eW 与该墙面 +s 同向
+        // 该墙面没有格架，或这面墙只有一根到此为止、已收到墙厚的「+」臂（另一面墙在此连续）：针板自墙厚起步放宽
+        const narrowed = latCnt.get(kN * 2 + pl) === 1 && (latCnt.get(kN * 2 + 1 - pl) || 0) >= 2;
+        const base = latticeIn(kN, pl, nd.a, nd.b, nd.n) && !narrowed ? connW / 2 : t / 2;
+        sheets.push({ e: eW, m: eT, s0: 0, rP: clipR(pl, 1, base), rM: clipR(pl, -1, base), tR: needleT, sheared: true });
+      }
+    } else if (nd.kind === 'v') {
+      for (const pl of [0, 1]) {
+        const eW = pl === 0 ? X : Z, eT = pl === 0 ? Z : X;
+        const onWall = (pl === 0 ? (nd.b & 1) === 0 : (nd.a & 1) === 0) && latticeIn(kN, pl, nd.a, nd.b, nd.n);
+        sheets.push(onWall ? { e: eW, m: eT, s0: trimAt(kN, pl, 0, 1), rP: clipR(pl, 1, b / 2), rM: clipR(pl, -1, b / 2), tR: t }
+          : { e: eW, m: eT, s0: 0, rP: t / 2, rM: t / 2, tR: needleT });
+      }
+    } else {
+      // 格架同向斜针：截面垂直针轴的「+」直杆。墙面内的那片板与墙内杆件同宽（边宽）同厚（墙厚），修剪到节点圆角板边缘、
+      // 端面恰为节点板的一条边——与格架杆件的接法完全相同；另一片板（垂直墙面）自墙厚起步放宽
+      const wn = nd.pl === 0 ? Z : X, nip = nrm(cross(wn, u));
+      const inWall = latticeIn(kN, nd.pl, nd.a, nd.b, nd.n);
+      sheets.push(inWall ? { e: nip, m: wn, s0: trimAt(kN, nd.pl, nd.pl === 0 ? u[0] : u[2], u[1]), rP: b / 2, rM: b / 2, tR: t }
+        : { e: nip, m: wn, s0: 0, rP: t / 2, rM: t / 2, tR: needleT });
+      sheets.push({ e: wn, m: nip, s0: 0, rP: t / 2, rM: t / 2, tR: needleT });
+    }
+    const cv = nd.kind === 'free' ? needleCurve(p, N) : null;
+    const at = cv ? cv.posAt : s => [N[0] + u[0] * s, N[1] + u[1] * s, N[2] + u[2] * s];
+    const sq = Math.abs(tipW - tipT) < 1e-6;           // 接触段截面为正方形：两片板在此完全重合，只出一份
+    let sharedFrom = Infinity;
+    sheets.forEach((sh, si) => {
+      const ramp = Math.abs(sh.rP - connW / 2) > 1e-6 || Math.abs(sh.rM - connW / 2) > 1e-6 || Math.abs(sh.tR - needleT) > 1e-6;
+      const fl = ramp ? Math.min(fadeLen, Math.max(0.05, (s3 - sh.s0) * 0.5)) : 0;
+      const prof = s => {                              // → [宽, 厚, 截面中心沿 +e 的侧移]
+        const f = fl > 0 ? Math.max(0, Math.min(1, (s - sh.s0) / fl)) : 1;
+        let eP = sh.rP + (connW / 2 - sh.rP) * f, eM = sh.rM + (connW / 2 - sh.rM) * f, th = sh.tR + (needleT - sh.tR) * f;
+        if (s > s1) {                                  // 过渡段 → 接触段（与根部过渡取窄者）
+          const g = s >= s2 ? 1 : (s - s1) / (s2 - s1), hw = (connW + (tipW - connW) * g) / 2, tt = needleT + (tipT - needleT) * g;
+          eP = Math.min(eP, hw); eM = Math.min(eM, hw); th = Math.min(th, tt);
+        }
+        return [eP + eM, th, (eP - eM) / 2];
+      };
+      const ss = [...new Set([sh.s0, sh.s0 + fl, s1, s2, L, s3, ...(cv ? cv.acc : [])].filter(s => s >= sh.s0 && s <= s3))].sort((x, y) => x - y);
+      if (si === 0) sharedFrom = sq ? Math.max(s2, sh.s0 + fl) : Infinity;
       for (let i = 0; i + 1 < ss.length; i++) {
         if (ss[i + 1] - ss[i] < 1e-3) continue;
-        const [w0, t0] = wAt(ss[i]), [w1, t1] = wAt(ss[i + 1]);
-        bar(buf, at(ss[i]), at(ss[i + 1]), eW, eT, w0, t0, w1, t1, Y, Y);
+        if (si > 0 && ss[i] >= Math.max(sharedFrom, sh.s0 + fl) - 1e-9) break;   // 正方形接触段已由第一片板生成
+        const [w0, t0, o0] = prof(ss[i]), [w1, t1, o1] = prof(ss[i + 1]);
+        // 端面：错切针一律水平；直针根部未修剪（直通 / 无节点板）时水平切齐，与格架杆件在节点处的切法一致，其余垂直针轴
+        const nA = sh.sheared || (i === 0 && sh.s0 === 0) ? Y : u, nB = sh.sheared ? Y : u;
+        bar(buf, at(ss[i]), at(ss[i + 1]), sh.e, sh.m, w0, t0, w1, t1, nA, nB, o0, o1);
       }
+    });
+    if (nd.kind === 'free') st.needlesFree++;
+    else {
+      if (nd.kind === 'v') st.needlesV++; else st.needlesP++;
+      st.shiftSum += nd.shift; st.shiftMax = Math.max(st.shiftMax, nd.shift);
     }
     st.needles++; pointState[nd.pi] = 'ground';
+    (st.needleList || (st.needleList = [])).push({ kind: nd.kind, pl: nd.pl, N, C: nd.C, pi: nd.pi, fn: nd.fn });   // 调试 / 验收：针型 / 两端点 / 接触面法线
+    // 自检：针轴与接触处表面外法线的夹角（°）——格架同向针取重定义后接触点所在面的法线，自由直针取支撑点法线
+    const pn = nd.fn || p.n || [0, -1, 0], ln = Math.hypot(pn[0], pn[1], pn[2]) || 1;
+    (st.tipDev || (st.tipDev = [])).push(Math.acos(clamp1(-(u[0] * pn[0] + u[1] * pn[1] + u[2] * pn[2]) / ln)) * 180 / Math.PI);
   }
   // 基础带：底层节点按所在墙线连段（间隔 ≤ 本级周期即相连），墙下沿实心带，相邻竖杆之间开三角缺口
   if (foundH > 0) {

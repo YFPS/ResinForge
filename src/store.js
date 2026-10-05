@@ -28,6 +28,8 @@ export const params = {
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
   supMode: 'tree',    // 支撑结构：'tree' 树状（PrusaSlicer branching）/ 'tower' 支撑塔（Materialise e-Stage 菱形格架）
+  tipMode: 'normal',  // 接触朝向：'normal' 沿法线（钳制到接触最大倾角）/ 'vertical' 竖直 / 'fixed' 固定倾角（沿法线方位）
+  tipTilt: 45,        // 接触最大倾角（°，接触端与竖直方向夹角；针身 / 分支仍受自支撑角约束）
   /* 树状支撑（PrusaSlicer branching tree，默认值取 PrusaSlicer branchingsupport_*） */
   tipD: 0.4,          // 前端球直径（head_front_diameter，接触模型）
   pen: 0.2,           // 嵌入深度（head_penetration）

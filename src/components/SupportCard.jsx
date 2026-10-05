@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Checkbox, InputNumber, Radio, Tooltip } from '@arco-design/web-react';
+import { Button, Checkbox, InputNumber, Radio, Select, Tooltip } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { bus, state } from '../store.js';
@@ -36,6 +36,13 @@ export default function SupportCard() {
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（竖直下方被模型挡住时锚到模型表面）</Checkbox>
+      </div>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <label className="f"><span>接触朝向</span>
+          <Select size="small" style={{ width: 110 }} value={params.tipMode} onChange={v => setParam('tipMode', v)}
+            options={[{ label: '沿法线', value: 'normal' }, { label: '竖直', value: 'vertical' }, { label: '固定角度', value: 'fixed' }]} />
+        </label>
+        {num('tipTilt', '接触最大倾角', 0, 75, 5, '°', '接触端与竖直方向的夹角上限（沿法线时钳制、固定角度时直接采用）；针身 / 分支仍受自支撑角约束')}
       </div>
       {tree ? (
         <>

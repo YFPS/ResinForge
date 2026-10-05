@@ -43,6 +43,7 @@ function paramSnapshot() {
   const p = params, num = (v, d) => (Number.isFinite(v) ? v : d);
   return {
     selfAngle: num(p.selfAngle, 45), shortSup: !!p.shortSup,
+    tipMode: p.tipMode || 'normal', tipTilt: num(p.tipTilt, 45),   // 接触朝向 / 接触最大倾角（两套结构共用）
     // 树状（PrusaSlicer branching 默认值）
     tipD: num(p.tipD, 0.4), pen: num(p.pen, 0.2), headLen: num(p.headLen, 1.0), midD: num(p.midD, 0.65),
     maxBranchD: num(p.maxBranchD, 2.0), widening: num(p.widening, 0.5), baseD: num(p.baseD, 3), baseH: num(p.baseH, 1),
@@ -326,6 +327,8 @@ export async function runGenSup(opts = {}) {
   const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点` : `支撑点 ${state.supportPoints.length} 个`;
   log(`${head}（候选 ${rep.pool}，区域面积滤除 ${rep.areaPruned}，孤岛种子 ${rep.seeds}，覆盖锥滤除 ${rep.covered}，已托住 ${rep.held}，贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}）`, 'ok');
   if (params.supMode === 'tower') {
+    const al = (s.needlesV || 0) + (s.needlesP || 0);
+    if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}，接触点平均偏移 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）· 自由直针 ${s.needlesFree || 0} 根`, 'ok');
     log(`e-Stage 支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段）；连不上格架转树状兜底 ${s.fallback} 点（落地 ${s.ground} · 锚定 ${s.anchors} · 微型短柱 ${s.micro}），${state.supportStats.ms}ms`, 'ok');
     if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   } else {

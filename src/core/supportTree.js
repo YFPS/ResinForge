@@ -18,7 +18,7 @@
    与 PrusaSlicer 的差异：竖直落地路径通畅时优先落地，不因下方斜向有模型面就锚到模型上（少在模型表面留疤）
 ================================================================ */
 import { raycast, capsuleClear } from './collide.js';
-import { pill, frustum, prusaHead, placeTip, downFan, groundRoute, microPost, mergeParts } from './supportKit.js';
+import { pill, frustum, prusaHead, placeTip, tipCone, downFan, groundRoute, microPost, mergeParts } from './supportKit.js';
 
 const LEAF = 0, JUNC = 1;
 const GROUND = -2, MESH = -3;
@@ -89,6 +89,7 @@ export function buildBranchingTree(ctx, points, P) {
   const cc = Math.max(rMin - rPin + 0.05, P.headLen);        // 前后球心距（PrusaSlicer r_pin + width + r_back）
   const crit = Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;   // 临界角（从水平测量，PrusaSlicer bridge_slope）
   const tiltMax = Math.PI / 2 - crit;                          // 杆件最大倾斜（从竖直）
+  const tc = tipCone(P);                                       // 支撑头朝向（接触朝向 / 接触最大倾角）
   const baseR = Math.max(rMax, P.baseD / 2);
   const baseTop = groundY + Math.max(0, P.baseH);
   const gap = 0.1;
@@ -133,7 +134,7 @@ export function buildBranchingTree(ctx, points, P) {
         continue;
       }
     }
-    const h = placeTip(bvh, p, p.n, -1, tiltMax, DEAD, headSpec);
+    const h = placeTip(bvh, p, p.n, -1, tc.tilt, DEAD, headSpec, tc.fixed);
     if (h) {
       nodes.push({ x: h.back.x, y: h.back.y, z: h.back.z, Rmin: rMin, w: 0, type: LEAF, alive: true, parent: -1, kids: 0, pt: i, head: h });
       st.heads++;

@@ -69,7 +69,7 @@ export function prusaHead(junction, dir, rBack, rPin, cc, seg = 16) {
    主方向 = 法线钳制进「与 sgn·Y 夹角 ≤ tiltMax」的锥（超角时保留方位角、倾角饱和到锥面）；
    与轴夹角 < dead 视为水平面 → 取轴向（吸收细分法线噪声）。
    其后为锥内替补方向（多环倾角 × 12 方位），按与主方向夹角升序——避让时依次试放，越靠前越贴近理想朝向 */
-export function dirCandidates(n, sgn, tiltMax, dead) {
+export function dirCandidates(n, sgn, tiltMax, dead, fixed = false) {
   const ax = [0, sgn, 0];
   let main = ax;
   if (n) {
@@ -77,7 +77,8 @@ export function dirCandidates(n, sgn, tiltMax, dead) {
     const c = n[1] * sgn / l;
     const h = Math.hypot(n[0], n[2]) / l;
     if (c < Math.cos(dead) && h > 1e-9) {
-      const tilt = Math.min(Math.acos(Math.max(-1, Math.min(1, c))), tiltMax);
+      // fixed：固定倾角模式——沿法线方位、倾角直接取 tiltMax
+      const tilt = fixed ? tiltMax : Math.min(Math.acos(Math.max(-1, Math.min(1, c))), tiltMax);
       const s = Math.sin(tilt);
       main = [n[0] / l / h * s, sgn * Math.cos(tilt), n[2] / l / h * s];
     }
@@ -95,13 +96,21 @@ export function dirCandidates(n, sgn, tiltMax, dead) {
   return [main, ...out];
 }
 
+/* 接触朝向参数 → { tilt 接触端最大倾角（弧度，从竖直）, fixed 固定倾角 }。
+   接触端很短（约 1mm），可比自支撑角更斜；针身 / 分支仍按 selfAngle 的临界锥约束 */
+export function tipCone(P) {
+  const mode = P.tipMode || 'normal';
+  const tilt = mode === 'vertical' ? 0 : Math.max(0, Math.min(75, P.tipTilt ?? 45)) * Math.PI / 180;
+  return { tilt, fixed: mode === 'fixed' };
+}
+
 /* ---------- 避让 ---------- */
 /* 接触端放置（支撑头 / 接触杆 / 锚定头）：沿候选方向依次试放，首个净空者胜出。
    spec：{ tipR 接触端半径, backR 后端半径, len 接触点→后端中心距离, skip 接触端豁免长度, gap 安全净距 }
    接触端本就贴住/扎入表面，豁免 skip 段；其后锥体（半径线性插值）与后端球都须与模型保持 gap。
    返回 { dir, back, tilt } 或 null（锥内全部方向碰撞 → 该点不可支撑） */
-export function placeTip(bvh, p, n, sgn, tiltMax, dead, spec) {
-  for (const d of dirCandidates(n, sgn, tiltMax, dead)) {
+export function placeTip(bvh, p, n, sgn, tiltMax, dead, spec, fixed = false) {
+  for (const d of dirCandidates(n, sgn, tiltMax, dead, fixed)) {
     const bx = p.x + d[0] * spec.len, by = p.y + d[1] * spec.len, bz = p.z + d[2] * spec.len;
     if (!coneClear(bvh, p.x, p.y, p.z, spec.tipR + spec.gap, bx, by, bz, spec.backR + spec.gap, spec.skip)) continue;
     if (pointDist(bvh, bx, by, bz, spec.backR + spec.gap) < spec.backR + spec.gap) continue;

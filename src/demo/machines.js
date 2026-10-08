@@ -3,6 +3,7 @@
    如有出入可直接改三个参数后「保存为机型」，自定义项优先于内置项参与匹配。
    顶栏的打印机选择与「模型」步骤的板面检查共用这里的 store。 */
 import { useSyncExternalStore } from 'react';
+import { onPlateChanged } from '../core/model.js';
 
 export const CUSTOM_ID = '__custom__';
 
@@ -13,19 +14,19 @@ const CURRENT_KEY = 'resinforge:machine.current';
 
 /** 内置机型（入门桌面 / 主流中端 / 大尺寸 / SLA 激光） */
 export const BUILTIN_MACHINES = [
-  { id: 'mars3', brand: 'Elegoo', model: 'Mars 3', plateX: 143.4, plateZ: 89.6, pixelUm: 35 },
-  { id: 'mars4ultra', brand: 'Elegoo', model: 'Mars 4 Ultra', plateX: 153.4, plateZ: 77.8, pixelUm: 18 },
-  { id: 'halotone', brand: 'Creality', model: 'Halot One', plateX: 130, plateZ: 82, pixelUm: 50 },
-  { id: 'photonmono2', brand: 'Anycubic', model: 'Photon Mono 2', plateX: 143, plateZ: 89, pixelUm: 34.4 },
-  { id: 'saturn2', brand: 'Elegoo', model: 'Saturn 2', plateX: 218.9, plateZ: 122.9, pixelUm: 28.5 },
-  { id: 'saturn4ultra', brand: 'Elegoo', model: 'Saturn 4 Ultra', plateX: 218.9, plateZ: 122.9, pixelUm: 19 },
-  { id: 'monox6k', brand: 'Anycubic', model: 'Photon Mono X 6K', plateX: 198, plateZ: 123, pixelUm: 34.5 },
-  { id: 'm5s', brand: 'Anycubic', model: 'Photon M5s', plateX: 218, plateZ: 123, pixelUm: 19 },
-  { id: 'halotmage', brand: 'Creality', model: 'Halot Mage', plateX: 228, plateZ: 128, pixelUm: 29 },
-  { id: 'mighty8k', brand: 'Phrozen', model: 'Sonic Mighty 8K', plateX: 218, plateZ: 123, pixelUm: 28 },
-  { id: 'mega8k', brand: 'Phrozen', model: 'Sonic Mega 8K', plateX: 330, plateZ: 185, pixelUm: 43 },
-  { id: 'form3', brand: 'Formlabs', model: 'Form 3（激光）', plateX: 145, plateZ: 145, pixelUm: 85 },
-  { id: 'form4', brand: 'Formlabs', model: 'Form 4（激光）', plateX: 200, plateZ: 125, pixelUm: 50 },
+  { id: 'mars3', brand: 'Elegoo', model: 'Mars 3', plateX: 143.4, plateY: 175, plateZ: 89.6, pixelUm: 35 },
+  { id: 'mars4ultra', brand: 'Elegoo', model: 'Mars 4 Ultra', plateX: 153.4, plateY: 165, plateZ: 77.8, pixelUm: 18 },
+  { id: 'halotone', brand: 'Creality', model: 'Halot One', plateX: 130, plateY: 160, plateZ: 82, pixelUm: 50 },
+  { id: 'photonmono2', brand: 'Anycubic', model: 'Photon Mono 2', plateX: 143, plateY: 165, plateZ: 89, pixelUm: 34.4 },
+  { id: 'saturn2', brand: 'Elegoo', model: 'Saturn 2', plateX: 218.9, plateY: 250, plateZ: 122.9, pixelUm: 28.5 },
+  { id: 'saturn4ultra', brand: 'Elegoo', model: 'Saturn 4 Ultra', plateX: 218.9, plateY: 220, plateZ: 122.9, pixelUm: 19 },
+  { id: 'monox6k', brand: 'Anycubic', model: 'Photon Mono X 6K', plateX: 198, plateY: 245, plateZ: 123, pixelUm: 34.5 },
+  { id: 'm5s', brand: 'Anycubic', model: 'Photon M5s', plateX: 218, plateY: 200, plateZ: 123, pixelUm: 19 },
+  { id: 'halotmage', brand: 'Creality', model: 'Halot Mage', plateX: 228, plateY: 230, plateZ: 128, pixelUm: 29 },
+  { id: 'mighty8k', brand: 'Phrozen', model: 'Sonic Mighty 8K', plateX: 218, plateY: 235, plateZ: 123, pixelUm: 28 },
+  { id: 'mega8k', brand: 'Phrozen', model: 'Sonic Mega 8K', plateX: 330, plateY: 300, plateZ: 185, pixelUm: 43 },
+  { id: 'form3', brand: 'Formlabs', model: 'Form 3（激光）', plateX: 145, plateY: 185, plateZ: 145, pixelUm: 85 },
+  { id: 'form4', brand: 'Formlabs', model: 'Form 4（激光）', plateX: 200, plateY: 210, plateZ: 125, pixelUm: 50 },
 ];
 
 const isMachine = m => m && typeof m === 'object'
@@ -48,7 +49,7 @@ function persistSavedMachines(list) {
 }
 
 function rememberMachine(p) {
-  try { localStorage.setItem(CURRENT_KEY, JSON.stringify({ plateX: p.plateX, plateZ: p.plateZ, pixelUm: p.pixelUm })); } catch { /* 同上 */ }
+  try { localStorage.setItem(CURRENT_KEY, JSON.stringify({ plateX: p.plateX, plateY: p.plateY, plateZ: p.plateZ, pixelUm: p.pixelUm })); } catch { /* 同上 */ }
 }
 
 /** 当前三个参数命中的机型（已保存优先于内置），无命中返回 null */
@@ -61,10 +62,10 @@ export const machineLabel = m => (m.name ? m.name : `${m.brand} ${m.model}`);
    选中项显式记录 selectedId，而不是每次用参数反推——否则参数相同的自定义机型会被内置机型顶掉。 */
 
 let params = null;   // store.js 的 params（initMachine 注入，避免本模块直接依赖 store）
-let snap = { saved: [], selectedId: CUSTOM_ID, plateX: 0, plateZ: 0, pixelUm: 0 };
+let snap = { saved: [], selectedId: CUSTOM_ID, plateX: 0, plateY: 0, plateZ: 0, pixelUm: 0 };
 const subs = new Set();
 function publish(patch) {
-  snap = { ...snap, ...patch, plateX: params.plateX, plateZ: params.plateZ, pixelUm: params.pixelUm };
+  snap = { ...snap, ...patch, plateX: params.plateX, plateY: params.plateY, plateZ: params.plateZ, pixelUm: params.pixelUm };
   subs.forEach(fn => fn());
 }
 
@@ -75,11 +76,18 @@ export function initMachine(p) {
   params = p;
   try {
     const m = JSON.parse(localStorage.getItem(CURRENT_KEY) || 'null');
-    if (isTriple(m)) { p.plateX = m.plateX; p.plateZ = m.plateZ; p.pixelUm = m.pixelUm; }
-  } catch { /* 数据损坏时保持默认值 */ }
-  const saved = loadSavedMachines();
-  const hit = matchMachine([...saved, ...BUILTIN_MACHINES], p);
-  publish({ saved, selectedId: hit ? hit.id : CUSTOM_ID });
+    if (isTriple(m)) {
+      p.plateX = m.plateX; p.plateZ = m.plateZ; p.pixelUm = m.pixelUm;
+      if (Number.isFinite(m.plateY)) p.plateY = m.plateY;
+    }
+    const saved = loadSavedMachines();
+    const hit = matchMachine([...saved, ...BUILTIN_MACHINES], p);
+    // 旧记录没有打印高度时，用命中机型的公开高度，体积框才跟机型走
+    if (hit && Number.isFinite(hit.plateY) && !(m && Number.isFinite(m.plateY))) p.plateY = hit.plateY;
+    publish({ saved, selectedId: hit ? hit.id : CUSTOM_ID });
+  } catch { /* 数据损坏时保持默认值 */
+    publish({ saved: loadSavedMachines(), selectedId: CUSTOM_ID });
+  }
 }
 
 /** 当前选中的机型对象；自定义时为 null */
@@ -92,7 +100,9 @@ export function selectMachine(id) {
     params.plateX = m.plateX;
     params.plateZ = m.plateZ;
     params.pixelUm = m.pixelUm;
+    if (Number.isFinite(m.plateY)) params.plateY = m.plateY;
     rememberMachine(params);
+    onPlateChanged();
   }
   publish({ selectedId: m ? m.id : CUSTOM_ID });
 }
@@ -102,10 +112,11 @@ export function setMachineParam(key, v) {
   params[key] = v;
   rememberMachine(params);
   publish({});
+  onPlateChanged();
 }
 
 export function saveCustomMachine(name) {
-  const entry = { id: 'c' + Date.now(), name, plateX: params.plateX, plateZ: params.plateZ, pixelUm: params.pixelUm };
+  const entry = { id: 'c' + Date.now(), name, plateX: params.plateX, plateY: params.plateY, plateZ: params.plateZ, pixelUm: params.pixelUm };
   const saved = [...snap.saved, entry];
   persistSavedMachines(saved);
   publish({ saved, selectedId: entry.id });

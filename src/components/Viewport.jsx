@@ -1,21 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Radio, Slider, Tooltip, Message } from '@arco-design/web-react';
 import { bus } from '../store.js';
-import { initScene, setMode } from '../core/scene.js';
+import { initScene, setMode, setSupportHotkeys } from '../core/scene.js';
 import { setLayerCanvas, drawLayer } from '../core/inspect.js';
 
 const RadioGroup = Radio.Group;
 
 const MODES = [
-  { value: 'orbit', label: '🖱 旋转', tip: '左键 / 中键拖动旋转视角，按住右键拖动平移视角，滚轮缩放' },
-  { value: 'paint', label: '🖌 保护面', tip: '左键在模型表面涂保护面；按住右键拖动平移视角，中键拖动旋转' },
-  { value: 'add', label: '➕ 加支撑', tip: '左键点击模型表面手动加支撑；按住右键拖动平移视角，中键拖动旋转' },
-  { value: 'del', label: '✂ 删支撑', tip: '左键点击支撑删除；按住右键拖动平移视角，中键拖动旋转' },
+  { value: 'orbit', label: '🖱 旋转', tip: '单击选中模型。已选中的模型上按住左键拖动是在板面上移动；从空白处拖出框线可框选。Delete 删除选中的模型。Ctrl+Z 撤回，Ctrl+Shift+Z 或 Ctrl+Y 重做。中键拖动平移视角，右键拖动旋转。只选中一个时，右键点在模型上可沿坐标轴移动、旋转或放大缩小' },
+  { value: 'paint', label: '🖌 保护面', tip: '左键在模型表面涂保护面。中键拖动平移视角，右键拖动旋转' },
+  { value: 'add', label: '➕ 加支撑', tip: '左键点击模型表面手动加支撑。中键拖动平移视角，右键拖动旋转' },
+  { value: 'del', label: '✂ 删支撑', tip: '按 D 进入删支撑。点支撑杆或支撑点选中，变成洋红色，按 Del 删除。拖出框线可以多选。点一下只选中一个时，再按 D 删除这一个。按 A 进入加支撑。中键拖动平移视角，右键拖动旋转' },
 ];
 
 function ModeBar() {
   const [mode, setModeState] = useState('orbit');
   useEffect(() => bus.on('mode', setModeState), []);
+  useEffect(() => { setSupportHotkeys(true); }, []);
   return (
     <div className="mode-bar">
       <RadioGroup

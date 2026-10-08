@@ -4,7 +4,7 @@
    主题是「环境配置」，与机器参数一样持久化到 localStorage。
    顶栏的 Arc ThemeSwitch 与命令面板共用这里的 store，任一处切换另一处同步。 */
 import { useSyncExternalStore } from 'react';
-import { scene, prevScene, modelMat } from '../core/scene.js';
+import { scene, prevScene, modelMat, updateBuildVolume } from '../core/scene.js';
 
 const THEME_KEY = 'resinforge:theme';
 const ACCENT_KEY = 'resinforge:accent';
@@ -51,6 +51,7 @@ function paint(resolved) {
   if (scene.fog) scene.fog.color.set(c.bg);
   prevScene.background.set(c.bg);
   modelMat.color.set(c.model);
+  updateBuildVolume();
 }
 
 /* ---------- store ---------- */

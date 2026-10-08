@@ -14,7 +14,7 @@
 ================================================================ */
 import { state, params, bus, log } from '../store.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY } from './model.js';
+import { baseY, displayPosePending, ensureBakedDisplay } from './model.js';
 
 let heatOn = false;
 export const isHeatOn = () => heatOn;
@@ -160,6 +160,7 @@ export function restoreColors() {
 
 function refresh() {
   if (!state.mesh) return;
+  ensureBakedDisplay();
   computeVertHeat();
   applyHeatColors();
 }
@@ -181,5 +182,6 @@ export function setHeat(on) {
 
 /* 联动：分析完成（LDI 可用）/ 更换模型 / 保护面增减 时自动重算重绘 */
 bus.on('sliceStats', s => { if (heatOn && s) refresh(); });
-bus.on('modelInfo', () => { if (heatOn) refresh(); });
+// 只平移时显示靠矩阵，顶点还在原处。这时重算热力图既慢又会读到旧坐标，颜色跟着网格走就对。
+bus.on('modelInfo', () => { if (heatOn && !displayPosePending()) refresh(); });
 bus.on('protectedChanged', () => { if (heatOn) applyHeatColors(); });

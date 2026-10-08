@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { analyze, steepFaces, sampleLDILayer, rasterizeSection } from './slicer.js';
-import { raiseH, raftOn, RAFT_T } from './model.js';
+import { raiseH, raftOn, RAFT_T, ensureBakedDisplay } from './model.js';
 
 let layerCanvas = null;   // React 层检查器的 canvas（256×256）
 let curLayer = 1;         // 当前滑块层（1-based；旧代码读 $('layerSlider').value）
@@ -21,13 +21,13 @@ export function hideInspector() { bus.emit('inspector', { show: false }); }
 
 export async function runSliceAnalysis() {
   if (!state.mesh) return toast('请先载入模型');
-  const geom = state.mesh.geometry;
-  const pos = geom.attributes.position.array;
   const layerH = params.layerH;
   const gapThresh = params.gapThresh;
   const selfAngle = params.selfAngle;
   setProgress(0.05, '逐层切片中…');
   await nextFrame();
+  ensureBakedDisplay();
+  const pos = state.mesh.geometry.attributes.position.array;
   const t0 = performance.now();
   const idQ = new THREE.Quaternion();
   const rh = raiseH();

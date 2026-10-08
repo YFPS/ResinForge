@@ -7,12 +7,14 @@ import CommandPalette from './components/CommandPalette.jsx';
 import ToastHost from './components/ToastHost.jsx';
 import { useBus } from './bridge.js';
 import { goStep, useUI } from './ui.js';
+import { setSupportHotkeys } from '../core/scene.js';
 
 /* 骨架：Arc Tabs 的根包住整个应用——流程导航（TabsList）在顶栏，五个步骤面板（TabsContent）在侧栏，
    导航与面板之间的 aria-controls / 键盘行为都由 Tabs 负责。 */
 export default function DemoApp() {
   const { step } = useUI();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => { setSupportHotkeys(step === 'support'); }, [step]);
   const openPalette = useCallback(() => setPaletteOpen(true), []);
 
   useEffect(() => {

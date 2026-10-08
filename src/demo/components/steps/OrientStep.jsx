@@ -9,6 +9,7 @@ import { motionTokens } from '@/components/arc/motion-tokens';
 import { state } from '../../../store.js';
 import { setMode, clearProtectedFaces } from '../../../core/scene.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
+import { splitModelName } from '../../actions.js';
 import { doApplyCandidate, doOrient } from '../../actions.js';
 import { STEPS, runTask, useDone, useUI } from '../../ui.js';
 import { Choice, Grid, Num, Section, SwitchRow } from '../fields.jsx';
@@ -25,6 +26,7 @@ const QUALITY = [
 export default function OrientStep() {
   const [params, setParam] = useParams();
   const cands = useBusLatest('orientResults', null);
+  const info = useBusLatest('modelInfo', null);
   const mode = useBusLatest('mode', 'orbit');
   const protCount = useBusValue(['protectedChanged', 'modelInfo'], () => state.protectedFaces.size);
   const done = useDone();
@@ -87,7 +89,12 @@ export default function OrientStep() {
         )}
       </AnimatePresence>
 
-      <Section title="优化" desc="采样越多越可能找到好朝向，也越慢。">
+      <Section
+        title="优化"
+        desc={info && info.parts && info.parts.length > 1
+          ? `只优化当前模型「${splitModelName(info.parts.find(p => p.id === info.activeId) || info.parts[0]).name}」。采样越多越慢。`
+          : '采样越多越可能找到好朝向，也越慢。'}
+      >
         <Choice
           label="采样数"
           options={QUALITY}

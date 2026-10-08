@@ -1,7 +1,7 @@
 /* 顶栏：左 = 侧栏开合 · 品牌 / 当前模型；中 = 五步流程导航（Arc Tabs）；右 = 打印机 · 命令搜索 · 主题。
    顶栏与侧栏同底色、不加分隔线，和视口的圆角画布组成「L 形外框 + 画布」。 */
 import React from 'react';
-import { Box, Check, FolderOpen, PanelLeftClose, PanelLeftOpen, Search, Shapes } from 'lucide-react';
+import { Box, Check, FolderOpen, FolderPlus, PanelLeftClose, PanelLeftOpen, Search, Shapes } from 'lucide-react';
 import Button from '@/components/arc/button/button';
 import { DropdownMenu } from '@/components/arc/dropdown-menu/dropdown-menu';
 import { TabsList, TabsTrigger } from '@/components/arc/tabs/tabs';
@@ -37,7 +37,8 @@ function ModelMenu() {
         label={name || '未载入模型'}
         icon={<Box size={15} strokeWidth={1.75} />}
         items={[
-          { label: '打开 STL 文件…', icon: <FolderOpen size={16} strokeWidth={1.75} />, onSelect: pickSTL },
+          { label: '打开 STL 文件…', icon: <FolderOpen size={16} strokeWidth={1.75} />, onSelect: () => pickSTL(false) },
+          { label: '追加 STL 文件…', icon: <FolderPlus size={16} strokeWidth={1.75} />, onSelect: () => pickSTL(true) },
           ...DEMOS.map((d, i) => ({
             label: `演示：${d.label}`,
             icon: demo && d.label === name ? <Check size={16} strokeWidth={1.75} /> : <Shapes size={16} strokeWidth={1.75} />,

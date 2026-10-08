@@ -2,13 +2,14 @@
    结构参数按功能分组（树状：支撑头 / 分支 / 底座；支撑塔：格架 / 柱与展宽 / 十字针 / 基础带），
    全部可见、不藏在「高级」里——分组本身就让长列表好扫读。 */
 import React from 'react';
-import { Eraser, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
+import { Crosshair, Eraser, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { SplitButton } from '@/components/arc/split-button/split-button';
+import Button from '@/components/arc/button/button';
 import { state } from '../../../store.js';
 import { setMode } from '../../../core/scene.js';
 import { handleRaiseHChange } from '../../../core/model.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
-import { doClearSupports, doGenSupports, doRebuild, setSupMode } from '../../actions.js';
+import { doClearSupports, doGenSupports, doOptimizeSupports, doRebuild, doTogglePoints, focusModel, setSupMode, splitModelName } from '../../actions.js';
 import { STEPS, runTask, useDone, useUI } from '../../ui.js';
 import { Choice, Grid, Num, Section, SwitchRow } from '../fields.jsx';
 import { NextButton, StepPanel } from '../StepPanel.jsx';
@@ -107,7 +108,14 @@ function TowerParams() {
 export default function SupportStep() {
   const [params, setParam] = useParams();
   const mode = useBusLatest('mode', 'orbit');
+  const info = useBusLatest('modelInfo', null);
+  const pointsOnly = useBusLatest('pointsOnly', false);
   const points = useBusValue(['supStats', 'sliceStats', 'modelInfo'], () => (state.supportPoints || []).length);
+  const optLine = useBusValue(['supStats'], () => {
+    const s = state.supportStats;
+    if (!s || !s.optRibs) return '';
+    return `交叉 ${s.optRibs} 组`;
+  });
   const done = useDone();
   const { busy } = useUI();
   const tree = params.supMode !== 'tower';
@@ -118,6 +126,7 @@ export default function SupportStep() {
   const actions = [
     { label: '只补孤岛支撑', icon: <ShieldAlert size={16} strokeWidth={1.75} />, onSelect: () => runTask('sup-isl', () => doGenSupports({ islandsOnly: true })) },
     { label: '按当前参数重建结构', icon: <RefreshCw size={16} strokeWidth={1.75} />, disabled: !points, onSelect: () => runTask('sup-rebuild', doRebuild) },
+    { label: '支撑优化', icon: <Sparkles size={16} strokeWidth={1.75} />, disabled: !points, onSelect: () => runTask('sup-opt', doOptimizeSupports) },
     { label: '清空支撑', icon: <Eraser size={16} strokeWidth={1.75} />, destructive: true, disabled: !points, onSelect: doClearSupports },
   ];
 
@@ -152,21 +161,60 @@ export default function SupportStep() {
         />
       </Section>
 
-      <Section title="手动编辑" desc="加点：点模型朝下的表面；删点：点已有的支撑。结构会自动重建。">
+      <Section title="手动编辑" desc="按 A 进入加点，点模型朝下的表面。按 D 进入删点。点支撑杆或支撑点都会选中并变成洋红，按 Del 才删除。拖出框线可以一次选中多个。点一下只选中一个时，再按 D 就删掉这一个。按住 Ctrl 再点或再框是追加。中键平移视角，右键旋转视角。">
         <Choice
           ariaLabel="手动编辑模式"
           options={EDIT_MODES}
           value={mode === 'add' || mode === 'del' ? mode : 'orbit'}
           onChange={setMode}
         />
+        {info && info.parts && info.parts.length > 1 ? (
+          <div className="partList" role="list" aria-label="跳到模型">
+            {info.parts.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                role="listitem"
+                className={'partRow' + ((info.selectedIds && info.selectedIds.length ? info.selectedIds.includes(p.id) : info.focusId === p.id || info.activeId === p.id) ? ' active' : '')}
+                onClick={() => focusModel(p.id)}
+              >
+                <Crosshair size={15} strokeWidth={1.75} aria-hidden="true" />
+                <span className="partName">{splitModelName(p.name).name}</span>
+                <span className="partMeta">跳转</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
       </Section>
 
-      <Section title="布点">
+      <Section title="显示" desc="支撑点是贴在接触位置上的小球。隐藏结构后仍然可以删点。">
+        <SwitchRow
+          label="只显示支撑点"
+          desc="收起支撑杆和格架"
+          checked={!!pointsOnly}
+          onChange={doTogglePoints}
+        />
+      </Section>
+
+      <Section
+        title="布点"
+        aside={optLine ? <span className="secMeta tnum">{optLine}</span> : null}
+        desc="模型底面默认离平台 4mm。生成支撑时，底板没连上的单个支撑会用交叉两岸接到旁边。"
+      >
         <Grid>
           <Num k="spacing" label="支撑间距" min={1} max={10} step={0.5} unit="mm" />
           <Num k="minSupArea" label="最小悬空面积" min={0.5} max={50} step={0.5} unit="mm²" />
           <Num k="raiseH" label="模型抬高" min={0} max={15} step={0.5} unit="mm" onChange={handleRaiseHChange} />
         </Grid>
+        <SwitchRow
+          label="支撑优化"
+          desc="只接在相邻直柱上，两端埋进柱身，不插进底座"
+          checked={params.supOptimize !== false}
+          onChange={v => setParam('supOptimize', v)}
+        />
+        <Button variant="secondary" size="sm" disabled={!points || !!busy} onClick={() => runTask('sup-opt', doOptimizeSupports)}>
+          对当前支撑再优化一次
+        </Button>
         <SwitchRow
           label="短小支撑"
           desc="竖直下方被模型挡住时，改锚到模型表面"

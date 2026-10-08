@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { analyze, computeFaceDataFull, steepFaces } from './slicer.js';
-import { raiseH } from './model.js';
+import { raiseH, activePart, bakeActiveLayout, bakePartRotation, capturePartSnaps, commitGeomHistory } from './model.js';
 import { clearSupports } from './support.js';
 import { hideInspector } from './inspect.js';
 import { prevRenderer, prevScene, prevCam, prev } from './scene.js';
@@ -30,26 +30,27 @@ export function canonicalQuats() {
 let lastList = null;   // 最近一次候选（React 点击缩略图 → applyCandidate(i)）
 
 export async function runOrient() {
-  if (!state.mesh) return toast('请先载入模型');
-  const pos = state.mesh.geometry.attributes.position.array;
+  const part = activePart();
+  if (!part) return toast('请先载入模型');
+  const pos = part.geom.attributes.position.array;
   const facesF = computeFaceDataFull(pos);
   const nRand = params.orientQuality;
   const selfAngle = params.selfAngle;
   const protW = params.protW;
-  // 粗分析参数
-  const bb = state.mesh.geometry.boundingBox;
+  // 粗分析参数（只评当前零件，多模型时不会把整板当成一个物体）
+  const bb = part.geom.boundingBox;
   const spanY = bb.max.y - bb.min.y;
   const coarseH = Math.max(0.15, spanY / 160);
   const cands = [...canonicalQuats()];
   for (let i = 0; i < nRand; i++) cands.push(randomQuat());
   const results = [];
   const total = cands.length;
-  log(`朝向优化：${total} 个候选 · 粗层厚 ${coarseH.toFixed(2)}mm · 自支撑角 ${selfAngle}°`);
+  log(`朝向优化${state.parts.length > 1 ? `（${part.name}）` : ''}：${total} 个候选 · 粗层厚 ${coarseH.toFixed(2)}mm · 自支撑角 ${selfAngle}°`);
   const t0 = performance.now();
   for (let i = 0; i < total; i++) {
     const q = cands[i];
     const r = analyze(pos, q, { gridRes: 128, layerH: coarseH, gapThresh: Math.max(0.5, coarseH * 2.5), raiseH: raiseH() });
-    const sf = steepFaces(facesF, q, selfAngle, state.protectedFaces, protW, false);
+    const sf = steepFaces(facesF, q, selfAngle, part.protected, protW, false);
     results.push({
       q, supportVol: r.metrics.supportVol, islandArea: r.metrics.islandArea,
       maxFill: r.metrics.maxFill, height: r.metrics.height, steepArea: sf.steepArea, protHit: sf.protHit
@@ -107,8 +108,12 @@ export function applyCandidate(idx) {
 }
 
 export function applyOrientation(r) {
-  if (!state.mesh) return;
-  const geom = state.mesh.geometry;
+  const part = activePart();
+  if (!part) return;
+  const before = capturePartSnaps(state.parts);
+  // 视口里转过的角度先烤进几何，候选四元数加在用户看见的形状上
+  bakePartRotation(part);
+  const geom = part.geom;
   geom.applyQuaternion(r.q);
   geom.computeBoundingBox();
   const bb = geom.boundingBox;
@@ -116,14 +121,15 @@ export function applyOrientation(r) {
   geom.translate(-cx, -bb.min.y, -cz);
   geom.computeBoundingBox();
   geom.computeBoundingSphere();
-  prev.mesh.quaternion.identity();
-  state.faces = computeFaceDataFull(geom.attributes.position.array);
-  // 保护面随几何保留（面索引不变），顶点色不变
+  if (prev.mesh) prev.mesh.quaternion.identity();
+  // 保护面随几何保留（面索引不变），顶点色不变；多模型时按新占地重新排版
   state.analysis = null;
   clearSupports(false);
   bus.emit('sliceStats', null);
   hideInspector();
   bus.emit('orientResults', null);
+  bakeActiveLayout();
   log(`已应用朝向（评分 ${r.score}）：支撑体积 ${r.supportVol.toFixed(0)}mm³，请运行逐层分析`, 'ok');
   toast('朝向已应用，请运行逐层分析');
+  commitGeomHistory('应用朝向', before);
 }

@@ -9,7 +9,8 @@
 export const params = {
   /* 机器配置 */
   plateX: 150,        // 板面 X（mm）
-  plateZ: 85,         // 板面 Z（mm）
+  plateY: 175,        // 打印高度，切片坐标 Z（mm）。场景里仍是世界 Y
+  plateZ: 85,         // 板面另一边，切片坐标 Y（mm）。场景里仍是世界 Z
   pixelUm: 24,        // XY 像素（µm）
   /* 朝向优化 */
   orientQuality: 64,  // 随机采样数（32/64/128）
@@ -20,11 +21,12 @@ export const params = {
   /* 切片与孤岛分析 */
   layerH: 0.1,        // 层厚（mm）
   gapThresh: 0.35,    // 悬空阈值（mm）
-  raiseH: 4,          // 模型抬高（mm）
+  raiseH: 4,          // 模型抬高（mm）：支撑生成前模型底面离平台的默认高度
+  supOptimize: true,  // 支撑优化：底板没连上的单个支撑，用交叉两岸（剪刀撑）接到邻近支撑
   minIslArea: 0.5,    // 孤岛最小面积（mm²）
   minAttach: 1,       // 最小附着面积（mm²）
   /* 支撑点（两种结构共用） */
-  spacing: 3,         // 支撑间距（泊松盘最小间距，mm）
+  spacing: 3,         // 支撑间距（mm）：六角网格的目标间距，局部可略密，空洞不超过约 1.7 倍
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
   supMode: 'tree',    // 支撑结构：'tree' 树状（PrusaSlicer branching）/ 'tower' 支撑塔（Materialise e-Stage 菱形格架）
@@ -72,7 +74,13 @@ export const params = {
 
 /* 应用状态（对应旧 main.js 的 state；faces 为原模块级变量——完整面数据 {nrm,area,cent}，随几何重建） */
 export const state = {
-  mesh: null,               // 模型 Mesh（非索引 geometry，底部贴 y=0）
+  mesh: null,               // 合并后的模型 Mesh（各零件已写入世界 XZ，底部贴局部 y=0，mesh.position.y = raiseH）
+  parts: [],                // 零件 {id,name,demo,geom,size,base,nf,ox,oy,oz,q,faceStart,protected}
+  selectedIds: [],          // 视口选中的零件。单击、框选、Ctrl+A；Delete 删除这些模型。Ctrl+Z 撤回移动、旋转、缩放和删除
+  transformTool: null,      // 单个模型右键：'move' 沿坐标轴移动 / 'rotate' 拖圆环旋转 / 'scale' 放大缩小 / null 不显示手柄
+  activePartId: null,       // 朝向优化 / 当前操作的零件
+  focusId: null,            // 摄影机对准的零件（多模型时画选框）
+  viewPointsOnly: false,    // 隐藏支撑结构，只显示附着在模型上的球形支撑点
   protectedFaces: new Set(),
   supports: [],             // 结构网格 {mesh, kind: 'ground'|'anchor'|'base'}
   supportPoints: [],        // 支撑点（可编辑数据）{x,y,z,n,island,manual,state}

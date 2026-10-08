@@ -64,7 +64,7 @@ export default function MachinePicker() {
       <PopoverContent align="end" className="machinePanel">
         <div className="mpHead">
           <span className="mpTitle">打印机</span>
-          <span className="mpSpec tnum">{machine.plateX} × {machine.plateZ} mm · {machine.pixelUm} µm</span>
+          <span className="mpSpec tnum">{machine.plateX} × {machine.plateZ} × {machine.plateY} mm · {machine.pixelUm} µm</span>
         </div>
         <Select
           label="机型"
@@ -80,7 +80,8 @@ export default function MachinePicker() {
           <>
             <div className="fieldGrid">
               {num('plateX', '板面 X', 50, 400, 1, 'mm')}
-              {num('plateZ', '板面 Z', 50, 400, 1, 'mm')}
+              {num('plateZ', '板面 Y', 50, 400, 1, 'mm')}
+              {num('plateY', '高度 Z', 30, 400, 1, 'mm')}
               {num('pixelUm', 'XY 像素', 10, 100, 1, 'µm')}
             </div>
             <div className="mpSave">

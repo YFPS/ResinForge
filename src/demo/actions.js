@@ -1,10 +1,10 @@
 /* 集中操作层：顶栏 / 侧栏 / 命令面板共用同一套动作，避免各写一遍。
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
 import { params, state } from '../store.js';
-import { loadDemo, loadSTLBuffer, handleRaftOnChange } from '../core/model.js';
+import { loadDemo, loadSTLBuffers, handleRaftOnChange, setActivePart, simplifySelection } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis } from '../core/inspect.js';
-import { runGenSup, rebuildStructure, clearSupports } from '../core/support.js';
+import { runGenSup, rebuildStructure, clearSupports, setPointsOnly, optimizeSupports } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
 import { markOriented, markExported } from './ui.js';
 
@@ -27,17 +27,36 @@ export function doLoadDemo(kind) {
   return loadDemo(kind);
 }
 
-/** 打开系统文件选择器载入 STL（拖放由 core 在 window 上统一处理） */
-export function pickSTL() {
+/** 打开系统文件选择器。可多选；append 为真时追加到板上并重新排版 */
+export function pickSTL(append = false) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.stl';
+  input.multiple = true;
   input.onchange = async () => {
-    const f = input.files && input.files[0];
-    if (!f) return;
-    loadSTLBuffer(await f.arrayBuffer(), f.name);
+    const files = [...(input.files || [])];
+    if (!files.length) return;
+    const items = await Promise.all(files.map(async f => ({ buf: await f.arrayBuffer(), name: f.name })));
+    loadSTLBuffers(items, { append: append === true });
   };
   input.click();
+}
+
+export function focusModel(id) {
+  setActivePart(id);
+}
+
+/** 简化选中的模型。mode 为 fidelity（保真度 1～10）或 ratio（留下的三角形比例 0.01～0.9999） */
+export function doSimplify(opts) {
+  return simplifySelection(opts);
+}
+
+export function doTogglePoints(on) {
+  setPointsOnly(on);
+}
+
+export function doOptimizeSupports() {
+  return optimizeSupports();
 }
 
 /** 切换结构模式：已有支撑点时立即重建结构（同旧 SupportCard 行为） */

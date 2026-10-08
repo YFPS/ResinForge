@@ -173,6 +173,24 @@ body {
 .mcFitDim { flex: none; color: var(--text-muted); }
 .mcFit.warn svg { color: var(--warning); }
 
+/* 多模型列表：点一行，摄影机跳到该模型 */
+.partList { display: flex; flex-direction: column; gap: 6px; }
+.partRow {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--surface); color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.partRow svg { flex: none; color: var(--text-muted); }
+.partRow.active { border-color: var(--accent); }
+.partRow.active svg { color: var(--accent); }
+.simpEnds { display: flex; justify-content: space-between; margin-bottom: -8px; font-size: var(--text-xs); color: var(--text-muted); }
+.simpStat { margin: 0; font-size: var(--text-xs); line-height: 1.5; color: var(--text-secondary); }
+.partName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.partMeta { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+@media (hover: hover) and (pointer: fine) {
+  .partRow:hover { border-color: var(--border-strong); }
+}
+
 /* 第 2 步：朝向候选（4 列缩略图；外圆角 14 − 内边距 4 = 图片圆角 10，同心） */
 .candWrap { overflow: hidden; }
 .candGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -228,7 +246,7 @@ body {
   border-radius: var(--radius-panel);
   background: var(--viewport-bg);
 }
-.gl { display: block; width: 100%; height: 100%; }
+.gl { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
 
 .modeBar { position: absolute; top: 14px; left: 14px; z-index: 6; }
 
@@ -372,3 +390,74 @@ body {
   .topbar > :nth-child(2) { grid-area: nav; justify-self: center; }
   .searchBtn .kbd { display: none; }
 }
+
+/* 视口右键：单个模型的移动 / 旋转。挂在 body 上，两套界面共用。 */
+.partMenu {
+  position: fixed; z-index: 80; display: grid; gap: 2px; min-width: 196px; padding: 6px;
+  border: 1px solid var(--border, #30363d); border-radius: 12px;
+  background: var(--surface, #161b22); color: var(--foreground, #e6edf3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+}
+.partMenu[hidden] { display: none; }
+.partMenuItem {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px;
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.partMenuItem small { color: var(--text-muted, #8b949e); font-size: 12px; }
+.partMenuItem:hover { background: var(--surface-muted, #21262d); }
+.partMenuItem[data-active="1"] { background: var(--accent-subtle, rgba(61, 139, 253, .18)); }
+
+/* 视口左侧缩放面板。挂在 .viewport 里，跟模式栏错开。 */
+.scalePanel {
+  position: absolute; z-index: 8; left: 12px; top: 58px; width: min(292px, calc(100% - 24px));
+  max-height: calc(100% - 180px); overflow: auto; box-sizing: border-box; padding: 12px;
+  border: 1px solid var(--border, #30363d); border-radius: 12px;
+  background: var(--surface, #161b22); color: var(--foreground, #e6edf3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .28); font-size: 13px;
+}
+.scalePanel[hidden] { display: none; }
+.scaleHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.scaleHead b { font-weight: 500; font-size: 14px; }
+.scaleIconBtns { display: flex; gap: 6px; }
+.scaleIcon, .scaleLink {
+  display: grid; place-items: center; padding: 0; cursor: pointer; color: inherit;
+  border: 1px solid var(--border, #30363d); background: transparent;
+}
+.scaleIcon { width: 28px; height: 28px; border-radius: 8px; }
+.scaleIcon:hover, .scaleLink:hover, .scaleSteps button:hover, .scaleAction:hover { background: var(--surface-muted, #21262d); }
+.scaleCols, .scaleRow {
+  display: grid; grid-template-columns: 46px minmax(0, 1fr) minmax(0, 1fr) 32px;
+  gap: 6px; align-items: center;
+}
+.scaleCols { margin-bottom: 6px; color: var(--text-muted, #8b949e); font-size: 12px; }
+.scaleRow { margin-bottom: 6px; }
+.scaleAxis { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.scaleAxis i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.scaleSpin {
+  display: flex; align-items: stretch; height: 32px; min-width: 0;
+  border: 1px solid var(--border, #30363d); border-radius: 8px; overflow: hidden;
+  background: var(--background, #0d1117);
+}
+.scaleSpin:focus-within { border-color: #2f6bff; }
+.scaleSpin input {
+  width: 100%; min-width: 0; border: 0; background: transparent; color: inherit;
+  font: inherit; font-variant-numeric: tabular-nums; padding: 0 6px; text-align: right;
+}
+.scaleSpin input:focus { outline: none; }
+.scaleSteps { display: flex; flex-direction: column; width: 18px; flex: none; border-left: 1px solid var(--border, #30363d); }
+.scaleSteps button {
+  flex: 1; border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0; line-height: 1; font-size: 9px;
+}
+.scaleSteps button + button { border-top: 1px solid var(--border, #30363d); }
+.scaleLink { width: 32px; height: 32px; border-radius: 8px; border: 0; }
+.scaleLink[aria-pressed="true"] { background: #2f6bff; color: #fff; }
+.scaleLink[aria-pressed="true"]:hover { background: #2457d6; }
+.scaleAction {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; height: 34px; margin-top: 8px; border-radius: 8px;
+  border: 1px solid var(--border, #30363d); background: var(--surface-muted, #21262d);
+  color: inherit; cursor: pointer; font: inherit;
+}
+.scaleAction[aria-pressed="true"] { background: #2f6bff; border-color: #2f6bff; color: #fff; }
+.scaleAction[aria-pressed="true"]:hover { background: #2457d6; }

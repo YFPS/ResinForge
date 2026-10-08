@@ -7,9 +7,10 @@ import './demo.css';
 import * as THREE from 'three';
 import { state, params } from '../store.js';
 import { initMachine } from './machines.js';
-import { loadDemo, loadSTLBuffer } from '../core/model.js';
+import { loadDemo, loadSTLBuffer, loadSTLBuffers, setActivePart, setSelection, partBounds, clampPartsAboveZ, plateAxisOrigin, scalePartTo, scalePartAxis, simplifySelection } from '../core/model.js';
+import { setPointsOnly, optimizeSupports } from '../core/support.js';
 import { rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings } from '../core/slicer.js';
-import { camera, getControls } from '../core/scene.js';
+import { camera, getControls, framePart, setMode } from '../core/scene.js';
 import { initTheme } from './theme.js';
 import DemoApp from './DemoApp.jsx';
 
@@ -22,6 +23,6 @@ initMachine(params);
 /* 调试/自动化访问口（与旧 main.jsx 同构，无头验证工具依赖这些） */
 window.state = state;
 window.THREE = THREE;
-window.__dbg = { loadDemo, loadSTLBuffer, rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings, camera, getControls };
+window.__dbg = { loadDemo, loadSTLBuffer, loadSTLBuffers, setActivePart, setSelection, setMode, partBounds, clampPartsAboveZ, plateAxisOrigin, framePart, setPointsOnly, optimizeSupports, simplifySelection, rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings, camera, getControls, scalePartTo, scalePartAxis };
 
 createRoot(document.getElementById('root')).render(<DemoApp />);

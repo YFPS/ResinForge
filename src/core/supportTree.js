@@ -113,6 +113,13 @@ export function buildBranchingTree(ctx, points, P) {
   const st = { points: points.length, heads: 0, ground: 0, anchors: 0, heavy: 0, micro: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0 };
   const pointState = new Array(points.length).fill('');
   const ground = [], anchorG = [];
+  // 竖直落地柱：交叉撑只允许接在这段直柱上（底座顶 → 第一个拐点），斜柱和分支不收
+  const posts = [];
+  const addPost = (x0, y0, z0, x1, y1, z1, r) => {
+    const vert = y1 - y0, horiz = Math.hypot(x1 - x0, z1 - z0);
+    if (vert < 3.2 || horiz > Math.max(0.8, vert * 0.18)) return;
+    posts.push({ x0, y0, z0, x1, y1, z1, r });
+  };
 
   /* ---------- 1. 支撑头 ---------- */
   const nodes = [];
@@ -130,6 +137,7 @@ export function buildBranchingTree(ctx, points, P) {
       if (top - baseTop > 0.05 && footOK({ x: p.x, y: baseTop, z: p.z })) {
         ground.push(pill({ x: p.x, y: baseTop, z: p.z }, { x: p.x, y: top, z: p.z }, rMin, rPin, SEG));
         if (P.baseH > 0) ground.push(frustum({ x: p.x, y: groundY, z: p.z }, { x: p.x, y: baseTop, z: p.z }, baseR, rMin, 24));
+        addPost(p.x, baseTop, p.z, p.x, top, p.z, rMin);
         st.ground++; pointState[i] = 'ground';
         continue;
       }
@@ -324,7 +332,9 @@ export function buildBranchingTree(ctx, points, P) {
       const rt = nd.route, rN = rOf(nd);
       for (let s = 0; s + 1 < rt.length; s++) ground.push(pill(rt[s], rt[s + 1], s === 0 ? rN : nd.rG, nd.rG, SEG));
       const g = rt[rt.length - 1];
+      const up = rt[rt.length - 2];
       if (P.baseH > 0) ground.push(frustum({ x: g.x, y: groundY, z: g.z }, { x: g.x, y: baseTop, z: g.z }, baseR, nd.rG, 24));
+      addPost(g.x, g.y, g.z, up.x, up.y, up.z, nd.rG);
     } else if (nd.parent === MESH && nd.shortAnchor) {
       const { y, rE, rN } = nd.shortAnchor;   // 短锚：节点竖直扎入正下方表面 0.1
       anchorG.push(pill({ x: nd.x, y, z: nd.z }, nd, rE, rN, SEG));
@@ -337,6 +347,7 @@ export function buildBranchingTree(ctx, points, P) {
   return {
     geomGround: ground.length ? mergeParts(ground) : null,
     geomAnchor: anchorG.length ? mergeParts(anchorG) : null,
+    posts,
     stats: st, pointState,
     dead: nodes.filter(n => n.dead).map(n => n.why),   // 无法路由的节点诊断（层检查器 / 调试用）
   };

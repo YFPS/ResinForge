@@ -3,7 +3,7 @@ import { Button, Checkbox, InputNumber, Radio, Select, Tooltip } from '@arco-des
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { bus, state } from '../store.js';
-import { runGenSup, clearSupports, rebuildStructure } from '../core/support.js';
+import { runGenSup, clearSupports, rebuildStructure, setPointsOnly, optimizeSupports } from '../core/support.js';
 
 /* 支撑生成：结构模式（树状 PrusaSlicer / 支撑塔 e-Stage）+ 支撑点参数 + 两套结构参数 +
    自动支撑（清空重建）/ 自动孤岛支撑（增量补点）/ 按当前参数重建结构（复用已有支撑点）+ supStats */
@@ -11,6 +11,7 @@ export default function SupportCard() {
   const [params, setParam] = useParams();
   const [busy, setBusy] = useState('');
   const [stats, setStats] = useState(null);
+  const [pointsOnly, setPointsOnlyUi] = useState(false);
   useEffect(() => bus.on('supStats', setStats), []);
 
   const run = async (kind, fn) => { setBusy(kind); try { await fn(); } finally { setBusy(''); } };
@@ -37,6 +38,11 @@ export default function SupportCard() {
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（竖直下方被模型挡住时锚到模型表面）</Checkbox>
       </div>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <Checkbox checked={params.supOptimize !== false} onChange={v => setParam('supOptimize', v)}>支撑优化（孤立底座交叉两岸）</Checkbox>
+        <Checkbox checked={pointsOnly} onChange={v => { setPointsOnlyUi(v); setPointsOnly(v); }}>只显示支撑点</Checkbox>
+      </div>
+      <div className="hint">模型默认从平台抬高 {params.raiseH}mm。加点时点到另一件模型，摄影机会跳过去。</div>
       <div className="row" style={{ alignItems: 'center' }}>
         <label className="f"><span>接触朝向</span>
           <Select size="small" style={{ width: 110 }} value={params.tipMode} onChange={v => setParam('tipMode', v)}
@@ -114,6 +120,7 @@ export default function SupportCard() {
         <Tooltip content="复用现有支撑点，按当前模式与参数重新生成结构">
           <Button style={{ flex: 1 }} loading={busy === 'rebuild'} onClick={() => run('rebuild', rebuildStructure)}>按当前参数重建结构</Button>
         </Tooltip>
+        <Button loading={busy === 'opt'} onClick={() => run('opt', () => optimizeSupports())}>支撑优化</Button>
         <Button onClick={() => clearSupports()}>清空</Button>
       </div>
       {stats && stats.points !== undefined && (

@@ -2,17 +2,18 @@
    会产生结果的命令顺带把侧栏切到对应步骤，进度与结果就出现在用户眼前。 */
 import React from 'react';
 import {
-  ArrowRight, Box, Compass, Download, Eraser, Flame, FolderOpen, Grid3x3, Info, Layers, Moon, MousePointer2,
+  ArrowRight, Box, Compass, Download, Eraser, Flame, FolderOpen, FolderPlus, Grid3x3, Info, Layers, Moon, MousePointer2,
   Paintbrush, PanelLeft, Palette, Plus, RefreshCw, ScanLine, ShieldAlert, Sparkles, Square, Sun, SunMoon,
-  Trash2, TreePine, Building2, ExternalLink, Minus, TerminalSquare,
+  Trash2, TreePine, Building2, ExternalLink, Minus, TerminalSquare, Crosshair,
 } from 'lucide-react';
 import { setMode, clearProtectedFaces } from '../core/scene.js';
 import { setHeat } from '../core/heat.js';
 import { pushToast } from './bridge.js';
 import {
   DEMOS, doLoadDemo, doOrient, doAnalyze, doGenSupports, doRebuild, doClearSupports, doExport,
-  pickSTL, setSupMode, setBaseType,
+  doOptimizeSupports, doTogglePoints, pickSTL, setSupMode, setBaseType,
 } from './actions.js';
+import { state } from '../store.js';
 import { STEPS, goStep, runTask, toggleSidebar } from './ui.js';
 import { ACCENTS, THEME_MODES, setAccent, setThemeMode } from './theme.js';
 
@@ -32,7 +33,8 @@ export function buildCommands(ctx) {
       run: () => goStep(s.id),
     })),
 
-    { id: 'upload', group: '模型', title: '打开 STL 文件…', keywords: ['上传', '载入'], icon: ic(FolderOpen), run: pickSTL },
+    { id: 'upload', group: '模型', title: '打开 STL 文件…', keywords: ['上传', '载入', '多个'], icon: ic(FolderOpen), run: () => pickSTL(false) },
+    { id: 'upload-add', group: '模型', title: '追加 STL 文件…', hint: '加到板上并自动排版', keywords: ['多个', '导入'], icon: ic(FolderPlus), run: () => pickSTL(true) },
     ...DEMOS.map(d => ({
       id: 'demo-' + d.kind,
       group: '模型',
@@ -49,6 +51,8 @@ export function buildCommands(ctx) {
     { id: 'sup-isl', group: '支撑', title: '只补孤岛支撑', hint: '保留已有支撑点', icon: ic(ShieldAlert), run: () => { goStep('support'); return runTask('sup-isl', () => doGenSupports({ islandsOnly: true })); } },
     { id: 'sup-rebuild', group: '支撑', title: '按当前参数重建结构', icon: ic(RefreshCw), run: () => { goStep('support'); return runTask('sup-rebuild', doRebuild); } },
     { id: 'sup-clear', group: '支撑', title: '清空支撑', icon: ic(Trash2), run: doClearSupports },
+    { id: 'sup-opt', group: '支撑', title: '支撑优化', hint: '孤立底座加交叉两岸', icon: ic(Sparkles), run: () => { goStep('support'); return runTask('sup-opt', doOptimizeSupports); } },
+    { id: 'sup-points', group: '支撑', title: state.viewPointsOnly ? '显示支撑结构' : '只显示支撑点', hint: '小球附着在模型上', icon: ic(Crosshair), run: () => { goStep('support'); doTogglePoints(!state.viewPointsOnly); } },
     { id: 'mode-tree', group: '支撑', title: '支撑结构：树状', icon: ic(TreePine), run: () => runTask('sup-mode', () => setSupMode('tree', setParam)) },
     { id: 'mode-tower', group: '支撑', title: '支撑结构：支撑塔', hint: 'e-Stage 菱形格架', icon: ic(Building2), run: () => runTask('sup-mode', () => setSupMode('tower', setParam)) },
 

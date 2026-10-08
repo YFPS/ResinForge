@@ -4,7 +4,7 @@ import Card from './Card.jsx';
 import { bus } from '../store.js';
 import { loadDemo, loadSTLBuffers, setActivePart } from '../core/model.js';
 
-/* 模型：载入 STL + 4 个内置 demo + modelInfo（订阅 bus 'modelInfo'） */
+/* 模型：载入 STL / OBJ / 3MF + 4 个内置 demo + modelInfo（订阅 bus 'modelInfo'） */
 export default function ModelCard() {
   const fileRef = useRef(null);
   const addRef = useRef(null);
@@ -13,10 +13,10 @@ export default function ModelCard() {
   return (
     <Card step={1} title="模型">
       <div className="row">
-        <Button onClick={() => fileRef.current && fileRef.current.click()}>载入 STL</Button>
-        <Button onClick={() => addRef.current && addRef.current.click()}>追加 STL</Button>
+        <Button onClick={() => fileRef.current && fileRef.current.click()}>载入模型</Button>
+        <Button onClick={() => addRef.current && addRef.current.click()}>追加模型</Button>
         <input
-          type="file" accept=".stl" multiple style={{ display: 'none' }} ref={fileRef}
+          type="file" accept=".stl,.obj,.3mf" multiple style={{ display: 'none' }} ref={fileRef}
           onChange={e => {
             const files = [...e.target.files];
             Promise.all(files.map(async f => ({ buf: await f.arrayBuffer(), name: f.name })))
@@ -25,7 +25,7 @@ export default function ModelCard() {
           }}
         />
         <input
-          type="file" accept=".stl" multiple style={{ display: 'none' }} ref={addRef}
+          type="file" accept=".stl,.obj,.3mf" multiple style={{ display: 'none' }} ref={addRef}
           onChange={e => {
             const files = [...e.target.files];
             Promise.all(files.map(async f => ({ buf: await f.arrayBuffer(), name: f.name })))

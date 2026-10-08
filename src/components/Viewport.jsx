@@ -96,7 +96,7 @@ export default function Viewport() {
   return (
     <div className="viewport">
       <canvas ref={canvasRef} className="gl" />
-      <div className={'drop-hint' + (dropHint ? ' show' : '')}>松开以载入 STL 文件</div>
+      <div className={'drop-hint' + (dropHint ? ' show' : '')}>松开以载入模型</div>
       <ModeBar />
       <Inspector />
       <LogPanel />

@@ -11,7 +11,7 @@ import { setHeat } from '../core/heat.js';
 import { pushToast } from './bridge.js';
 import {
   DEMOS, doLoadDemo, doOrient, doAnalyze, doGenSupports, doRebuild, doClearSupports, doExport,
-  doOptimizeSupports, doTogglePoints, pickSTL, setSupMode, setBaseType,
+  doOptimizeSupports, doTogglePoints, pickSTL, setSupMode, setShortKind, setBaseType,
 } from './actions.js';
 import { state } from '../store.js';
 import { STEPS, goStep, runTask, toggleSidebar } from './ui.js';
@@ -33,8 +33,8 @@ export function buildCommands(ctx) {
       run: () => goStep(s.id),
     })),
 
-    { id: 'upload', group: '模型', title: '打开 STL 文件…', keywords: ['上传', '载入', '多个'], icon: ic(FolderOpen), run: () => pickSTL(false) },
-    { id: 'upload-add', group: '模型', title: '追加 STL 文件…', hint: '加到板上并自动排版', keywords: ['多个', '导入'], icon: ic(FolderPlus), run: () => pickSTL(true) },
+    { id: 'upload', group: '模型', title: '打开模型文件…', hint: 'STL、OBJ、3MF', keywords: ['上传', '载入', '多个', 'stl', 'obj', '3mf'], icon: ic(FolderOpen), run: () => pickSTL(false) },
+    { id: 'upload-add', group: '模型', title: '追加模型文件…', hint: 'STL、OBJ、3MF，加到板上并自动排版', keywords: ['多个', '导入', 'stl', 'obj', '3mf'], icon: ic(FolderPlus), run: () => pickSTL(true) },
     ...DEMOS.map(d => ({
       id: 'demo-' + d.kind,
       group: '模型',
@@ -55,6 +55,8 @@ export function buildCommands(ctx) {
     { id: 'sup-points', group: '支撑', title: state.viewPointsOnly ? '显示支撑结构' : '只显示支撑点', hint: '小球附着在模型上', icon: ic(Crosshair), run: () => { goStep('support'); doTogglePoints(!state.viewPointsOnly); } },
     { id: 'mode-tree', group: '支撑', title: '支撑结构：树状', icon: ic(TreePine), run: () => runTask('sup-mode', () => setSupMode('tree', setParam)) },
     { id: 'mode-tower', group: '支撑', title: '支撑结构：支撑塔', hint: 'e-Stage 菱形格架', icon: ic(Building2), run: () => runTask('sup-mode', () => setSupMode('tower', setParam)) },
+    { id: 'short-tree', group: '支撑', title: '短小支撑：树状细尖', hint: '落在模型上的一端收细', icon: ic(TreePine), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tree', setParam)); } },
+    { id: 'short-plate', group: '支撑', title: '短小支撑：支撑塔', hint: '单片竖板，两头细尖', icon: ic(Square), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tower', setParam)); } },
 
     { id: 'vmode-orbit', group: '视口', title: '旋转视角', icon: ic(MousePointer2), run: () => setMode('orbit') },
     { id: 'vmode-paint', group: '视口', title: '涂画保护面', icon: ic(Paintbrush), run: () => { goStep('orient'); setMode('paint'); } },

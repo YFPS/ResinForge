@@ -26,12 +26,13 @@
      接触点重定义为针轴延长线与模型的首个交点（偏移受限）
    - 自由直针（兜底，FIG.13a 斜向连接）：接触点不动；错切十字柱，针脚截面与「+」柱顶一致（FIG.13c 截面 A-A′）
    基础带（手册 Foundation）：底层节点按墙线连成段，墙下沿实心带，相邻竖杆之间的底边开三角缺口
-   连不上格架的支撑点：专利做法为连回模型自身——此处交给树状支撑（锚定模型 / 绕行落地）兜底，不留悬空点
+   连不上格架的支撑点：能直接落到朝上表面时，按短小支撑样式处理（树状细尖，或单片竖板）。
+   其余仍交给树状支撑绕行落地。竖板是单独的一块，不沿格架边接针，也不在两层之间再铺一套菱形格。
 ================================================================ */
 import * as THREE from 'three';
 import { pointDist, capsuleClear, coneClear, ldiInside, raycast } from './collide.js';
 import { buildBranchingTree } from './supportTree.js';
-import { mergeParts, dirCandidates, tipCone } from './supportKit.js';
+import { mergeParts, dirCandidates, tipCone, bridgeToSurface, strap } from './supportKit.js';
 
 /* ---------- 三角形缓冲：板条/针/基础带直接写顶点，避免成千上万个 three 几何对象 ---------- */
 class TriBuf {
@@ -118,7 +119,11 @@ export function buildEStageTowers(ctx, points, P) {
   const gap = Math.max(0, P.esGap);
   const R = Math.hypot(b / 2, t / 2) + gap;                             // 杆件离模判定半径（板条外接圆 + 离模净距）
   const foundH = Math.max(0, P.esFoundH);
-  const baseTop = groundY + foundH;                                     // 格架底层 = 基础带顶面
+  const join = !!P.baseJoin;
+  // 连接底板（连接条）：格架自板顶起步——板内不留任何格架杆件 / 节点板，底板开孔不会暴露内部构件；
+  // 否则格架从基础带顶起步（基础带只垫在下面）。
+  const bandH = join ? Math.max(foundH + hs * 0.85, 1.5) : foundH;
+  const baseTop = groundY + (join ? bandH : foundH);
   const tiltMax = Math.PI / 2 - crit, tanT = Math.tan(tiltMax);
   // 十字针（e-Stage Top connection，自格架节点直通接触点）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 沿针轴扎入渗透长度
   const connW = Math.max(0.1, P.esConnW), needleT = Math.max(0.1, P.esNeedleT);   // 连接宽 / 针板厚
@@ -131,7 +136,7 @@ export function buildEStageTowers(ctx, points, P) {
   const maxWid = Math.max(0, Math.round(P.esTowerMaxR));                // 最大展宽（每侧格数）
   const hullRed = Math.max(0, Math.min(3, Math.round(P.esHullRed || 0)));   // 壳层缩减级数（0 = 关闭）
   const mid = P.esMidBars !== false;
-  const st = { points: points.length, needles: 0, nodes: 0, bars: 0, towers: 0, foundRuns: 0, fallback: 0, ground: 0, anchors: 0, micro: 0, noHead: 0, unroutable: 0, capped: false };
+  const st = { points: points.length, needles: 0, nodes: 0, bars: 0, towers: 0, foundRuns: 0, fallback: 0, ground: 0, anchors: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, capped: false };
   const pointState = new Array(points.length).fill('');
   const pos = (a, bb, n) => [a * ws, baseTop + n * hs, bb * ws];
 
@@ -639,6 +644,223 @@ export function buildEStageTowers(ctx, points, P) {
     return false;
   };
   const clipSide = (k, pl, sg) => !sideWall(k, pl, sg) && (sideWall(k, 1 - pl, 1) || sideWall(k, 1 - pl, -1));
+  // 连接底板的立板范围要先算好：低于立板顶、又伸出立板侧面的斜杆会在侧面上留下一小块，生成杆件时切掉
+  const half = join ? Math.max(b, t) / 2 : t / 2;
+  const topY = groundY + bandH;
+  const wallRuns = [];
+  {
+    const lines = new Map();
+    for (const k of keep) {
+      const [a, bb, n] = unk(k);
+      if (n !== 0) continue;
+      const q = qAt(a, bb, 0) || 2;
+      const onZ = md(bb, q) === 0, onX = md(a, q) === 0;
+      if (onZ) { const lk = 'x' + bb; (lines.get(lk) || lines.set(lk, []).get(lk)).push({ s: a, q }); }
+      if (onX) { const lk = 'z' + a; (lines.get(lk) || lines.set(lk, []).get(lk)).push({ s: bb, q }); }
+      if (!onZ && !onX) { const lk = ((bb & 1) === 0 ? 'x' + bb : 'z' + a); (lines.get(lk) || lines.set(lk, []).get(lk)).push({ s: (bb & 1) === 0 ? a : bb, q }); }
+    }
+    for (const [lk, arr] of lines) {
+      arr.sort((x, y) => x.s - y.s);
+      const dir = lk[0], line = +lk.slice(1);
+      let s0 = arr[0].s, prev = arr[0], q0 = arr[0].q;
+      const flush = () => wallRuns.push(prev.s > s0 ? { dir, line, s0, s1: prev.s, q: q0 } : { dir, line, s0: s0 - 0.5, s1: s0 + 0.5, q: q0 });
+      for (let i = 1; i < arr.length; i++) {
+        const c = arr[i];
+        if (c.s - prev.s <= Math.max(c.q, prev.q)) { prev = c; q0 = Math.min(q0, c.q); continue; }
+        flush(); s0 = c.s; prev = c; q0 = c.q;
+      }
+      flush();
+    }
+  }
+  // 连接底板：同一条墙上相距约两个菱形宽以内、中间没有模型的段并成一条，避免底边断开或留下单独的小块
+  if (join && wallRuns.length > 1) {
+    wallRuns.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : a.line - b.line || a.s0 - b.s0));
+    // 这条模型上断开的底板，空档大约 10～25mm。中间没有模型就补上
+    const maxIdx = Math.max(8 * w, 28) / ws;
+    const bridgeOk = (a, c) => {
+      if (a.dir !== c.dir || a.line !== c.line) return false;
+      const gap = c.s0 - a.s1;
+      if (gap <= 0) return true;
+      if (gap > maxIdx) return false;
+      const y = groundY + Math.min(bandH * 0.5, 1.2);
+      const steps = Math.max(2, Math.ceil(gap * ws / 0.7));
+      for (let i = 0; i <= steps; i++) {
+        const s = (a.s1 + (c.s0 - a.s1) * i / steps) * ws;
+        const p = a.dir === 'x' ? [s, y, a.line * ws] : [a.line * ws, y, s];
+        if (ld && ldiInside(ld, p[0], p[1], p[2])) return false;
+        if (pointDist(bvh, p[0], p[1], p[2], half + 0.6) < half + 0.2) return false;
+      }
+      return true;
+    };
+    const merged = [];
+    let cur = wallRuns[0];
+    for (let i = 1; i < wallRuns.length; i++) {
+      const n = wallRuns[i];
+      if (bridgeOk(cur, n)) cur = { ...cur, s1: Math.max(cur.s1, n.s1), q: Math.min(cur.q, n.q) };
+      else { merged.push(cur); cur = n; }
+    }
+    merged.push(cur);
+    wallRuns.length = 0;
+    for (const r of merged) wallRuns.push(r);
+  }
+  // 去掉外伸：每条底板只留到最外一层交叉墙，不再从外墙侧面吐出一截
+  if (join && P.baseFlush && wallRuns.length) {
+    const snap = wallRuns.map(r => ({ dir: r.dir, line: r.line, s0: r.s0, s1: r.s1, q: r.q }));
+    const kept = [];
+    for (const r of snap) {
+      let lo = Infinity, hi = -Infinity;
+      for (const o of snap) {
+        if (o.dir === r.dir) continue;
+        // 差一格也算交上，否则外伸的小段会停在外墙外面，判不成交叉
+        if (o.line < r.s0 - 1 || o.line > r.s1 + 1) continue;
+        if (r.line < o.s0 - 1 || r.line > o.s1 + 1) continue;
+        lo = Math.min(lo, o.line);
+        hi = Math.max(hi, o.line);
+      }
+      if (lo <= hi) {
+        r.s0 = Math.max(r.s0, lo);
+        r.s1 = Math.min(r.s1, hi);
+      } else if (r.s1 - r.s0 < 2) continue;
+      if (r.s1 - r.s0 > 0.2) kept.push(r);
+    }
+    wallRuns.length = 0;
+    for (const r of kept) wallRuns.push(r);
+  }
+  // 杆件截面会比中心线鼓出一圈，裁切边界往里收这一圈，端头才不会冒出立板侧面
+  const lip = Math.hypot(b / 2, t / 2);
+  // 和后面打孔用同一套位置，孔再外扩一个杆件半径，杆头才不会露在孔里
+  // 孔心对齐格架节距：落在「两根竖杆之间」的半格交点（墙面内坐标为奇数半格），与节点（对穿槽所在）恒错开一个半格；
+  // 孔间竖条正对节点 /「+」柱——力线自竖杆直落板底，段与段之间相位一致（不再按段长均布）。
+  const skirtHoles = r => {
+    if (!join || !P.baseHole) return [];
+    const x0 = r.s0 * ws - half, x1 = r.s1 * ws + half;
+    const chH = 0.6;
+    const chamfer = P.baseChamfer ? Math.min(chH * ws / Math.max(hs, 0.2), Math.max(0, (x1 - x0 - 0.8) / 2)) : 0;
+    const yLo = 0.45, yHi = bandH - 0.4;
+    const hh = (yHi - yLo) / 2, cy = groundY + (yLo + yHi) / 2;
+    const hw = Math.min(w * 0.42, Math.max(0.35, hh * 1.05));
+    const out = [];
+    if (hh <= 0.35 || hw <= 0.28) return out;
+    for (let s = r.s0 + (md(r.s0, 2) === 0 ? 1 : 2); s <= r.s1 - 1; s += 2) {
+      const cx = s * ws;                                  // 奇数半格：两侧各一根竖杆的中点
+      if (cx - hw < x0 + chamfer + 0.4 || cx + hw > x1 - chamfer - 0.4) continue;
+      out.push({ dir: r.dir, line: r.line, cx, cy, hw, hh });
+    }
+    return out;
+  };
+  const baseHoles = [];
+  if (join && P.baseHole) for (const r of wallRuns) for (const h of skirtHoles(r)) baseHoles.push(h);
+  // 斜杆的截面会比中心线更伸进孔里，墙面内按边宽外扩，孔里才不留杆头。
+  // 竖向不能同样外扩：孔顶到立板顶只有 0.4mm，再外扩一个边宽会把立板顶上的立柱切掉，柱和格架之间空出一截。
+  const holePad = b + t;
+  const holeTop = groundY + bandH - 0.4;
+  const holePadY = Math.min(holePad, Math.max(0, topY - holeTop - 0.08));
+  const inHole = p => {
+    for (const h of baseHoles) {
+      const along = h.dir === 'x' ? p[0] : p[2], cross = h.dir === 'x' ? p[2] : p[0];
+      if (Math.abs(cross - h.line * ws) > half + holePad) continue;
+      if (Math.abs(along - h.cx) / (h.hw + holePad) + Math.abs(p[1] - h.cy) / (h.hh + holePadY) <= 1) return true;
+    }
+    return false;
+  };
+  const inSkirt = p => {
+    if (p[1] >= topY - 1e-4) return true;
+    const h = half - lip;
+    for (const r of wallRuns) {
+      const along = r.dir === 'x' ? p[0] : p[2], cross = r.dir === 'x' ? p[2] : p[0];
+      if (along >= r.s0 * ws - h && along <= r.s1 * ws + h && Math.abs(cross - r.line * ws) <= Math.max(h, 0.02)) return true;
+    }
+    return false;
+  };
+  const clipJoin = (A, B) => {
+    if (!join) return [[A, B, 0, 1]];
+    const ts = [0, 1];
+    const pushT = t => { if (t > 1e-4 && t < 1 - 1e-4) ts.push(t); };
+    if (Math.abs(B[1] - A[1]) > 1e-8) pushT((topY - A[1]) / (B[1] - A[1]));
+    const h = half - lip;
+    for (const r of wallRuns) {
+      const ax = r.dir === 'x';
+      const cuts = [
+        [ax ? A[0] : A[2], ax ? B[0] : B[2], r.s0 * ws - h],
+        [ax ? A[0] : A[2], ax ? B[0] : B[2], r.s1 * ws + h],
+        [ax ? A[2] : A[0], ax ? B[2] : B[0], r.line * ws - Math.max(h, 0)],
+        [ax ? A[2] : A[0], ax ? B[2] : B[0], r.line * ws + Math.max(h, 0)],
+      ];
+      for (const [a0, a1, lim] of cuts) if (Math.abs(a1 - a0) > 1e-8) pushT((lim - a0) / (a1 - a0));
+    }
+    for (const h of baseHoles) {
+      const ax = h.dir === 'x';
+      const a0 = ax ? A[0] : A[2], da = (ax ? B[0] : B[2]) - a0, dy = B[1] - A[1];
+      const c0 = ax ? A[2] : A[0], c1 = ax ? B[2] : B[0];
+      if (Math.abs(c0 - h.line * ws) > half + holePad && Math.abs(c1 - h.line * ws) > half + holePad) continue;
+      const hwE = h.hw + holePad, hhE = h.hh + holePadY;
+      for (const sx of [1, -1]) for (const sy of [1, -1]) {
+        const denom = sx * da / hwE + sy * dy / hhE;
+        if (Math.abs(denom) < 1e-8) continue;
+        const t = (1 - sx * (a0 - h.cx) / hwE - sy * (A[1] - h.cy) / hhE) / denom;
+        if (t <= 1e-4 || t >= 1 - 1e-4) continue;
+        const along = a0 + da * t, y = A[1] + dy * t;
+        if (sx * (along - h.cx) >= -1e-3 && sy * (y - h.cy) >= -1e-3) pushT(t);
+      }
+    }
+    ts.sort((a, c) => a - c);
+    const lerp = t => [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t];
+    const out = [];
+    for (let i = 0; i + 1 < ts.length; i++) {
+      const t0 = ts[i], t1 = ts[i + 1];
+      if (t1 - t0 < 1e-4) continue;
+      const mid = lerp((t0 + t1) / 2);
+      if (inSkirt(mid) && !inHole(mid)) out.push([lerp(t0), lerp(t1), t0, t1]);
+    }
+    return out;
+  };
+  // 十字针不走上面的杆件裁切。针从立板内部的节点直着穿出时，会把一整截留在菱形孔里。
+  // 孔在墙面内是菱形，沿墙法线贯穿板厚；针截面沿墙面再鼓出 ra，所以禁区是菱形上下削平的六边形
+  const clipNeedle = (A, B, ext) => {
+    if (!baseHoles.length) return [[A, B, 0, 1]];
+    const ts = [0, 1];
+    const pushT = t => { if (t > 1e-4 && t < 1 - 1e-4) ts.push(t); };
+    const inside = p => {
+      for (const h of baseHoles) {
+        const ax = h.dir === 'x';
+        const along = ax ? p[0] : p[2], cross = ax ? p[2] : p[0];
+        const { ra, rc } = ext(h);
+        if (Math.abs(cross - h.line * ws) > half + rc) continue;
+        const dx = Math.abs(along - h.cx), dy = Math.abs(p[1] - h.cy);
+        if (dy > h.hh + 1e-6) continue;
+        const lim = dy >= h.hh ? ra : h.hw * (1 - dy / h.hh) + ra;
+        if (dx <= lim + 1e-6) return true;
+      }
+      return false;
+    };
+    for (const h of baseHoles) {
+      const ax = h.dir === 'x';
+      const { ra, rc } = ext(h);
+      const c0 = ax ? A[2] : A[0], c1 = ax ? B[2] : B[0];
+      if (Math.abs(c0 - h.line * ws) > half + rc && Math.abs(c1 - h.line * ws) > half + rc) continue;
+      const a0 = ax ? A[0] : A[2], da = (ax ? B[0] : B[2]) - a0, y0 = A[1], dy = B[1] - A[1];
+      const c = h.cx, yT = h.cy + h.hh, yB = h.cy - h.hh, yM = h.cy;
+      const hex = [[c + ra, yT], [c + h.hw + ra, yM], [c + ra, yB], [c - ra, yB], [c - h.hw - ra, yM], [c - ra, yT]];
+      for (let i = 0; i < 6; i++) {
+        const P = hex[i], Q = hex[(i + 1) % 6];
+        const ex = Q[0] - P[0], ey = Q[1] - P[1];
+        const den = da * ey - dy * ex;
+        if (Math.abs(den) < 1e-10) continue;
+        const t = ((P[0] - a0) * ey - (P[1] - y0) * ex) / den;
+        const u = ((P[0] - a0) * dy - (P[1] - y0) * da) / den;
+        if (t > 1e-4 && t < 1 - 1e-4 && u >= -1e-4 && u <= 1 + 1e-4) pushT(t);
+      }
+    }
+    ts.sort((a, c) => a - c);
+    const lerp = t => [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t];
+    const out = [];
+    for (let i = 0; i + 1 < ts.length; i++) {
+      const t0 = ts[i], t1 = ts[i + 1];
+      if (t1 - t0 < 1e-4) continue;
+      if (!inside(lerp((t0 + t1) / 2))) out.push([lerp(t0), lerp(t1), t0, t1]);
+    }
+    return out;
+  };
   // 杆件：扁平板条修剪到两端节点板边缘；单杆端头水平切齐到节点。单杆端头若是「+」柱的一臂在此终止、另一面墙在此连续：
   // 臂宽（b，比墙厚 t 宽）在这一段内收到墙厚，端面整个收进另一面墙里——否则两侧各露出 (b−t)/2 的小平台
   for (const e of used) {
@@ -662,13 +884,258 @@ export function buildEStageTowers(ctx, points, P) {
         if (e.vx && e.vz && pA <= t / 2 && mA <= t / 2 && pB <= t / 2 && mB <= t / 2) continue;
       }
       const es = (pl === 0 ? ex[0] : ex[2]) >= 0 ? 1 : -1;   // 板宽方向 e 与面内 +s 同向 / 反向
-      bar(buf, [A[0] + u[0] * eA, A[1] + u[1] * eA, A[2] + u[2] * eA], [B[0] - u[0] * eB, B[1] - u[1] * eB, B[2] - u[2] * eB],
-        ex, wn, pA + mA, t, pB + mB, t, eA > 0 ? u : Y, eB > 0 ? u : Y, es * (pA - mA) / 2, es * (pB - mB) / 2);
+      const p0 = [A[0] + u[0] * eA, A[1] + u[1] * eA, A[2] + u[2] * eA];
+      const p1 = [B[0] - u[0] * eB, B[1] - u[1] * eB, B[2] - u[2] * eB];
+      for (const [P, Q, t0, t1] of clipJoin(p0, p1)) {
+        const w0 = (pA + mA) + ((pB + mB) - (pA + mA)) * t0, w1 = (pA + mA) + ((pB + mB) - (pA + mA)) * t1;
+        const o0 = es * (pA - mA) / 2, o1 = es * (pB - mB) / 2;
+        const n0 = t0 < 1e-4 ? (eA > 0 ? u : Y) : u, n1 = t1 > 1 - 1e-4 ? (eB > 0 ? u : Y) : u;
+        if (len(sub(Q, P)) < 0.05) continue;
+        bar(buf, P, Q, ex, wn, w0, t, w1, t, n0, n1, o0 + (o1 - o0) * t0, o0 + (o1 - o0) * t1);
+      }
     }
   }
+  // 底板开孔之后，孔里不该再留杆件。孔正上方的节点就在立板顶上沿，节点板顺着竖杆向下的那一截
+  // 会伸进菱形孔，看起来像孔里留下一小段立柱。交叉墙的实心底板也会从侧面穿进对方的孔。
+  // 下面这组裁切只在开孔时用：把节点板和交叉底板里落进孔的部分去掉。
+  const left2 = (A, B, P) => (B[0] - A[0]) * (P[1] - A[1]) - (B[1] - A[1]) * (P[0] - A[0]);
+  const area2 = p => {
+    let a = 0;
+    for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; }
+    return a * 0.5;
+  };
+  const dedupe2 = p => {
+    const o = [];
+    for (const v of p) { const q = o[o.length - 1]; if (!q || Math.hypot(v[0] - q[0], v[1] - q[1]) > 1e-6) o.push(v); }
+    if (o.length > 1 && Math.hypot(o[0][0] - o[o.length - 1][0], o[0][1] - o[o.length - 1][1]) <= 1e-6) o.pop();
+    return o;
+  };
+  const splitByEdge = (poly, A, B) => {
+    const inn = [], out = [];
+    for (let i = 0; i < poly.length; i++) {
+      const P = poly[i], Q = poly[(i + 1) % poly.length];
+      const sp = left2(A, B, P), sq = left2(A, B, Q);
+      const pin = sp >= -1e-8, qin = sq >= -1e-8;
+      if (pin) inn.push(P); else out.push(P);
+      if (pin !== qin && Math.abs(sp - sq) > 1e-12) {
+        const tt = sp / (sp - sq);
+        out.push([P[0] + (Q[0] - P[0]) * tt, P[1] + (Q[1] - P[1]) * tt]);
+        inn.push(out[out.length - 1]);
+      }
+    }
+    return { inn, out };
+  };
+  // 凸多边形（逆时针，内部在边的左侧）把一个凸多边形裁掉，返回落在外侧的各块
+  const clipOutsideConvex = (poly, convex) => {
+    const rec = (p, i) => {
+      p = dedupe2(p);
+      if (p.length < 3 || Math.abs(area2(p)) < 1e-8) return [];
+      if (i >= convex.length) return [];
+      const A = convex[i], B = convex[(i + 1) % convex.length];
+      const { inn, out } = splitByEdge(p, A, B);
+      const res = [];
+      const op = dedupe2(out);
+      if (op.length >= 3 && Math.abs(area2(op)) > 1e-8) res.push(op);
+      const ip = dedupe2(inn);
+      if (ip.length >= 3 && Math.abs(area2(ip)) > 1e-8) res.push(...rec(ip, i + 1));
+      return res;
+    };
+    return rec(poly, 0);
+  };
+  const insideConvex = (p, poly) => {
+    for (let i = 0; i < poly.length; i++) if (left2(poly[i], poly[(i + 1) % poly.length], p) < -1e-6) return false;
+    return true;
+  };
+  const segHit = (A, B, C, D) => {
+    const d = (B[0] - A[0]) * (D[1] - C[1]) - (B[1] - A[1]) * (D[0] - C[0]);
+    if (Math.abs(d) < 1e-12) return null;
+    const tt = ((C[0] - A[0]) * (D[1] - C[1]) - (C[1] - A[1]) * (D[0] - C[0])) / d;
+    const u = ((C[0] - A[0]) * (B[1] - A[1]) - (C[1] - A[1]) * (B[0] - A[0])) / d;
+    if (tt < -1e-5 || tt > 1 + 1e-5 || u < -1e-5 || u > 1 + 1e-5) return null;
+    return [A[0] + (B[0] - A[0]) * tt, A[1] + (B[1] - A[1]) * tt];
+  };
+  const paramOn = (A, B, P) => {
+    const dx = B[0] - A[0], dy = B[1] - A[1];
+    if (Math.abs(dx) >= Math.abs(dy)) return (P[0] - A[0]) / (dx || 1e-12);
+    return (P[1] - A[1]) / (dy || 1e-12);
+  };
+  // 两个逆时针凸多边形的并。重叠处会凹进去，不能按交点极角排（交点重心落在边上时顺序会拧成自交，三角化把孔填上）
+  const unionConvex = (A, B) => {
+    const m = A.length, n = B.length;
+    const ax = Array.from({ length: m }, () => []), bx = Array.from({ length: n }, () => []);
+    for (let i = 0; i < m; i++) for (let j = 0; j < n; j++) {
+      const h = segHit(A[i], A[(i + 1) % m], B[j], B[(j + 1) % n]);
+      if (!h) continue;
+      const t = paramOn(A[i], A[(i + 1) % m], h), u = paramOn(B[j], B[(j + 1) % n], h);
+      if (t <= 1e-5 || t >= 1 - 1e-5 || u <= 1e-5 || u >= 1 - 1e-5) continue;
+      const rec = { p: h, i, j, t, u };
+      ax[i].push(rec); bx[j].push(rec);
+    }
+    let nX = 0;
+    for (const arr of ax) { arr.sort((p, q) => p.t - q.t); nX += arr.length; }
+    for (const arr of bx) arr.sort((p, q) => p.u - q.u);
+    if (nX < 2) {
+      if (A.length && insideConvex(A[0], B)) return B.map(p => p.slice());
+      if (B.length && insideConvex(B[0], A)) return A.map(p => p.slice());
+      return null;
+    }
+    let s = A.findIndex(p => !insideConvex(p, B));
+    if (s < 0) return B.map(p => p.slice());
+    const used = new Set(), out = [A[s].slice()];
+    let onA = true, edge = s, tCur = 0, guard = 0;
+    while (guard++ < (m + n) * 4) {
+      if (onA) {
+        let next = null;
+        for (const h of ax[edge]) if (h.t > tCur + 1e-5 && !used.has(h)) { next = h; break; }
+        if (!next) {
+          edge = (edge + 1) % m; tCur = 0;
+          if (edge === s && out.length > 2) break;
+          if (!insideConvex(A[edge], B)) out.push(A[edge].slice());
+          continue;
+        }
+        used.add(next); out.push(next.p.slice());
+        onA = false; edge = next.j; tCur = next.u;
+      } else {
+        let next = null;
+        for (const h of bx[edge]) if (h.u > tCur + 1e-5 && !used.has(h)) { next = h; break; }
+        if (!next) {
+          edge = (edge + 1) % n; tCur = 0;
+          if (!insideConvex(B[edge], A)) out.push(B[edge].slice());
+          continue;
+        }
+        used.add(next); out.push(next.p.slice());
+        onA = true; edge = next.i; tCur = next.t;
+      }
+    }
+    const p = dedupe2(out);
+    return p.length >= 3 ? p : null;
+  };
+  // 从逆时针外轮廓里去掉一个凸区域。完全落在内部就当孔；压到边上就从外轮廓咬掉，避免端头留下一截挡在孔里
+  const polyMinusConvex = (poly, clip) => {
+    const m = poly.length, n = clip.length;
+    const insideC = p => insideConvex(p, clip);
+    const insideP = p => {
+      let w = 0;
+      for (let i = 0; i < m; i++) {
+        const A = poly[i], B = poly[(i + 1) % m];
+        if (A[1] <= p[1]) { if (B[1] > p[1] && left2(A, B, p) > 0) w++; }
+        else if (B[1] <= p[1] && left2(A, B, p) < 0) w--;
+      }
+      return w !== 0;
+    };
+    const subX = [], clipX = Array.from({ length: n }, () => []);
+    let nX = 0;
+    for (let i = 0; i < m; i++) {
+      const A = poly[i], B = poly[(i + 1) % m];
+      const hs = [];
+      for (let j = 0; j < n; j++) {
+        const h = segHit(A, B, clip[j], clip[(j + 1) % n]);
+        if (!h) continue;
+        const t = paramOn(A, B, h);
+        if (t <= 1e-5 || t >= 1 - 1e-5) continue;
+        hs.push({ t, u: paramOn(clip[j], clip[(j + 1) % n], h), p: h, j, i });
+      }
+      hs.sort((a, b) => a.t - b.t);
+      let inside = insideC(A);
+      const kept = [];
+      for (const h of hs) {
+        const q = kept[kept.length - 1];
+        if (q && Math.hypot(q.p[0] - h.p[0], q.p[1] - h.p[1]) < 1e-5) continue;
+        h.enter = !inside; inside = !inside;
+        kept.push(h); clipX[h.j].push(h);
+      }
+      subX.push(kept); nX += kept.length;
+    }
+    for (const arr of clipX) arr.sort((a, b) => a.u - b.u);
+    if (nX === 0) {
+      if (clip.length && clip.every(p => insideP(p))) return { hole: clip.map(p => p.slice()) };
+      return { outer: poly.map(p => p.slice()) };
+    }
+    const used = new Set(), result = [];
+    let sEdge = 0;
+    while (sEdge < m && insideC(poly[sEdge])) sEdge++;
+    if (sEdge >= m) return { outer: [] };
+    let edge = sEdge, cur = poly[edge].slice(), phase = 'sub', cj = 0, cu = 0, guard = 0;
+    result.push(cur.slice());
+    while (guard++ < (m + n) * 6) {
+      if (phase === 'sub') {
+        const A = poly[edge], B = poly[(edge + 1) % m];
+        const tCur = paramOn(A, B, cur);
+        let next = null;
+        for (const h of subX[edge]) {
+          if (used.has(h.i + ':' + h.t.toFixed(5))) continue;
+          if (h.t > tCur + 1e-5) { next = h; break; }
+        }
+        if (!next) {
+          edge = (edge + 1) % m;
+          const v = poly[edge];
+          if (Math.hypot(v[0] - result[0][0], v[1] - result[0][1]) < 1e-5 && result.length > 2) break;
+          if (!insideC(v)) result.push(v.slice());
+          cur = v.slice();
+          continue;
+        }
+        used.add(next.i + ':' + next.t.toFixed(5));
+        result.push(next.p.slice());
+        cur = next.p.slice();
+        if (!next.enter) continue;
+        phase = 'clip'; cj = next.j; cu = next.u;
+      } else {
+        const arr = clipX[cj];
+        let prev = null;
+        for (let k = arr.length - 1; k >= 0; k--) if (arr[k].u < cu - 1e-5) { prev = arr[k]; break; }
+        if (prev) {
+          used.add(prev.i + ':' + prev.t.toFixed(5));
+          result.push(prev.p.slice());
+          cur = prev.p.slice();
+          edge = prev.i; phase = 'sub';
+        } else {
+          result.push(clip[cj].slice());
+          cur = clip[cj].slice();
+          cj = (cj - 1 + n) % n; cu = 1;
+        }
+      }
+    }
+    return { outer: dedupe2(result) };
+  };
+  const asCCW = p => (area2(p) < 0 ? p.slice().reverse() : p.slice());
+  const asCW = p => (area2(p) > 0 ? p.slice().reverse() : p.slice());
+  // 这块节点板（墙面坐标，原点在节点）要让开的凸区域：本墙的菱形孔，以及垂直墙的孔穿过来的矩形槽
+  const plateCuts = (N, pl, poly) => {
+    if (!join || !P.baseHole || !baseHoles.length) return [];
+    const eps = 0.06;
+    let s0 = 0, s1 = 0, y0 = 0, y1 = 0;
+    for (const p of poly) {
+      s0 = Math.min(s0, p[0]); s1 = Math.max(s1, p[0]);
+      y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
+    }
+    const nodeAlong = pl === 0 ? N[0] : N[2], nodeCross = pl === 0 ? N[2] : N[0];
+    const cuts = [];
+    for (const h of baseHoles) {
+      const same = (pl === 0) === (h.dir === 'x');
+      if (same) {
+        if (Math.abs(nodeCross - h.line * ws) > half + 0.05) continue;
+        const cs = h.cx - nodeAlong, cy = h.cy - N[1], Hw = h.hw + eps, Hh = h.hh + eps;
+        if (cs + Hw < s0 || cs - Hw > s1 || cy + Hh < y0 || cy - Hh > y1) continue;
+        cuts.push([[cs, cy - Hh], [cs + Hw, cy], [cs, cy + Hh], [cs - Hw, cy]]);
+      } else {
+        const c0 = nodeCross - t / 2, c1 = nodeCross + t / 2;
+        if (c1 < h.cx - h.hw || c0 > h.cx + h.hw) continue;
+        const xStar = Math.max(c0, Math.min(h.cx, c1));
+        const reach = 1 - Math.abs(xStar - h.cx) / h.hw;
+        if (reach <= 0.02) continue;
+        const yHalf = h.hh * reach + eps;
+        const sA = h.line * ws - half - eps - nodeAlong, sB = h.line * ws + half + eps - nodeAlong;
+        const yA = h.cy - yHalf - N[1], yB = h.cy + yHalf - N[1];
+        if (sB < s0 || sA > s1 || yB < y0 || yA > y1) continue;
+        cuts.push([[sA, yA], [sB, yA], [sB, yB], [sA, yB]]);
+      }
+    }
+    return cuts;
+  };
   // 节点板几何：轮廓（面内坐标，绕节点逆时针、对节点星形）→ 以节点为中心扇形三角化 → 沿墙法线挤出 ±t/2
   for (const [kk, ds] of plates) {
     const pl = kk % 2, kN = (kk - pl) / 2, [a, bb, n] = unk(kN), N = pos(a, bb, n);
+    if (join && N[1] < topY - 1e-4) continue;   // 立板内部的节点板不再往侧面冒出
     const k = ds.length, raw = [];
     for (let i = 0; i < k; i++) {
       const D1 = ds[i], D2 = ds[(i + 1) % k];
@@ -719,18 +1186,67 @@ export function buildEStageTowers(ctx, points, P) {
     if (m < 3) continue;
     const W = (s, y, o) => (pl === 0 ? [N[0] + s, N[1] + y, N[2] + o] : [N[0] + o, N[1] + y, N[2] + s]);
     const wn = pl === 0 ? Z : X;
-    for (const o of [t / 2, -t / 2]) {
-      const out = o > 0 ? wn : [-wn[0], -wn[1], -wn[2]], C = W(0, 0, o);
+    const cuts = plateCuts(N, pl, poly);
+    // 没碰到孔：照旧以节点为心扇形挤出。碰到孔：逐个扇形三角形减掉孔，只留外侧，切口补上侧壁
+    let pieces = null;
+    if (cuts.length) {
+      pieces = [];
       for (let i = 0; i < m; i++) {
-        const P1 = W(poly[i][0], poly[i][1], o), P2 = W(poly[(i + 1) % m][0], poly[(i + 1) % m][1], o);
-        const nn = cross(sub(P1, C), sub(P2, C));
-        if (nn[0] * out[0] + nn[1] * out[1] + nn[2] * out[2] < 0) buf.tri(C, P2, P1); else buf.tri(C, P1, P2);
+        let tri = [[0, 0], poly[i], poly[(i + 1) % m]];
+        if (Math.abs(area2(tri)) < 1e-8) continue;
+        if (area2(tri) < 0) tri = tri.slice().reverse();
+        let parts = [tri];
+        for (const cut of cuts) {
+          const next = [];
+          for (const part of parts) next.push(...clipOutsideConvex(part, cut));
+          parts = next;
+        }
+        for (const part of parts) pieces.push(part);
       }
     }
-    for (let i = 0; i < m; i++) {
-      const q = poly[i], q2 = poly[(i + 1) % m], ds2 = q2[0] - q[0], dy2 = q2[1] - q[1];
+    const emitFace = (ring, o) => {
+      const mm = ring.length;
+      if (mm < 3) return;
+      const out = o > 0 ? wn : [-wn[0], -wn[1], -wn[2]], C = W(ring[0][0], ring[0][1], o);
+      for (let i = 1; i + 1 < mm; i++) {
+        const P1 = W(ring[i][0], ring[i][1], o), P2 = W(ring[i + 1][0], ring[i + 1][1], o);
+        const nn = cross(sub(P1, C), sub(P2, C));
+        if (Math.abs(nn[0]) + Math.abs(nn[1]) + Math.abs(nn[2]) < 1e-10) continue;
+        if (nn[0] * out[0] + nn[1] * out[1] + nn[2] * out[2] < 0) buf.tri(C, P2, P1); else buf.tri(C, P1, P2);
+      }
+    };
+    const emitRim = (q, q2) => {
+      const ds2 = q2[0] - q[0], dy2 = q2[1] - q[1];
+      if (ds2 * ds2 + dy2 * dy2 < 1e-10) return;
       // 逆时针多边形的边外法线 (dy, −ds)，映射回三维
       buf.quad(W(q[0], q[1], t / 2), W(q2[0], q2[1], t / 2), W(q2[0], q2[1], -t / 2), W(q[0], q[1], -t / 2), pl === 0 ? [dy2, -ds2, 0] : [0, -ds2, dy2]);
+    };
+    if (!pieces) {
+      for (const o of [t / 2, -t / 2]) {
+        const out = o > 0 ? wn : [-wn[0], -wn[1], -wn[2]], C = W(0, 0, o);
+        for (let i = 0; i < m; i++) {
+          const P1 = W(poly[i][0], poly[i][1], o), P2 = W(poly[(i + 1) % m][0], poly[(i + 1) % m][1], o);
+          const nn = cross(sub(P1, C), sub(P2, C));
+          if (nn[0] * out[0] + nn[1] * out[1] + nn[2] * out[2] < 0) buf.tri(C, P2, P1); else buf.tri(C, P1, P2);
+        }
+      }
+      for (let i = 0; i < m; i++) emitRim(poly[i], poly[(i + 1) % m]);
+    } else {
+      for (const part of pieces) for (const o of [t / 2, -t / 2]) emitFace(part, o);
+      // 只给出现一次的边做侧壁：扇形内部的辐条两边各一次，外轮廓和孔切口只出现一次
+      const edges = new Map();
+      const qk = v => Math.round(v * 1e5);
+      for (const part of pieces) {
+        for (let i = 0; i < part.length; i++) {
+          const A = part[i], B = part[(i + 1) % part.length];
+          const k1 = qk(A[0]) + ',' + qk(A[1]), k2 = qk(B[0]) + ',' + qk(B[1]);
+          const key = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1;
+          const e = edges.get(key);
+          if (e) e.n++;
+          else edges.set(key, { n: 1, A, B });
+        }
+      }
+      for (const e of edges.values()) if (e.n === 1) emitRim(e.A, e.B);
     }
   }
   // 十字针（e-Stage Top connection，专利 FIG.13/14）：自格架节点沿直线到接触点——针身（连接宽）→ 过渡段（渐缩到接触宽）→
@@ -797,10 +1313,24 @@ export function buildEStageTowers(ctx, points, P) {
       for (let i = 0; i + 1 < ss.length; i++) {
         if (ss[i + 1] - ss[i] < 1e-3) continue;
         if (si > 0 && ss[i] >= Math.max(sharedFrom, sh.s0 + fl) - 1e-9) break;   // 正方形接触段已由第一片板生成
-        const [w0, t0, o0] = prof(ss[i]), [w1, t1, o1] = prof(ss[i + 1]);
+        const [w0, th0, o0] = prof(ss[i]), [w1, th1, o1] = prof(ss[i + 1]);
         // 端面：错切针一律水平；直针根部未修剪（直通 / 无节点板）时水平切齐，与格架杆件在节点处的切法一致，其余垂直针轴
         const nA = sh.sheared || (i === 0 && sh.s0 === 0) ? Y : u, nB = sh.sheared ? Y : u;
-        bar(buf, at(ss[i]), at(ss[i + 1]), sh.e, sh.m, w0, t0, w1, t1, nA, nB, o0, o1);
+        const reach = (d, w, th) => Math.abs(sh.e[0] * d[0] + sh.e[1] * d[1] + sh.e[2] * d[2]) * w / 2
+          + Math.abs(sh.m[0] * d[0] + sh.m[1] * d[1] + sh.m[2] * d[2]) * th / 2;
+        const parts = clipNeedle(at(ss[i]), at(ss[i + 1]), h => {
+          const dA = h.dir === 'x' ? X : Z, dC = h.dir === 'x' ? Z : X;
+          return {
+            ra: Math.max(reach(dA, w0, th0), reach(dA, w1, th1)),
+            rc: Math.max(reach(dC, w0, th0), reach(dC, w1, th1)),
+          };
+        });
+        for (const [C0, C1, ta, tb] of parts) {
+          if (len(sub(C1, C0)) < 0.02) continue;
+          const sa = ss[i] + (ss[i + 1] - ss[i]) * ta, sb = ss[i] + (ss[i + 1] - ss[i]) * tb;
+          const [wa, tha, oa] = prof(sa), [wb, thb, ob] = prof(sb);
+          bar(buf, C0, C1, sh.e, sh.m, wa, tha, wb, thb, ta < 1e-4 ? nA : u, tb > 1 - 1e-4 ? nB : u, oa, ob);
+        }
       }
     });
     if (nd.kind === 'free') st.needlesFree++;
@@ -814,66 +1344,104 @@ export function buildEStageTowers(ctx, points, P) {
     const pn = nd.fn || p.n || [0, -1, 0], ln = Math.hypot(pn[0], pn[1], pn[2]) || 1;
     (st.tipDev || (st.tipDev = [])).push(Math.acos(clamp1(-(u[0] * pn[0] + u[1] * pn[1] + u[2] * pn[2]) / ln)) * 180 / Math.PI);
   }
-  // 基础带：底层节点按所在墙线连段（间隔 ≤ 本级周期即相连），墙下沿实心带，相邻竖杆之间开三角缺口
-  if (foundH > 0) {
-    const lines = new Map();                         // 'x' + b（z 固定墙，沿 x）/ 'z' + a（x 固定墙，沿 z）→ [{ s, q }]
-    for (const k of keep) {
-      const [a, bb, n] = unk(k);
-      if (n !== 0) continue;
-      const q = qAt(a, bb, 0) || 2;
-      const onZ = md(bb, q) === 0, onX = md(a, q) === 0;
-      if (onZ) { const lk = 'x' + bb; (lines.get(lk) || lines.set(lk, []).get(lk)).push({ s: a, q }); }
-      if (onX) { const lk = 'z' + a; (lines.get(lk) || lines.set(lk, []).get(lk)).push({ s: bb, q }); }
-      if (!onZ && !onX) { const lk = ((bb & 1) === 0 ? 'x' + bb : 'z' + a); (lines.get(lk) || lines.set(lk, []).get(lk)).push({ s: (bb & 1) === 0 ? a : bb, q }); }
-    }
-    const runs = [];
-    for (const [lk, arr] of lines) {
-      arr.sort((x, y) => x.s - y.s);
-      const dir = lk[0], line = +lk.slice(1);
-      let s0 = arr[0].s, prev = arr[0], q0 = arr[0].q;
-      const flush = () => runs.push(prev.s > s0 ? { dir, line, s0, s1: prev.s, q: q0 } : { dir, line, s0: s0 - 0.5, s1: s0 + 0.5, q: q0 });
-      for (let i = 1; i < arr.length; i++) {
-        const c = arr[i];
-        if (c.s - prev.s <= Math.max(c.q, prev.q)) { prev = c; q0 = Math.min(q0, c.q); continue; }
-        flush(); s0 = c.s; prev = c; q0 = c.q;
-      }
-      flush();
-    }
-    const nh = Math.max(0, Math.min(P.esNotchH, foundH - 0.3));
+  // 基础带：底层节点按所在墙线连段。连接底板时不刻缺口，立板升到能盖住最下一排尖角。
+  if (bandH > 0) {
+    const runs = wallRuns;
+    const nh = join ? 0 : Math.max(0, Math.min(P.esNotchH, bandH - 0.3));
+    // 连接条用边宽：转角上另一面墙的杆比墙厚宽 (边宽−墙厚)/2，按墙厚做会在立板侧面露出一小块
+    const half = join ? Math.max(b, t) / 2 : t / 2;
     for (const r of runs) {
-      // 轮廓（墙面坐标 s 向右、y 向上，逆时针）：底边在相邻竖杆之间开三角缺口
-      const x0 = r.s0 * ws - t / 2, x1 = r.s1 * ws + t / 2;
-      const poly = [[x0, 0]];
-      const vs = mid ? r.q >> 1 : r.q, vsw = vs * ws;
-      const nw = Math.min(0.6 * vsw, vsw - t - 0.3);
-      if (nh > 0.1 && nw > 0.3) {
-        for (let s = Math.ceil(r.s0 / vs) * vs; s + vs <= r.s1 + 1e-9; s += vs) {
-          const c = (s + vs / 2) * ws;
-          if (c - nw / 2 <= x0 + 0.1 || c + nw / 2 >= x1 - 0.1) continue;
-          poly.push([c - nw / 2, 0], [c, nh], [c + nw / 2, 0]);
+      // 轮廓（墙面坐标 s 向右、y 向上，逆时针）。
+      // 栅角：只在贴台面的底角斜切一小截，斜度与菱形格一致，上面仍是直边。
+      const x0 = r.s0 * ws - half, x1 = r.s1 * ws + half;
+      const chH = 0.6;
+      const chamfer = join && P.baseChamfer
+        ? Math.min(chH * ws / Math.max(hs, 0.2), Math.max(0, (x1 - x0 - 0.8) / 2))
+        : 0;
+      let poly;
+      if (chamfer > 0.15 && chH < bandH - 0.2) {
+        poly = [[x0 + chamfer, 0], [x1 - chamfer, 0], [x1, chH], [x1, bandH], [x0, bandH], [x0, chH]];
+      } else {
+        poly = [[x0, 0]];
+        const vs = mid ? r.q >> 1 : r.q, vsw = vs * ws;
+        const nw = Math.min(0.6 * vsw, vsw - t - 0.3);
+        if (nh > 0.1 && nw > 0.3) {
+          for (let s = Math.ceil(r.s0 / vs) * vs; s + vs <= r.s1 + 1e-9; s += vs) {
+            const c = (s + vs / 2) * ws;
+            if (c - nw / 2 <= x0 + 0.1 || c + nw / 2 >= x1 - 0.1) continue;
+            poly.push([c - nw / 2, 0], [c, nh], [c + nw / 2, 0]);
+          }
+        }
+        poly.push([x1, 0], [x1, bandH], [x0, bandH]);
+      }
+      // 底板开孔：本墙菱形，再加上垂直墙的孔从侧面穿过来的槽。
+      // 槽若只收到外轮廓里面 0.08，底板端头会在孔里留下一截薄壁；压到边上的槽改从外轮廓咬掉。
+      // 叠在一起的区域先并成一块，再决定当孔还是咬边，避免两套轮廓交叉把孔填实。
+      let shapes = skirtHoles(r).map(h => {
+        const cy = h.cy - groundY;
+        return asCCW([[h.cx, cy + h.hh], [h.cx + h.hw, cy], [h.cx, cy - h.hh], [h.cx - h.hw, cy]]);
+      });
+      if (baseHoles.length) {
+        const eps = 0.05;
+        for (const h of baseHoles) {
+          if (h.dir === r.dir) continue;
+          const c0 = r.line * ws - half, c1 = r.line * ws + half;
+          if (c1 < h.cx - h.hw || c0 > h.cx + h.hw) continue;
+          const xStar = Math.max(c0, Math.min(h.cx, c1));
+          const reach = 1 - Math.abs(xStar - h.cx) / h.hw;
+          if (reach <= 0.2) continue;   // 与交点仅擦边（交叠 < 0.2 孔径）不挖：否则在板面留下无意义的扁缝
+          const yHalf = h.hh * reach + eps;
+          const s0 = h.line * ws - half - eps, s1 = h.line * ws + half + eps;
+          const y0 = (h.cy - groundY) - yHalf, y1 = (h.cy - groundY) + yHalf;
+          if (s1 - s0 < 0.12 || y1 - y0 < 0.12) continue;
+          let acc = asCCW([[s0, y1], [s1, y1], [s1, y0], [s0, y0]]);
+          const rest = [];
+          for (const s of shapes) {
+            const u = unionConvex(s, acc);
+            if (u && u.length >= 3) acc = u;
+            else rest.push(s);
+          }
+          rest.push(acc);
+          shapes = rest;
         }
       }
-      poly.push([x1, 0], [x1, foundH], [x0, foundH]);
+      const holes = [];
+      for (const s of shapes) {
+        if (!s || s.length < 3 || Math.abs(area2(s)) < 1e-6) continue;
+        const cut = polyMinusConvex(poly, asCCW(s));
+        if (cut.hole) holes.push(asCW(cut.hole));
+        else if (cut.outer && cut.outer.length >= 3) poly = cut.outer;
+      }
+      if (poly.length < 3) continue;
+      if (area2(poly) < 0) poly.reverse();
+      const verts = poly.slice();
+      for (const h of holes) for (const p of h) verts.push(p);
       const toW = (s, y, o) => (r.dir === 'x' ? [s, groundY + y, r.line * ws + o] : [r.line * ws + o, groundY + y, s]);
-      const tris = THREE.ShapeUtils.triangulateShape(poly.map(([s, y]) => new THREE.Vector2(s, y)), []);
+      const tris = THREE.ShapeUtils.triangulateShape(
+        poly.map(([s, y]) => new THREE.Vector2(s, y)),
+        holes.map(h => h.map(([s, y]) => new THREE.Vector2(s, y))),
+      );
       const wn = r.dir === 'x' ? Z : X;
       for (const [i, j, k] of tris) {
-        for (const o of [t / 2, -t / 2]) {
-          const P1 = toW(...poly[i], o), P2 = toW(...poly[j], o), P3 = toW(...poly[k], o);
+        for (const o of [half, -half]) {
+          const P1 = toW(...verts[i], o), P2 = toW(...verts[j], o), P3 = toW(...verts[k], o);
           const out = o > 0 ? wn : [-wn[0], -wn[1], -wn[2]];
           const nn = cross(sub(P2, P1), sub(P3, P1));
           if (nn[0] * out[0] + nn[1] * out[1] + nn[2] * out[2] < 0) buf.tri(P1, P3, P2); else buf.tri(P1, P2, P3);
         }
       }
-      const area = poly.reduce((acc, p1, k) => { const p2 = poly[(k + 1) % poly.length]; return acc + p1[0] * p2[1] - p2[0] * p1[1]; }, 0);
-      const sgn = area > 0 ? 1 : -1;
-      for (let i = 0; i < poly.length; i++) {
-        const q = poly[i], q2 = poly[(i + 1) % poly.length];
-        const a1 = toW(...q, t / 2), a2 = toW(...q2, t / 2), a3 = toW(...q2, -t / 2), a4 = toW(...q, -t / 2);
-        // 侧面外法线：轮廓边在墙面内的外法线（逆时针轮廓 → 右手外侧）
-        const o2 = [(q2[1] - q[1]) * sgn, -(q2[0] - q[0]) * sgn];
-        buf.quad(a1, a2, a3, a4, r.dir === 'x' ? [o2[0], o2[1], 0] : [0, o2[1], o2[0]]);
-      }
+      const emitLoop = loop => {
+        const area = loop.reduce((acc, p1, k) => { const p2 = loop[(k + 1) % loop.length]; return acc + p1[0] * p2[1] - p2[0] * p1[1]; }, 0);
+        const sgn = area > 0 ? 1 : -1;
+        for (let i = 0; i < loop.length; i++) {
+          const q = loop[i], q2 = loop[(i + 1) % loop.length];
+          const a1 = toW(...q, half), a2 = toW(...q2, half), a3 = toW(...q2, -half), a4 = toW(...q, -half);
+          const o2 = [(q2[1] - q[1]) * sgn, -(q2[0] - q[0]) * sgn];
+          buf.quad(a1, a2, a3, a4, r.dir === 'x' ? [o2[0], o2[1], 0] : [0, o2[1], o2[0]]);
+        }
+      };
+      emitLoop(poly);
+      for (const h of holes) emitLoop(h);
       st.foundRuns++;
     }
   }
@@ -892,14 +1460,40 @@ export function buildEStageTowers(ctx, points, P) {
     }
   }
 
-  /* ---------- 7. 兜底：连不上格架的点交给树状支撑（锚定模型 / 绕行落地） ---------- */
+  /* ---------- 7. 兜底：连不上格架的点 ----------
+     短小支撑选桥板时，正下方有朝上表面的点只放一块竖板（两头细尖）。
+     放不下的点仍可绕到平台，但不再往模型上种树状锚点。
+     短小支撑选树状细尖时，整段仍交给树状支撑。 */
   let geomTreeG = null, geomTreeA = null;
-  if (fallbackIdx.length) {
+  if (fallbackIdx.length && P.shortSup && P.shortKind === 'tower') {
+    const plates = [];
+    const rest = [];
+    const rTip = Math.max(0.12, (P.tipD || 0.4) / 2);
+    const tiltMax = Math.PI / 2 - Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
+    for (const pi of fallbackIdx) {
+      const s = bridgeToSurface(ctx.bvh, ctx.faces, points[pi], {
+        rTip, maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax,
+      });
+      if (s) {
+        plates.push(strap(s.upper, s.lower, s.rFrom, s.rTip, s.thick, 10, s.thickRoot));
+        pointState[pi] = 'mesh'; st.anchors++; st.plates++;
+      } else rest.push(pi);
+    }
+    if (rest.length) {
+      const tr = buildBranchingTree(ctx, rest.map(i => points[i]), P);
+      geomTreeG = tr.geomGround;
+      if (tr.geomAnchor) plates.push(tr.geomAnchor);
+      rest.forEach((pi, k) => { pointState[pi] = tr.pointState[k]; });
+      for (const k of ['ground', 'anchors', 'micro', 'plates', 'noHead', 'unroutable']) st[k] += tr.stats[k] || 0;
+    }
+    geomTreeA = plates.length ? mergeParts(plates) : null;
+    st.fallback = fallbackIdx.length;
+  } else if (fallbackIdx.length) {
     const tr = buildBranchingTree(ctx, fallbackIdx.map(i => points[i]), P);
     geomTreeG = tr.geomGround; geomTreeA = tr.geomAnchor;
     fallbackIdx.forEach((pi, k) => { pointState[pi] = tr.pointState[k]; });
     st.fallback = fallbackIdx.length;
-    for (const k of ['ground', 'anchors', 'micro', 'noHead', 'unroutable']) st[k] = tr.stats[k] || 0;
+    for (const k of ['ground', 'anchors', 'micro', 'plates', 'noHead', 'unroutable']) st[k] = tr.stats[k] || 0;
   }
   const towerG = buf.geometry();
   const groundParts = [towerG, geomTreeG].filter(Boolean);

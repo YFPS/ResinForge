@@ -29,6 +29,7 @@ export const params = {
   spacing: 3,         // 支撑间距（mm）：六角网格的目标间距，局部可略密，空洞不超过约 1.7 倍
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
+  shortKind: 'tree',  // 短小支撑样式：'tree' 树状细尖 / 'tower' 桥板（单片竖板，两端细尖，没有格架）
   supMode: 'tree',    // 支撑结构：'tree' 树状（PrusaSlicer branching）/ 'tower' 支撑塔（Materialise e-Stage 菱形格架）
   tipMode: 'normal',  // 接触朝向：'normal' 沿法线（钳制到接触最大倾角）/ 'vertical' 竖直 / 'fixed' 固定倾角（沿法线方位）
   tipTilt: 45,        // 接触最大倾角（°，接触端与竖直方向夹角；针身 / 分支仍受自支撑角约束）
@@ -62,6 +63,10 @@ export const params = {
   esNeedleMax: 6,     // 针最大长度（格架节点到接触点）
   esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
   esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）
+  baseJoin: false,    // 连接底板：支撑塔底部的锯齿收成一条实心立板
+  baseChamfer: false, // 栅角：连接条贴台面的底角斜切一小截（高 0.6mm）
+  baseFlush: false,   // 去掉外伸：交叉墙的底板收到外墙齐平，不再往外吐出
+  baseHole: false,    // 底板开孔：连接条上按格架打菱形孔，少用材料
   /* 筏层 */
   raftOn: false,      // 实心筏层开关（厚 1.2mm，默认关闭）
   raftMargin: 3,      // 筏层边距（mm）

@@ -1,8 +1,10 @@
 import React from 'react';
-import { Button, InputNumber, Select } from '@arco-design/web-react';
+import { Button, Checkbox, InputNumber, Select } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
+import { state } from '../store.js';
 import { handleRaftOnChange, handleRaftMarginChange, updateRaft } from '../core/model.js';
+import { rebuildStructure } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
 
 /* 导出：底板类型（无 / 实心筏层 / 网格底板[e-Stage 风格]，变更即提示重新生成支撑）+ 边距/网格参数 + 两个导出按钮 */
@@ -26,6 +28,12 @@ export default function ExportCard() {
           </Select>
         </label>
         <label className="f" style={{ flex: 1, marginBottom: 0 }}><span>边距</span><InputNumber value={params.raftMargin} min={1} max={10} step={0.5} onChange={v => { setParam('raftMargin', v); handleRaftMarginChange(); }} />mm</label>
+      </div>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <Checkbox checked={!!params.baseJoin} onChange={v => { setParam('baseJoin', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>连接底板（底部锯齿收成一条立板）</Checkbox>
+        <Checkbox checked={!!params.baseChamfer} disabled={!params.baseJoin} onChange={v => { setParam('baseChamfer', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>栅角（底角斜切一小截）</Checkbox>
+        <Checkbox checked={!!params.baseFlush} disabled={!params.baseJoin} onChange={v => { setParam('baseFlush', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>去掉外伸（外沿收齐）</Checkbox>
+        <Checkbox checked={!!params.baseHole} disabled={!params.baseJoin} onChange={v => { setParam('baseHole', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>底板开孔（菱形孔省料）</Checkbox>
       </div>
       {params.gridRaftOn && (
         <div className="row">

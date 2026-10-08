@@ -9,7 +9,7 @@ import { state } from '../../../store.js';
 import { setMode } from '../../../core/scene.js';
 import { handleRaiseHChange } from '../../../core/model.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
-import { doClearSupports, doGenSupports, doOptimizeSupports, doRebuild, doTogglePoints, focusModel, setSupMode, splitModelName } from '../../actions.js';
+import { doClearSupports, doGenSupports, doOptimizeSupports, doRebuild, doTogglePoints, focusModel, setShortKind, setSupMode, splitModelName } from '../../actions.js';
 import { STEPS, runTask, useDone, useUI } from '../../ui.js';
 import { Choice, Grid, Num, Section, SwitchRow } from '../fields.jsx';
 import { NextButton, StepPanel } from '../StepPanel.jsx';
@@ -217,10 +217,25 @@ export default function SupportStep() {
         </Button>
         <SwitchRow
           label="短小支撑"
-          desc="竖直下方被模型挡住时，改锚到模型表面"
+          desc="竖直下方被模型挡住时，锚到另一个表面"
           checked={params.shortSup}
           onChange={v => setParam('shortSup', v)}
         />
+        {params.shortSup ? (
+          <>
+            <Choice
+              label="短小支撑样式"
+              options={[{ value: 'tree', label: '树状细尖' }, { value: 'tower', label: '支撑塔' }]}
+              value={params.shortKind === 'tower' ? 'tower' : 'tree'}
+              onChange={v => runTask('sup-short', () => setShortKind(v, setParam))}
+            />
+            <p className="hint">
+              {params.shortKind === 'tower'
+                ? '支撑塔这一档是一块竖板，两头收成细尖，直接连在两个表面之间。'
+                : '树状细尖沿用支撑头，落在模型上的那一端单独收细。'}
+            </p>
+          </>
+        ) : null}
       </Section>
 
       <Section title="接触">

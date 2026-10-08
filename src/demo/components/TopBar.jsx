@@ -26,7 +26,7 @@ function BrandMark() {
   );
 }
 
-/** 当前模型：名字即菜单，换演示模型 / 打开 STL */
+/** 当前模型：名字即菜单，换演示模型 / 打开 STL、OBJ、3MF */
 function ModelMenu() {
   const info = useBusLatest('modelInfo', null);
   const { name, demo } = splitModelName(info && info.name);
@@ -37,8 +37,8 @@ function ModelMenu() {
         label={name || '未载入模型'}
         icon={<Box size={15} strokeWidth={1.75} />}
         items={[
-          { label: '打开 STL 文件…', icon: <FolderOpen size={16} strokeWidth={1.75} />, onSelect: () => pickSTL(false) },
-          { label: '追加 STL 文件…', icon: <FolderPlus size={16} strokeWidth={1.75} />, onSelect: () => pickSTL(true) },
+          { label: '打开模型文件…', icon: <FolderOpen size={16} strokeWidth={1.75} />, onSelect: () => pickSTL(false) },
+          { label: '追加模型文件…', icon: <FolderPlus size={16} strokeWidth={1.75} />, onSelect: () => pickSTL(true) },
           ...DEMOS.map((d, i) => ({
             label: `演示：${d.label}`,
             icon: demo && d.label === name ? <Check size={16} strokeWidth={1.75} /> : <Shapes size={16} strokeWidth={1.75} />,

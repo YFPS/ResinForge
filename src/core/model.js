@@ -1,12 +1,13 @@
 /* ================================================================
    模型载入：setGeometry / loadDemo（4 个内置 demo）/ loadSTLBuffer(s) / mergeGeoms /
    updateRaft / 参数辅助（raiseH / raftOn / raftMargin）。
-   多个 STL 进同一块板：每个零件保留自己的局部几何（底面 y=0、XZ 居中），
+   多个模型文件（STL / OBJ / 3MF）进同一块板：每个零件保留自己的局部几何（底面 y=0、XZ 居中），
    摆放是 ox/oy/oz 加绕自身中心的四元数 q；显示与分析用的 state.mesh 是按这个变换拼起来的一份。
    与旧 main.js 的差异仅两类：参数读 params.*，DOM 赋值改发 bus 事件。
 ================================================================ */
 import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { modelKind, objPositions, threeMfPositions } from './meshio.js';
 import { state, params, bus, log, toast, setProgress } from '../store.js';
 import { historyReplaying, pushHistory, clearHistory } from './history.js';
 import { isBinarySTL, frameOf, applyFrame, bakeSource, smoothSoupNormals, blueprintRatio, SIMPLIFY_MIN_BYTES } from './simplify.js';
@@ -1299,7 +1300,8 @@ export function placeVertex(part, x, y, z, out) {
   out[2] = _corner.z;
 }
 
-/* STL 载入。不到 1GB 不减面。达到 1GB 先询问，同意后按文件大小保留 50% / 40% / 30% 的三角形。 */
+/* 模型载入（STL / OBJ / 3MF）。不到 1GB 不减面。达到 1GB 先询问，同意后按文件大小保留 50% / 40% / 30% 的三角形。
+   二进制 STL 仍在后台线程读。OBJ、3MF 与 ASCII STL 一样在当前线程收尾。 */
 const stlLoader = new STLLoader();
 let loadChain = Promise.resolve();
 
@@ -1447,9 +1449,34 @@ function askSimplify(names) {
   return window.confirm(`检测到超大模型（${list}）。\n文件很大，可能让软件变慢或卡住。\n\n建议简化模型。简化后仍能满足绝大多数打印需求。\n\n确定：简化后导入\n取消：按原模型导入`);
 }
 
+/* 扩展名决定格式。没写名字时仍按 STL，方便原来的 loadSTLBuffer(buf)。 */
+function prepareImport(items) {
+  const list = [];
+  let skipped = 0;
+  for (const it of items || []) {
+    if (!it || !it.buf) { skipped++; continue; }
+    const name = it.name || '未命名.stl';
+    const kind = modelKind(name);
+    if (!kind) { skipped++; continue; }
+    list.push({ buf: it.buf, name, kind });
+  }
+  return { list, skipped };
+}
+
+function positionsFor(it) {
+  if (it.kind === 'obj') return objPositions(it.buf);
+  if (it.kind === '3mf') return threeMfPositions(it.buf);
+  return asciiPositions(it.buf);
+}
+
 async function ingestSTL(items, { append = false } = {}) {
-  if (!items || !items.length) return;
-  setProgress(0.05, '读取 STL…');
+  const { list, skipped } = prepareImport(items);
+  if (!list.length) {
+    if (items && items.length) toast('请选择 .stl、.obj 或 .3mf 文件');
+    return;
+  }
+  if (skipped) log(`已跳过 ${skipped} 个不支持的文件`, 'warn');
+  setProgress(0.05, `读取 ${list[0].name}…`);
   resetWork();
   clearHistory();
   if (!append) disposeParts();
@@ -1458,28 +1485,29 @@ async function ingestSTL(items, { append = false } = {}) {
     for (const p of drop) p.geom.dispose();
     state.parts = state.parts.filter(p => !p.demo);
   }
-  const huge = items.filter(it => it.buf && it.buf.byteLength >= SIMPLIFY_MIN_BYTES);
-  const agree = huge.length > 0 && askSimplify(huge.map(it => it.name || '未命名.stl'));
+  const huge = list.filter(it => it.buf.byteLength >= SIMPLIFY_MIN_BYTES);
+  const agree = huge.length > 0 && askSimplify(huge.map(it => it.name));
   try {
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      const name = it.name || '未命名.stl';
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
       const ratio = agree ? blueprintRatio(it.buf.byteLength) : 1;
-      setProgress(0.08 + 0.84 * (i / items.length), ratio < 1 ? `简化 ${name}…` : `读取 ${name}…`);
+      setProgress(0.08 + 0.84 * (i / list.length), ratio < 1 ? `简化 ${it.name}…` : `读取 ${it.name}…`);
       try {
-        const parsed = isBinarySTL(it.buf) ? await workerJob(it.buf, ratio) : finishPositions(asciiPositions(it.buf), ratio);
-        const part = adoptParsed(parsed, name, ratio);
+        const parsed = it.kind === 'stl' && isBinarySTL(it.buf)
+          ? await workerJob(it.buf, ratio)
+          : finishPositions(positionsFor(it), ratio);
+        const part = adoptParsed(parsed, it.name, ratio);
         if (part) state.parts.push(part);
-        else log(`STL 是空的（${name}）`, 'warn');
+        else log(`文件里没有三角面（${it.name}）`, 'warn');
       } catch (e) {
-        log(`STL 解析失败（${name}）：${e.message || e}`, 'warn');
+        log(`解析失败（${it.name}）：${e.message || e}`, 'warn');
       }
     }
   } finally {
     setProgress(null);
   }
   if (!state.parts.length) {
-    toast('没有载入成功的 STL');
+    toast('没有载入成功的模型');
     if (state.mesh) { modelGroup.remove(state.mesh); state.mesh.geometry.dispose(); state.mesh = null; }
     state.faces = null;
     emitModelInfo();
@@ -1488,7 +1516,7 @@ async function ingestSTL(items, { append = false } = {}) {
   if (!state.parts.some(p => p.id === state.activePartId)) state.activePartId = state.parts[0].id;
   syncPreview(activePart());
   commitPlate({ arrange: state.parts.length > 1, frame: 'all' });
-  log('已按 STL 惯例将 Z-up 转为 Y-up，如需调整可运行朝向优化');
+  log('已将 Z-up 转为 Y-up，如需调整可运行朝向优化');
 }
 
 export function loadSTLBuffer(buf, name) {

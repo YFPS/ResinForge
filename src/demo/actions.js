@@ -31,7 +31,7 @@ export function doLoadDemo(kind) {
 export function pickSTL(append = false) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.stl';
+  input.accept = '.stl,.obj,.3mf';
   input.multiple = true;
   input.onchange = async () => {
     const files = [...(input.files || [])];
@@ -62,6 +62,13 @@ export function doOptimizeSupports() {
 /** 切换结构模式：已有支撑点时立即重建结构（同旧 SupportCard 行为） */
 export function setSupMode(v, setParam) {
   setParam('supMode', v);
+  if (hasSupports()) return rebuildStructure();
+  return Promise.resolve();
+}
+
+/** 短小支撑样式：树状细尖或桥板。已有支撑时按新样式重算结构。 */
+export function setShortKind(v, setParam) {
+  setParam('shortKind', v === 'tower' ? 'tower' : 'tree');
   if (hasSupports()) return rebuildStructure();
   return Promise.resolve();
 }
@@ -104,6 +111,34 @@ export function doExport(includeModel) {
   const empty = !state.mesh || (!includeModel && !hasSupports() && currentBaseType() === 'none');
   exportSTL(includeModel, true, includeModel ? 'model_with_supports.stl' : 'supports_only.stl');
   if (!empty) markExported();
+}
+
+/** 连接底板：支撑塔底部锯齿收成一条立板。已有支撑时立刻重算。 */
+export function setBaseJoin(v, setParam) {
+  setParam('baseJoin', !!v);
+  if (hasSupports()) return rebuildStructure();
+  return Promise.resolve();
+}
+
+/** 底板开孔：连接条上打菱形孔。已有支撑时立刻重算。 */
+export function setBaseHole(v, setParam) {
+  setParam('baseHole', !!v);
+  if (hasSupports()) return rebuildStructure();
+  return Promise.resolve();
+}
+
+/** 去掉外伸：交叉墙底板收到外墙齐平。已有支撑时立刻重算。 */
+export function setBaseFlush(v, setParam) {
+  setParam('baseFlush', !!v);
+  if (hasSupports()) return rebuildStructure();
+  return Promise.resolve();
+}
+
+/** 栅角：连接条两端按格架角度斜切。已有支撑时立刻重算。 */
+export function setBaseChamfer(v, setParam) {
+  setParam('baseChamfer', !!v);
+  if (hasSupports()) return rebuildStructure();
+  return Promise.resolve();
 }
 
 /** 底板三态（互斥）；变更后提示重新生成支撑 */

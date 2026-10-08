@@ -119,16 +119,144 @@ export function placeTip(bvh, p, n, sgn, tiltMax, dead, spec, fixed = false) {
   return null;
 }
 
-/* 微型短柱（窄间隙）：接触点竖直下方 lim 内有可承载表面 → 竖直双端球头直柱，两端各扎入 0.1。
-   优先于常规接触端：窄间隙里常规接触端会被迫斜置换向，把根部甩到间隙外反而落不了地（实测悬臂雕像球底 0.8mm 间隙）。
+/* 桥板：两个表面之间的一整块竖板。轮廓是两端圆头的凸包，宽度沿外公切线直线变窄，
+   厚度从根部收到尖端。尖端只留下细圆头，粗的部分停在模型外面。
+   板是实心的一块：没有孔，没有重复的格子，也不沿某组边的方向另接一根针。 */
+export function strap(a, b, ra, rb, thick = 0.35, seg = 10, thickRoot = 0) {
+  const A = new THREE.Vector3(a.x, a.y, a.z);
+  const B = new THREE.Vector3(b.x, b.y, b.z);
+  const axis = new THREE.Vector3().subVectors(B, A);
+  const L = axis.length();
+  if (L < 0.2 || ra < 0.05 || rb < 0.05) return null;
+  if (L + Math.min(ra, rb) <= Math.max(ra, rb) + 1e-3) return null;
+  axis.multiplyScalar(1 / L);
+  const wd = new THREE.Vector3().crossVectors(axis, UP);
+  if (wd.lengthSq() < 1e-8) wd.crossVectors(axis, new THREE.Vector3(1, 0, 0));
+  wd.normalize();
+  const td = new THREE.Vector3().crossVectors(axis, wd).normalize();
+  const N = Math.max(8, seg);
+  const samples = [];
+  const circ = (cx, r) => {
+    for (let i = 0; i < N; i++) {
+      const ang = i / N * Math.PI * 2;
+      samples.push({ x: cx + Math.cos(ang) * r, y: Math.sin(ang) * r });
+    }
+  };
+  circ(0, ra);
+  circ(L, rb);
+  samples.sort((p, q) => p.x - q.x || p.y - q.y);
+  const cross2 = (o, p, q) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+  const chain = list => {
+    const h = [];
+    for (const p of list) {
+      while (h.length >= 2 && cross2(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop();
+      h.push(p);
+    }
+    return h;
+  };
+  const lower = chain(samples);
+  const upperH = chain([...samples].reverse());
+  lower.pop();
+  upperH.pop();
+  const hull = lower.concat(upperH);
+  if (hull.length < 4) return null;
+  const hTip = Math.max(0.14, thick) / 2;
+  const hRoot = Math.max(hTip, (thickRoot || thick) / 2);
+  const hAt = x => {
+    const t = Math.min(1, Math.max(0, x / L));
+    return hRoot + (hTip - hRoot) * t;
+  };
+  const to3 = (p, s) => A.clone().addScaledVector(axis, p.x).addScaledVector(wd, p.y).addScaledVector(td, s);
+  const top = hull.map(p => to3(p, hAt(p.x)));
+  const bot = hull.map(p => to3(p, -hAt(p.x)));
+  let sx = 0, sy = 0;
+  for (const p of hull) { sx += p.x; sy += p.y; }
+  sx /= hull.length; sy /= hull.length;
+  const midT = to3({ x: sx, y: sy }, hAt(sx));
+  const midB = to3({ x: sx, y: sy }, -hAt(sx));
+  const pos = [];
+  const push = (p, q, r) => { pos.push(p.x, p.y, p.z, q.x, q.y, q.z, r.x, r.y, r.z); };
+  const n = hull.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    push(midT, top[i], top[j]);
+    push(midB, bot[j], bot[i]);
+    push(top[i], bot[i], top[j]);
+    push(top[j], bot[i], bot[j]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/* 沿给定方向落到朝上的表面，给出桥板两端。dir 默认竖直向下。
+   sinkTop 为真时上端也收成细尖并扎入；否则上端用 rFrom，接在已经生成的分支上。
+   返回 { upper, lower, rFrom, rTip, thick, thickRoot }，放不下时返回 null。 */
+export function bridgeSpan(bvh, faces, from, opts = {}) {
+  const rTip = Math.max(0.12, opts.rTip || 0.2);
+  const maxLen = opts.maxLen || 12;
+  const raw = opts.dir || [0, -1, 0];
+  const dl = Math.hypot(raw[0], raw[1], raw[2]) || 1;
+  const dx = raw[0] / dl, dy = raw[1] / dl, dz = raw[2] / dl;
+  if (dy > -0.2) return null;
+  if (opts.tiltMax != null && Math.acos(Math.min(1, -dy)) > opts.tiltMax + 1e-3) return null;
+  const hit = raycast(bvh, from.x, from.y, from.z, dx, dy, dz, 0.05, maxLen);
+  if (!hit || faces.nrm[hit.f * 3 + 1] < 0.5) return null;
+  const land = { x: from.x + dx * hit.t, y: from.y + dy * hit.t, z: from.z + dz * hit.t };
+  if (opts.protNear && opts.protNear(land)) return null;
+  const sink = Math.min(opts.pen ?? 0.2, 0.2);
+  const back = rTip - sink;
+  const lower = { x: land.x - dx * back, y: land.y - dy * back, z: land.z - dz * back };
+  const upper = opts.sinkTop
+    ? { x: from.x - dx * back, y: from.y - dy * back, z: from.z - dz * back }
+    : { x: from.x, y: from.y, z: from.z };
+  if (Math.hypot(upper.x - lower.x, upper.y - lower.y, upper.z - lower.z) < 0.2) return null;
+  const rFrom = opts.sinkTop ? rTip : Math.max(rTip, opts.rFrom || rTip);
+  const thick = Math.max(0.28, opts.thick || rTip * 1.6);
+  const thickRoot = opts.sinkTop ? thick : Math.max(thick, Math.min(1.05, rFrom * 1.7));
+  if (bvh) {
+    // 胶囊停在落点前一个包络半径处，尖端扎入段不参与净空，否则短间隙会被落点自己挡掉
+    const env = Math.max(thick * 0.5 + 0.05, Math.min(opts.envR || 0.45, Math.max(rTip, thickRoot * 0.5)));
+    const start = opts.sinkTop
+      ? { x: from.x + dx * 0.2, y: from.y + dy * 0.2, z: from.z + dz * 0.2 }
+      : upper;
+    const stop = { x: land.x - dx * (env + 0.08), y: land.y - dy * (env + 0.08), z: land.z - dz * (env + 0.08) };
+    const travel = Math.hypot(start.x - stop.x, start.y - stop.y, start.z - stop.z);
+    if (travel > 0.12 && !capsuleClear(bvh, start.x, start.y, start.z, stop.x, stop.y, stop.z, env)) return null;
+  }
+  return { upper, lower, rFrom, rTip, thick, thickRoot };
+}
+
+/* 竖直优先，再在临界锥里试几个斜向。命中的第一块板即可。 */
+export function bridgeToSurface(bvh, faces, from, opts = {}) {
+  const tilt = opts.tiltMax ?? Math.PI / 4;
+  const dirs = opts.dirs || downFan(tilt, [0.33, 0.66], 8);
+  for (const d of dirs) {
+    const s = bridgeSpan(bvh, faces, from, { ...opts, dir: d, tiltMax: tilt });
+    if (s) return s;
+  }
+  return null;
+}
+
+/* 直接生成桥板几何。放不下时返回 null。 */
+export function bridgeDown(bvh, faces, from, opts) {
+  const s = (opts && opts.fan) ? bridgeToSurface(bvh, faces, from, opts) : bridgeSpan(bvh, faces, from, opts);
+  return s ? strap(s.upper, s.lower, s.rFrom, s.rTip, s.thick, 10, s.thickRoot) : null;
+}
+
+/* 微型短柱（窄间隙）：接触点竖直下方 lim 内有可承载表面 → 竖直双端细尖直柱。
+   两端都用接触尖半径，各扎入不超过 0.2。窄间隙里常规接触端会被迫斜置换向，把根部甩到间隙外反而落不了地。
    返回几何或 null */
-export function microPost(bvh, faces, p, rMax, lim, protNear, seg = 16) {
+export function microPost(bvh, faces, p, rTip, lim, protNear, seg = 16) {
   const hit = raycast(bvh, p.x, p.y - 0.05, p.z, 0, -1, 0, 0.1, lim);
   if (!hit || faces.nrm[hit.f * 3 + 1] < 0.3) return null;
   const yb = p.y - 0.05 - hit.t, span = p.y - yb;
   if (span < 0.25 || (protNear && protNear({ x: p.x, y: yb, z: p.z }))) return null;
-  const r = Math.min(rMax, Math.max(0.15, span * 0.45));
-  const y0 = Math.min(yb - 0.1 + r, p.y + 0.1 - r), y1 = Math.max(yb - 0.1 + r, p.y + 0.1 - r);
+  const r = Math.max(0.12, rTip);
+  const sink = Math.min(0.2, r * 0.5);
+  const y0 = yb - sink + r, y1 = p.y + sink - r;
+  if (y1 - y0 < 0.05) return null;
   return pill({ x: p.x, y: y0, z: p.z }, { x: p.x, y: y1, z: p.z }, r, r, seg);
 }
 

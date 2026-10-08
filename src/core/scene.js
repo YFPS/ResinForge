@@ -1,7 +1,7 @@
 /* ================================================================
    three.js 场景：renderer / camera / OrbitControls / 灯光 / 平台网格 / 材质 /
    modelGroup / supportGroup / animate 循环 / resize / pointerRay / paintAt /
-   setMode / 四模式 pointer 处理 / 拖放 STL。
+   setMode / 四模式 pointer 处理 / 拖放模型（STL / OBJ / 3MF）。
    与旧 main.js 的差异仅两类：参数读 params.*，UI 副作用发 bus 事件。
    不依赖 DOM 的部分在模块级创建；renderer/controls 需 canvas，由 initScene(canvas) 完成。
 ================================================================ */
@@ -10,6 +10,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
 import { loadDemo, loadSTLBuffers, partAtWorld, focusPartFromHit, localFaceOf, raiseH, plateAxisOrigin, meshPick } from './model.js';
+import { modelKind } from './meshio.js';
 import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors } from './support.js';
 import { initManipulate, tickManipulate } from './manipulate.js';
 
@@ -582,13 +583,13 @@ export function initScene(canvasEl) {
   });
   window.addEventListener('pointerup', () => { state.painting = false; });
 
-  /* 拖放 STL */
+  /* 拖放 STL / OBJ / 3MF。不支持的文件直接提示，不清掉板上已有的模型。 */
   window.addEventListener('dragover', e => { e.preventDefault(); bus.emit('dropHint', true); });
   window.addEventListener('dragleave', e => { if (e.target === document.body || e.target === canvas.parentElement) bus.emit('dropHint', false); });
   window.addEventListener('drop', e => {
     e.preventDefault(); bus.emit('dropHint', false);
-    const files = [...e.dataTransfer.files].filter(f => /\.stl$/i.test(f.name));
-    if (!files.length) { if (e.dataTransfer.files.length) toast('请拖入 .stl 文件'); return; }
+    const files = [...e.dataTransfer.files].filter(f => modelKind(f.name));
+    if (!files.length) { if (e.dataTransfer.files.length) toast('请拖入 .stl、.obj 或 .3mf 文件'); return; }
     // 板上已有真实模型时追加，只有演示模型时换成拖进来的这一批
     const append = state.parts.some(p => !p.demo);
     Promise.all(files.map(async f => ({ buf: await f.arrayBuffer(), name: f.name })))

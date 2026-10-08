@@ -9,9 +9,9 @@ import { state } from '../../../store.js';
 import { supMat, supMatAnchor } from '../../../core/scene.js';
 import { handleRaftMarginChange, updateRaft } from '../../../core/model.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
-import { currentBaseType, doExport, setBaseType, splitModelName } from '../../actions.js';
-import { STEPS, goStep, useUI } from '../../ui.js';
-import { Grid, Num, Section } from '../fields.jsx';
+import { currentBaseType, doExport, setBaseChamfer, setBaseFlush, setBaseHole, setBaseJoin, setBaseType, splitModelName } from '../../actions.js';
+import { STEPS, goStep, runTask, useUI } from '../../ui.js';
+import { Grid, Num, Section, SwitchRow } from '../fields.jsx';
 import { StepPanel } from '../StepPanel.jsx';
 
 const STEP = STEPS[4];
@@ -26,7 +26,7 @@ const BASES = [
 const swatch = mat => '#' + mat.color.getHexString();
 
 export default function ExportStep() {
-  const [, setParam] = useParams();
+  const [params, setParam] = useParams();
   const info = useBusLatest('modelInfo', null);
   const points = useBusValue(['supStats', 'sliceStats', 'modelInfo'], () => (state.supportPoints || []).length);
   const { busy } = useUI();
@@ -67,6 +67,33 @@ export default function ExportStep() {
           value={baseType}
           onValueChange={v => setBaseType(v, setParam)}
           options={BASES}
+        />
+        <SwitchRow
+          label="连接底板"
+          desc="把支撑塔底部的锯齿收成一条立起来的连接条"
+          checked={!!params.baseJoin}
+          onChange={v => runTask('base-join', () => setBaseJoin(v, setParam))}
+        />
+        <SwitchRow
+          label="栅角"
+          desc="连接条贴着台面的底角斜切一小截"
+          checked={!!params.baseChamfer}
+          disabled={!params.baseJoin}
+          onChange={v => runTask('base-chamfer', () => setBaseChamfer(v, setParam))}
+        />
+        <SwitchRow
+          label="去掉外伸"
+          desc="交叉墙伸到外墙外面的底板收掉，外沿保持齐平"
+          checked={!!params.baseFlush}
+          disabled={!params.baseJoin}
+          onChange={v => runTask('base-flush', () => setBaseFlush(v, setParam))}
+        />
+        <SwitchRow
+          label="底板开孔"
+          desc="连接条上按格子打菱形孔，少用一些材料"
+          checked={!!params.baseHole}
+          disabled={!params.baseJoin}
+          onChange={v => runTask('base-hole', () => setBaseHole(v, setParam))}
         />
       </Section>
 

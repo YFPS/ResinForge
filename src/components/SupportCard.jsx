@@ -38,6 +38,14 @@ export default function SupportCard() {
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（竖直下方被模型挡住时锚到模型表面）</Checkbox>
       </div>
+      {params.shortSup ? (
+        <div className="row" style={{ alignItems: 'center' }}>
+          <Radio.Group type="button" size="small" value={params.shortKind === 'tower' ? 'tower' : 'tree'} onChange={v => { setParam('shortKind', v); if (hasPoints()) run('rebuild', rebuildStructure); }}>
+            <Radio value="tree">树状细尖</Radio>
+            <Radio value="tower">支撑塔桥板</Radio>
+          </Radio.Group>
+        </div>
+      ) : null}
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.supOptimize !== false} onChange={v => setParam('supOptimize', v)}>支撑优化（孤立底座交叉两岸）</Checkbox>
         <Checkbox checked={pointsOnly} onChange={v => { setPointsOnlyUi(v); setPointsOnly(v); }}>只显示支撑点</Checkbox>

@@ -54,7 +54,7 @@ export default function ViewportStage() {
           >
             <div className="dropInner">
               <UploadCloud size={30} />
-              <span>松开以载入 STL 文件</span>
+              <span>松开以载入模型</span>
             </div>
           </motion.div>
         )}

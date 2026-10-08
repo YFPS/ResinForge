@@ -18,7 +18,7 @@
    与 PrusaSlicer 的差异：竖直落地路径通畅时优先落地，不因下方斜向有模型面就锚到模型上（少在模型表面留疤）
 ================================================================ */
 import { raycast, capsuleClear } from './collide.js';
-import { pill, frustum, prusaHead, placeTip, tipCone, downFan, groundRoute, microPost, mergeParts } from './supportKit.js';
+import { pill, frustum, prusaHead, placeTip, tipCone, downFan, groundRoute, microPost, bridgeSpan, bridgeToSurface, strap, mergeParts } from './supportKit.js';
 
 const LEAF = 0, JUNC = 1;
 const GROUND = -2, MESH = -3;
@@ -96,6 +96,9 @@ export function buildBranchingTree(ctx, points, P) {
   const SEG = 16;
   const headLen = rPin - pen + cc;                             // 接触点 → 后端球心
   const headSpec = { tipR: rPin, backR: rMin, len: headLen, skip: 2.2 * rPin + 0.2, gap };
+  // 落在模型上的下端是独立细尖：肩部只用分支最小半径，颈长保证肩球停在表面上方。负载加粗留在肩部以上。
+  const neckR = rMin;
+  const neckLen = Math.max(cc, neckR - rPin + pen + 0.5);
   const rOf = nd => Math.max(nd.Rmin, Math.min(rMax, WIDENING_SCALE * P.widening * nd.w));
   const clearSeg = (a, b, r) => capsuleClear(bvh, a.x, a.y, a.z, b.x, b.y, b.z, r + gap);
   // 底座锥台 footprint 净空：自板面向上射线（中心查满高，0.5/0.9 倍底半径圆周查对应锥台高度）在底座高度内不碰模型。
@@ -110,7 +113,8 @@ export function buildBranchingTree(ctx, points, P) {
     return true;
   };
 
-  const st = { points: points.length, heads: 0, ground: 0, anchors: 0, heavy: 0, micro: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0 };
+  const st = { points: points.length, heads: 0, ground: 0, anchors: 0, heavy: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0 };
+  const plateKind = P.shortKind === 'tower';
   const pointState = new Array(points.length).fill('');
   const ground = [], anchorG = [];
   // 竖直落地柱：交叉撑只允许接在这段直柱上（底座顶 → 第一个拐点），斜柱和分支不收
@@ -127,8 +131,16 @@ export function buildBranchingTree(ctx, points, P) {
     const p = points[i];
     // 窄间隙（放不下支撑头 + 后端球）优先微型短柱（PrusaSlicer 的 small pillar 情形）；
     // 微型短柱下端扎在模型上，属于「落模型」——关闭短小支撑时禁用
-    const mp = P.shortSup && microPost(bvh, faces, p, rMin, headLen + rMin + 0.3, protNear, SEG);
-    if (mp) { anchorG.push(mp); st.micro++; pointState[i] = 'micro'; continue; }
+    if (P.shortSup && plateKind) {
+      const span = bridgeSpan(bvh, faces, p, { rTip: rPin, maxLen: headLen + rMin + 0.3, pen, protNear, sinkTop: true });
+      if (span) {
+        anchorG.push(strap(span.upper, span.lower, span.rFrom, span.rTip, span.thick, 10, span.thickRoot));
+        st.micro++; st.plates++; pointState[i] = 'micro'; continue;
+      }
+    } else {
+      const mp = P.shortSup && microPost(bvh, faces, p, rPin, headLen + rMin + 0.3, protNear, SEG);
+      if (mp) { anchorG.push(mp); st.micro++; pointState[i] = 'micro'; continue; }
+    }
     // 低点：接触点离底座顶面容不下「支撑头 + 后端球」（模型抬高过小）→ 底座直连短柱：竖直药丸自底座顶面升到接触点
     // （前端扎入 pen），下接底座锥台——对应 PrusaSlicer 支撑头直接落在 pad 上的情形；否则支撑头会扎穿底座
     if (p.y - baseTop < headLen + rMin) {
@@ -149,8 +161,16 @@ export function buildBranchingTree(ctx, points, P) {
       continue;
     }
     // 锥内全部方向碰撞：放宽间隙再试一次微型短柱
-    const mp2 = P.shortSup && microPost(bvh, faces, p, rMin, headLen + rMin + 1.5, protNear, SEG);
-    if (mp2) { anchorG.push(mp2); st.micro++; pointState[i] = 'micro'; continue; }
+    if (P.shortSup && plateKind) {
+      const span = bridgeSpan(bvh, faces, p, { rTip: rPin, maxLen: headLen + rMin + 1.5, pen, protNear, sinkTop: true });
+      if (span) {
+        anchorG.push(strap(span.upper, span.lower, span.rFrom, span.rTip, span.thick, 10, span.thickRoot));
+        st.micro++; st.plates++; pointState[i] = 'micro'; continue;
+      }
+    } else {
+      const mp2 = P.shortSup && microPost(bvh, faces, p, rPin, headLen + rMin + 1.5, protNear, SEG);
+      if (mp2) { anchorG.push(mp2); st.micro++; pointState[i] = 'micro'; continue; }
+    }
     st.noHead++; pointState[i] = 'nohead';
   }
 
@@ -173,15 +193,34 @@ export function buildBranchingTree(ctx, points, P) {
     }
     return out.sort((a, b) => a.d - b.d);
   };
+  // 桥板短小支撑：竖直优先，临界锥内再试斜向，落到朝上的表面后只放一块板。
+  const tryPlate = (nd, rN) => {
+    const span = bridgeToSurface(bvh, faces, nd, {
+      rTip: rPin,
+      rFrom: Math.max(rPin, Math.min(rN, 1.1)),
+      maxLen: Math.min(20, Math.max(0.4, nd.y - groundY)),
+      pen, protNear, sinkTop: false,
+      envR: Math.max(rPin, Math.min(rN, 0.45)),
+      tiltMax,
+    }) || bridgeSpan(bvh, faces, nd, {
+      rTip: rPin, rFrom: rPin,
+      maxLen: Math.min(2.5, Math.max(0.4, nd.y - groundY)),
+      pen, protNear, sinkTop: false, envR: rPin,
+    });
+    if (!span) return false;
+    nd.parent = MESH;
+    nd.bridge = span;
+    return true;
+  };
   const tryMesh = (nd, rN, c) => {
-    const a = placeTip(bvh, c.pt, c.n, +1, tiltMax, DEAD, { tipR: rPin, backR: Math.max(rMin, rN), len: rPin - pen + cc, skip: headSpec.skip, gap });
+    const a = placeTip(bvh, c.pt, c.n, +1, tiltMax, DEAD, { tipR: rPin, backR: neckR, len: rPin - pen + neckLen, skip: headSpec.skip, gap });
     if (!a) return false;
     const dy = a.back.y - nd.y;
     if (dy > -0.3) return false;                                                    // 锚头后端须在节点下方
     if (Math.hypot(a.back.x - nd.x, a.back.z - nd.z) > -dy * Math.tan(tiltMax) + 1e-6) return false;   // 分支不陡于临界角
     const rA = Math.max(rN, rOf({ Rmin: nd.Rmin, w: nd.w + dist(nd, a.back) }));
-    if (!clearSeg(nd, a.back, rA)) return false;
-    nd.parent = MESH; nd.anchor = { a, rA, rN };
+    if (!clearSeg(nd, a.back, Math.max(rN, neckR))) return false;
+    nd.parent = MESH; nd.anchor = { a, rA, rN, neckR, neckLen };
     return true;
   };
   // suggest_avoidance：下行一段，优先选「段净空且其后竖直落地也净空」的方向，其次只要段净空；
@@ -244,19 +283,24 @@ export function buildBranchingTree(ctx, points, P) {
     }
     if (routed) continue;
 
-    // ② 竖直下方被模型挡住 → 优先锚入模型（短小支撑）；下方表面近到放不下锚头时改用短锚（竖直短粗杆直接扎入）——
+    // ② 竖直下方被模型挡住 → 优先锚入模型（短小支撑）。放得下细尖就用倒置支撑头；
+    //    间隙更短时仍用同一颗细尖扎入，杆身只在尖端之上才变粗。
     //    合并点/下行点可能恰好落在下方表面上方 1mm 内（实测环面结 0.84mm），不兜底会让汇入的整棵子树被剪掉
     const allowMesh = P.shortSup && nd.w <= P.maxWeightOnModel;
     const vHit = raycast(bvh, nd.x, nd.y, nd.z, 0, -1, 0, 0.05, dBed);
     const anchorVertical = () => {
+      if (plateKind) return tryPlate(nd, rN);
       for (const c of meshCands(nd, downFan(tiltMax, [0.33], 8))) if (tryMesh(nd, rN, c)) return true;
       if (vHit.t <= headLen + rMin + 0.6 && faces.nrm[vHit.f * 3 + 1] >= 0.3) {
         const pt = { x: nd.x, y: nd.y - vHit.t, z: nd.z };
-        if (!protNear || !protNear(pt)) {
-          const rE = Math.max(0.15, Math.min(rN, (vHit.t + 0.1) * 0.5));
-          nd.parent = MESH; nd.shortAnchor = { y: Math.min(nd.y, pt.y - 0.1 + rE), rE, rN };
-          return true;
-        }
+        if (protNear && protNear(pt)) return false;
+        const penIn = Math.min(pen, 0.2);
+        const yTip = pt.y + (rPin - penIn);
+        const avail = nd.y - yTip;
+        if (avail < 0.2) return false;
+        const rTop = Math.min(rN, rPin + Math.max(0, avail - 0.8) * 0.85);
+        nd.parent = MESH; nd.shortAnchor = { y: yTip, rTip: rPin, rTop };
+        return true;
       }
       return false;
     };
@@ -278,8 +322,8 @@ export function buildBranchingTree(ctx, points, P) {
     }
     if (routed) continue;
 
-    // ④ 仍未路由：锥内斜向模型锚点
-    if (allowMesh) {
+    // ④ 仍未路由：锥内斜向模型锚点。桥板在第 ② 步已经找过落点。
+    if (allowMesh && !plateKind) {
       for (const c of meshCands(nd, downFan(tiltMax, [0.5, 1], 8))) if ((routed = tryMesh(nd, rN, c))) break;
       if (routed) { st.anchors++; continue; }
     }
@@ -288,7 +332,7 @@ export function buildBranchingTree(ctx, points, P) {
     //    锚一根粗些的支撑在模型上代价远小于悬空
     if (P.shortSup && !allowMesh) {
       routed = (vHit && anchorVertical());
-      if (!routed) for (const c of meshCands(nd, downFan(tiltMax, [0.5, 1], 8))) if ((routed = tryMesh(nd, rN, c))) break;
+      if (!routed && !plateKind) for (const c of meshCands(nd, downFan(tiltMax, [0.5, 1], 8))) if ((routed = tryMesh(nd, rN, c))) break;
       if (routed) { st.anchors++; st.heavy++; continue; }
     }
     nd.dead = true;
@@ -335,13 +379,17 @@ export function buildBranchingTree(ctx, points, P) {
       const up = rt[rt.length - 2];
       if (P.baseH > 0) ground.push(frustum({ x: g.x, y: groundY, z: g.z }, { x: g.x, y: baseTop, z: g.z }, baseR, nd.rG, 24));
       addPost(g.x, g.y, g.z, up.x, up.y, up.z, nd.rG);
+    } else if (nd.parent === MESH && nd.bridge) {
+      const s = nd.bridge;
+      anchorG.push(strap(s.upper, s.lower, s.rFrom, s.rTip, s.thick, 10, s.thickRoot));
+      st.plates++;
     } else if (nd.parent === MESH && nd.shortAnchor) {
-      const { y, rE, rN } = nd.shortAnchor;   // 短锚：节点竖直扎入正下方表面 0.1
-      anchorG.push(pill({ x: nd.x, y, z: nd.z }, nd, rE, rN, SEG));
+      const { y, rTip, rTop } = nd.shortAnchor;   // 下端细尖，上方才收到杆身半径
+      anchorG.push(pill({ x: nd.x, y, z: nd.z }, nd, rTip, rTop, SEG));
     } else if (nd.parent === MESH) {
-      const { a, rA, rN } = nd.anchor;
-      anchorG.push(pill(nd, a.back, rN, rA, SEG));
-      anchorG.push(prusaHead(a.back, a.dir, rA, rPin, cc, SEG));
+      const { a, rN, neckR: nr, neckLen: nl } = nd.anchor;
+      anchorG.push(pill(nd, a.back, rN, nr, SEG));
+      anchorG.push(prusaHead(a.back, a.dir, nr, rPin, nl, SEG));
     }
   }
   return {

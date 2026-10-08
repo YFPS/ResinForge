@@ -77,15 +77,19 @@ export async function runOrient() {
 function renderCandidates(list) {
   lastList = list;
   if (!prev.mesh) { bus.emit('orientResults', []); return; }
-  const scale = 1 / Math.max(1e-6, (() => {
-    prev.mesh.geometry.computeBoundingSphere();
-    return prev.mesh.geometry.boundingSphere.radius;
-  })());
+  // 缩略图取景：预览网格绕原点旋转，转完后并不落在 y=0 上，按「高度」取景会把很多朝向切掉下半截；
+  // 改为按几何外接球取景——半径与朝向无关、球心随旋转移动；相机方向固定（斜上前方），距离让外接球恰好入画
+  const geom = prev.mesh.geometry;
+  if (!geom.boundingSphere) geom.computeBoundingSphere();
+  const sphere = geom.boundingSphere, center = new THREE.Vector3();
+  const viewDir = new THREE.Vector3(0, 0.7, 1.3).normalize();
+  const dist = sphere.radius * 1.04 / Math.sin(THREE.MathUtils.degToRad(prevCam.fov / 2));
   const items = list.map((r, idx) => {
     // 渲染缩略图（离屏，dataURL 交给 React 的 <img>）
     prev.mesh.quaternion.copy(r.q);
-    prevCam.position.set(0, r.height * 0.7, r.height * 1.3).normalize().multiplyScalar(r.height * 1.9);
-    prevCam.lookAt(0, r.height * 0.35, 0);
+    center.copy(sphere.center).applyQuaternion(r.q);
+    prevCam.position.copy(viewDir).multiplyScalar(dist).add(center);
+    prevCam.lookAt(center);
     prevRenderer.render(prevScene, prevCam);
     return {
       idx, score: r.score, isBest: idx === 0,
@@ -95,7 +99,6 @@ function renderCandidates(list) {
     };
   });
   bus.emit('orientResults', items);
-  void scale;
 }
 
 export function applyCandidate(idx) {

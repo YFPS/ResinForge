@@ -35,14 +35,17 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 
 ```text
 resin-support-web/
-├── index.html          # Vite 入口（<div id="root">）
+├── index.html          # Vite 入口 · 旧 Arco 界面（<div id="root">）
+├── demo.html           # Vite 入口 · 新 Arc UI 界面（/demo.html）
 ├── package.json        # 依赖与脚本（dev/build/preview）
-├── vite.config.js      # preserveSymlinks + 轮询 watch（网络盘兼容）
+├── vite.config.js      # @ 别名 + 双入口 + preserveSymlinks + 轮询 watch（网络盘兼容）
 ├── dev.bat / build.bat # UNC 网络盘启动器（pushd 映射盘符后 npm run）
+├── scripts/
+│   └── fetch-arc.mjs   # 从 uiarc.dev registry 拉取 Arc 组件到 src/components/arc/（含补丁登记）
 ├── src/
-│   ├── main.jsx        # React 根 + Arco 样式 + 全局调试口（window.state/THREE/__dbg）
-│   ├── App.jsx         # Layout：左侧参数栏 + 右侧 3D 视口
-│   ├── styles.css      # 少量自定义样式（深色配色）
+│   ├── main.jsx        # 旧界面 React 根 + Arco 样式 + 全局调试口（window.state/THREE/__dbg）
+│   ├── App.jsx         # 旧界面 Layout：左侧参数栏 + 右侧 3D 视口
+│   ├── styles.css      # 旧界面自定义样式（深色配色）
 │   ├── store.js        # params（全部工艺参数默认值）+ state + bus（迷你 pub/sub）
 │   ├── core/           # 框架无关算法层（不得 import React 组件）
 │   │   ├── scene.js    # 渲染器/相机/OrbitControls/灯光/平台网格/材质/指针交互/拖放
@@ -57,11 +60,24 @@ resin-support-web/
 │   │   ├── supportKit.js      # 支撑构件（药丸/支撑头/锥台/微型短柱）+ 方向候选 + 落地避让
 │   │   ├── collide.js  # 模型 BVH：射线/点距/胶囊体/锥台净空 + LDI 实体判定
 │   │   └── stl.js      # 二进制 STL 导出
-│   └── components/     # Arco UI 卡片（每卡片对应左栏一个区块）
-│       ├── Viewport.jsx    # 3D 视口 + 模式栏 + 日志面板 + 层检查器 + 拖放提示
-│       ├── MachineCard.jsx / ModelCard.jsx / OrientCard.jsx / ProtectCard.jsx
-│       ├── SliceCard.jsx / SupportCard.jsx / ExportCard.jsx
-│       └── Card.jsx / useParams.js  # 卡片壳与参数绑定钩子
+│   ├── components/     # 旧界面 Arco UI 卡片（每卡片对应左栏一个区块）
+│   │   ├── Viewport.jsx    # 3D 视口 + 模式栏 + 日志面板 + 层检查器 + 拖放提示
+│   │   ├── MachineCard.jsx / ModelCard.jsx / OrientCard.jsx / ProtectCard.jsx
+│   │   ├── SliceCard.jsx / SupportCard.jsx / ExportCard.jsx
+│   │   └── Card.jsx / useParams.js  # 卡片壳与参数绑定钩子
+│   ├── components/arc/ # Arc UI 组件源码（registry 原样落盘，见 scripts/fetch-arc.mjs）
+│   └── demo/           # 新界面（Arc UI 版），与旧界面共用 core / store
+│       ├── main.jsx    # 入口：字体 + foundation.css + 主题 / 机型初始化 + 全局调试口
+│       ├── DemoApp.jsx # 骨架：Arc Tabs 根包住顶栏（流程导航）+ 侧栏（步骤面板）+ 视口 + 命令面板 + toast
+│       ├── ui.js       # UI 状态：五个流程步骤、当前步骤、侧栏开合、进行中任务（runTask）、各步完成情况
+│       ├── bridge.js   # bus 订阅 hook（useBus / useBusLatest / useBusValue）、toast 队列、参数绑定
+│       ├── actions.js  # 集中操作层（载模型/朝向/分析/支撑/导出），侧栏与命令面板共用
+│       ├── commands.js # Ctrl/⌘ K 命令清单
+│       ├── theme.js / machines.js  # 外观（主题 + 强调色）与机型预设，均为持久化的环境配置 store
+│       ├── demo.css    # 仅布局层样式（视觉 token 全部取自 foundation.css）
+│       └── components/ # TopBar / MachinePicker / Sidebar / StepPanel / fields（分区与参数积木）/
+│                       # steps/（ModelStep / OrientStep / AnalyzeStep / SupportStep / ExportStep）/
+│                       # ViewportStage / ModeBar / StatsCard / LayerInspector / LogPanel / CommandPalette / ToastHost
 └── AGENTS.md           # 本文件
 ```
 
@@ -74,8 +90,11 @@ resin-support-web/
 ```bash
 npm install       # 首次
 npm run dev       # 开发服务器 http://127.0.0.1:8123
-npm run build     # 产物到 dist/
+npm run build     # 产物到 dist/（双入口：index.html + demo.html）
 ```
+
+- 旧界面：`http://127.0.0.1:8123/`
+- 新界面（Arc UI 版）：`http://127.0.0.1:8123/demo.html`
 
 ### 网络盘（UNC 路径）注意事项
 
@@ -112,6 +131,31 @@ npm run build     # 产物到 dist/
 
 ---
 
+## 新界面（Arc UI 版 · /demo.html）
+
+**定位**：与旧 Arco 界面并存的试作版，共用同一套 `core/` 与 `store.js`（`params` / `state` / `bus` 完全一致），只换 UI 外壳。旧界面 `index.html` 不受影响，可随时对照。
+
+- **组件来源**：[Arc UI](https://uiarc.dev)（shadcn registry，`npx shadcn add @uiarc/<name>` 或直接取 `https://uiarc.dev/r/<name>.json`）。**不依赖 Tailwind**——CSS Modules + CSS 变量。依赖 `motion` + `lucide-react` + 若干 `@radix-ui/*`。Arc 的组合规则（官方 skill：`https://uiarc.dev/r/skills/arc/<file>`）要点：只用文档化的 props、每个面一个主按钮、语义 token、字重只用 400/500、不写大写 / 眉标 / 破折号文案、不自绘焦点环。App Shell 类侧栏（`sidebar-rail` / `workspace-sidebar` 等）是 **Pro** 组件，规则禁止仿造其源码，侧栏用免费组件组合。
+- **更新组件**：`node scripts/fetch-arc.mjs [名字…]`——不带参数拉 `ITEMS` 全部，带参数只拉指定组件；**默认跳过已存在的文件**（保护本地补丁与共享依赖），`--force` 才覆盖。`PATCHED` 登记了对源码的就地修改，`--force` 后需手动重放：button / badge / alert（React 18 的 forwardRef 兼容）、slider（分隔符 key）、number-field（scrub 绑到数值区）、command-palette（中文文案 + 平台快捷键 ⌘ K / Ctrl K）。
+- **设计 token**：全部来自 `src/components/arc/foundation.css`（OKLCH 色阶、8 种 `data-accent` 强调色、圆角/字阶/间距、动效曲线）。`demo.css` 只写布局与浮层定位，不自定义颜色（例外：3D 画布底色、热力图色带、支撑图例取 3D 材质色，均为数据 / 场景色）。主题经 `document.documentElement` 的 `data-theme` / `data-accent` 切换（深色 + blue 为默认）。
+- **CSS 覆盖顺序**：Arc 组件的 CSS 模块在 `demo.css` **之后**加载，覆盖其类名（如 Tabs 触发器的 `min-width`、Button 的尺寸）时一律用更高的选择器优先级（`.stepNav .stepTab`、`.topbar .iconBtn`），不依赖先后顺序。
+- **动效**：一律用 `motionTokens`（`spring.smooth` 面板 / 侧栏宽度、`spring.snappy` 小指示器、`blur.*` 文字交叉淡入），每处都有 `useReducedMotion` 分支。
+- **字体**：`@fontsource-variable/geist`（品牌字标）+ `@fontsource-variable/inter`（正文）+ 中文回落（PingFang SC / Microsoft YaHei）。
+- **骨架**（`DemoApp.jsx`）：**顶栏 + 侧栏是同底色、无分隔线的「L 形外框」，3D 视口是外框里唯一的圆角画布**（`--radius-panel`，右 / 下各留 12px 槽）；统计卡 / 层检查器 / 日志是画布上的浮层。整个应用包在一个 Arc `Tabs` 根里：流程导航（`TabsList`）在顶栏，五个步骤面板（`TabsContent`）在侧栏，aria-controls 与方向感知的滑入动画由 Tabs 负责。
+- **流程模型**（`demo/ui.js`）：五步 **模型 → 朝向 → 分析 → 支撑 → 导出**，可任意跳步（朝向可跳过；Arc `stepper` 只允许回到已完成的步骤，不适合当导航，故用 Tabs）。各步完成情况：模型 / 分析 / 支撑读 core `state`，朝向（应用候选）与导出（真的写出文件）由操作层打标记；换模型、分析失效、支撑变化时自动重算。`runTask(key, fn)` 统一跑长任务：同一时间只跑一个，按钮按 key 显示进行中，异常转成提示。
+- **顶栏**（`TopBar.jsx`）：左 = 侧栏开合（38px 图标按钮）· 品牌 / 当前模型（Arc `DropdownMenu`：打开 STL、切换演示模型）；中 = 流程导航（窗口正中，序号圈在完成后变勾）；右 = 打印机（`MachinePicker`：Arc Popover + Select + NumberField + Input，内置 13 款机型 / 自定义 / 命名保存）· 命令搜索（`Ctrl K` / `⌘ K`）· Arc `theme-switch`（iconOnly，`rise` 页面过渡，`document.startViewTransition`）。顶栏控件统一 38px 高；断点按实测内容宽度逐级收起：1360 收搜索文字 → 1220 收品牌字标与打印机名 → 980 导航只留序号（完成态改用底色，不换勾，免得一排勾分不清）→ 900 侧栏改浮层抽屉 → 640 导航换到第二行。
+- **侧栏**（`Sidebar.jsx` + `StepPanel.jsx` + `steps/*`）：只显示当前步骤——标题与一句说明 → Arc `ScrollArea` 参数区（`fade={20}`，只在确有被遮内容的一侧渐隐）→ 固定底栏。参数按「分区」组织（`fields.jsx`：`Section` 标题 + 说明，分区间发丝线；数值框两列栅格，标签可拖动 scrub；开关行左文右控件；2~4 选一用撑满整行的 SegmentedControl），结构参数按功能分组全部可见（树状：支撑头 / 分支 / 底座；支撑塔：格架 / 柱与展宽 / 十字针 / 基础带）。**底栏规则**：左 = 这一步的主操作（恒为主按钮，做完后文案变「重新…」；支撑与导出用 Arc `SplitButton` 收纳变体：只补孤岛 / 按参数重建 / 清空、仅导出支撑），右 = 「下一步：xx」（未完成为幽灵按钮，完成后加描边）；长任务时 core 的 `progress` 事件以 Arc `Progress` 在按钮上方展开。底栏按 320px 一行设计，`flex-wrap` 兜底。侧栏宽 360 + 12 槽，可收起（宽度 spring，收起后 inert），**滚动条药丸距画布边框 16px**；窄屏抽屉的右侧圆角 26px，轨道上下端距边 ≥ 79px，不在圆角收窄区内（几何已验算）。
+- **各步要点**：模型——当前模型卡片（面数、尺寸、能否放进当前打印机板面），演示模型用 RadioCards；朝向——采样数（快速 / 标准 / 精细）、保护面（「涂画保护面」开关与视口左上角模式切换是同一个 core `mode`）、**候选缩略图直接在面板里点选应用**；分析——结果条（层数 / 孤岛 / 最大截面）、热力图开关；支撑——结构切换、手动加 / 删点（同一个 `mode`）、**没分析过会先自动分析再生成**；导出——底板 RadioCards、导出内容核对、颜色图例（取 3D 材质色），导出成功在按钮上原地显示「已导出」。
+- **命令面板**（`CommandPalette.jsx`）：Arc `command-palette` 块放在裸 Radix Dialog 里（焦点圈定 / Esc / 焦点归还由 Radix 负责，遮罩复用 Arc Dialog 的样式类）——不套 Arc `DialogContent`，否则面板外再包一层带标题的卡片形成卡中卡。命令含前往步骤、模型、流程、支撑、视口、导出、外观（浅色 / 深色 / 跟随系统、8 种强调色）、运行日志开合；会产生结果的命令顺带把侧栏切到对应步骤，朝向候选到达时也会自动切到「朝向」。
+- **接线方式**（`demo/bridge.js`）：`useBus` / `useBusState` 订阅 core 事件；**`useBusLatest`** 在模块加载时（早于 `initScene`）就缓存 `modelInfo` / `sliceStats` / `supStats` / `orientResults` / `heat` / `mode` / `progress` 的最新 payload——步骤面板按需挂载，晚挂载也能拿到当前值；`useBusValue(events, read)` 在事件触发时重读 core `state`。**`useParams()` 是全局订阅**：任何地方 `setParam` 都让所有用到参数的组件重渲染（命令面板切结构模式，侧栏立刻跟上）。
+- **外观主题**（`demo/theme.js`）：浅色 / 深色 / 跟随系统 + 强调色，store 由顶栏 ThemeSwitch 与命令面板共用；切换时**同步 three.js 的 `scene.background` / `prevScene.background` / `modelMat.color`**（3D 不读 CSS 变量：深色视口近黑 + 模型浅灰，浅色视口浅灰 + 模型压深一档），持久化到 `localStorage`；`demo.html` 内联首帧脚本按存储值预设 `data-theme` / `data-accent` 避免闪一下默认配色。
+- **机器预设**（`demo/machines.js`）：内置 13 款常见光固化机型（参数按厂商公开规格整理），**选中即写入** `plateX` / `plateZ` / `pixelUm`；选「自定义…」**不改变当前参数**，便于以现有机器为模板微调；数值框步长 1 但显示保留一位小数（规格多为 218.9 这类数，按步长精度会显示成 219）。自定义机型可命名保存到 `localStorage`（`resinforge:machines.v1`）并删除；**当前生效的机器参数也持久化**（`resinforge:machine.current`，`initMachine(params)` 在首帧前写回）——机器属「环境配置」，与「刷新即丢」的模型 / 保护面 / 支撑区别对待。选中项用显式 `selectedId` 记录而非按参数反推，否则参数相同的自定义机型会被内置机型顶掉。
+- **键盘焦点环**：Arc 默认 `outline-offset: 2px`，而 **Chrome 在 offset 为正时不让 `outline` 跟随 `border-radius`**，大圆角控件外会套出一圈方框（仅键盘 Tab 导航时可见）。`demo.css` 把 `--focus-outline-offset` 归零（Arc 官方留的 `:root` 调优口），焦点环紧贴控件、跟随圆角。
+- **视口**：`initScene(canvas)` 与旧界面同一入口（内部自动 `loadDemo('knot')`）。core 只监听 window `resize`，侧栏开合改变视口宽度而窗口不变，`ViewportStage` 用 ResizeObserver 每帧至多补发一次 `resize`，渲染器跟着侧栏动画走。视口是 `container-type: size` 容器：画布宽 < 760px 时统计卡让位隐藏（结果在侧栏里都有），画布矮或窄时层检查器缩小。
+- **注意**：`initScene` 无幂等保护（与旧界面同约定），组件重挂载会重新初始化场景——开发期 HMR 重挂载会连带重置模型与支撑，验证时以整页刷新为准。
+
+---
+
 ## 核心算法说明
 
 ### 切片引擎
@@ -132,7 +176,7 @@ npm run build     # 产物到 dist/
 - 候选集 = 13 个正交规范化朝向 + N 个随机四元数（N=32/64/128）。
 - 对每个候选执行粗切片，并用 `steepFaces` 计算陡峭悬空面积（含保护面权重）。
 - 评分权重：支撑体积 32%、孤岛面积 18%、陡峭悬空面积 20%、最大截面 20%、高度 10%。
-- 取评分最高的 8 个候选，离屏渲染缩略图（`toDataURL`），经 bus 发给 React 渲染，可手动选择或一键应用最佳朝向。
+- 取评分最高的 8 个候选，离屏渲染缩略图（`toDataURL`），经 bus 发给 React 渲染，可手动选择或一键应用最佳朝向。缩略图按**几何外接球**取景（半径与朝向无关，球心随旋转移动，相机方向固定）——旧实现按「高度」对准 `(0, 0.35h, 0)`，而预览网格绕原点旋转后并不落在 y=0 上，多数朝向被切掉下半截。
 
 ### 保护面
 

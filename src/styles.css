@@ -104,3 +104,25 @@ label.f span { flex: 1; white-space: nowrap; }
   flex: 1; height: 8px; border-radius: 4px;
   background: linear-gradient(to right, #5c789e 0%, #1a9ef2 8%, #26cc6b 30%, #ffd91a 55%, #ff4d14 80%, #ff0d0d 100%);
 }
+
+@media (max-width: 820px) {
+  #root > .arco-layout { flex-direction: column !important; }
+  .panel.arco-layout-sider {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 0 0 46vh !important;
+    height: 46vh !important;
+    min-height: 0;
+    order: 2;
+    border-right: none !important;
+    border-top: 1px solid #21262d;
+    padding-bottom: 24px;
+  }
+  .viewport-wrap { order: 1; flex: 1 1 auto !important; height: 54vh; min-height: 0; }
+  .sub { display: none; }
+  .brand h1 { font-size: 15px; }
+  .mode-bar { left: 8px; right: 8px; top: 8px; display: flex; flex-wrap: wrap; max-width: calc(100% - 16px); }
+  .log-panel { left: 8px; right: 8px; width: auto; bottom: 8px; max-height: 72px; font-size: 11px; }
+  .gl { touch-action: none; }
+  .card .arco-btn { min-height: 36px; }
+}

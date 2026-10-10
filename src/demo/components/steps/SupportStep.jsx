@@ -31,11 +31,12 @@ const TIP_MODES = [
 function TreeParams() {
   return (
     <>
-      <Section title="支撑头" desc="前端小球接触模型，嵌入一点保证粘牢。">
+      <Section title="支撑头" desc="前端小球接触模型，嵌入一点保证粘牢。锚点直径只管落在模型上的那一端，分支加粗不带动触点。">
         <Grid>
           <Num k="tipD" label="前端球直径" min={0.1} max={1.5} step={0.05} unit="mm" />
           <Num k="pen" label="嵌入深度" min={0} max={1} step={0.05} unit="mm" />
           <Num k="headLen" label="支撑头长度" min={0.3} max={5} step={0.1} unit="mm" />
+          <Num k="anchorD" label="锚点直径" min={0.1} max={3} step={0.05} unit="mm" />
         </Grid>
       </Section>
       <Section title="分支" desc="随承载变粗；两两在临界锥内合并后落下。">
@@ -231,7 +232,9 @@ export default function SupportStep() {
             />
             <p className="hint">
               {params.shortKind === 'tower'
-                ? '支撑塔这一档是一块竖板，两头收成细尖，直接连在两个表面之间。'
+                ? (params.supMode === 'tower'
+                  ? '十字短杆：两端收到接触宽、扎进表面，把支撑点连到附近朝上的表面。'
+                  : '一块竖板，两头收成细尖，直接连在两个表面之间。')
                 : '树状细尖沿用支撑头，落在模型上的那一端单独收细。'}
             </p>
           </>

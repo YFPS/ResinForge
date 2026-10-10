@@ -56,7 +56,7 @@ export function buildCommands(ctx) {
     { id: 'mode-tree', group: '支撑', title: '支撑结构：树状', icon: ic(TreePine), run: () => runTask('sup-mode', () => setSupMode('tree', setParam)) },
     { id: 'mode-tower', group: '支撑', title: '支撑结构：支撑塔', hint: 'e-Stage 菱形格架', icon: ic(Building2), run: () => runTask('sup-mode', () => setSupMode('tower', setParam)) },
     { id: 'short-tree', group: '支撑', title: '短小支撑：树状细尖', hint: '落在模型上的一端收细', icon: ic(TreePine), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tree', setParam)); } },
-    { id: 'short-plate', group: '支撑', title: '短小支撑：支撑塔', hint: '单片竖板，两头细尖', icon: ic(Square), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tower', setParam)); } },
+    { id: 'short-plate', group: '支撑', title: '短小支撑：支撑塔', hint: '十字短杆两端收到接触宽', icon: ic(Square), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tower', setParam)); } },
 
     { id: 'vmode-orbit', group: '视口', title: '旋转视角', icon: ic(MousePointer2), run: () => setMode('orbit') },
     { id: 'vmode-paint', group: '视口', title: '涂画保护面', icon: ic(Paintbrush), run: () => { goStep('orient'); setMode('paint'); } },

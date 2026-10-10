@@ -64,9 +64,10 @@ export default function SupportCard() {
             {num('tipD', '前端球直径', 0.1, 1.5, 0.05, 'mm', '接触模型的前端球（PrusaSlicer head front diameter）')}
             {num('pen', '嵌入深度', 0, 1, 0.05, 'mm', '前端球扎入模型表面的深度')}
             {num('headLen', '支撑头长度', 0.3, 5, 0.1, 'mm', '前后两球心距（= 前端半径 + 头宽 + 后端半径）')}
+            {num('anchorD', '锚点直径', 0.1, 3, 0.05, 'mm', '落在模型表面的接触端（锚定支撑头肩部 / 短锚细颈）直径，独立于分支直径：分支加粗不带动触点')}
           </div>
           <div className="row">
-            {num('midD', '分支直径', 0.3, 3, 0.05, 'mm', '叶分支与支撑头后端球直径（pillar diameter）')}
+            {num('midD', '分支直径', 0.3, 3, 0.05, 'mm', '叶分支与支撑头后端球直径（pillar diameter）；模型侧锚点肩部另见「锚点直径」')}
             {num('maxBranchD', '最大分支直径', 0.3, 5, 0.1, 'mm', '分支随负载加粗的上限')}
             {num('widening', '加宽系数', 0, 1, 0.05, '', '分支半径 = 0.05 × 系数 × 负载（累计路径长）')}
           </div>

@@ -96,9 +96,10 @@ export function buildBranchingTree(ctx, points, P) {
   const SEG = 16;
   const headLen = rPin - pen + cc;                             // 接触点 → 后端球心
   const headSpec = { tipR: rPin, backR: rMin, len: headLen, skip: 2.2 * rPin + 0.2, gap };
-  // 落在模型上的下端是独立细尖：肩部只用分支最小半径，颈长保证肩球停在表面上方。负载加粗留在肩部以上。
-  const neckR = rMin;
+  // 落在模型上的接触端由「锚点直径」单独控制（不跟随分支直径）：肩部只到锚点半径，颈长保证肩球停在表面上方。负载加粗留在肩部以上。
+  const neckR = Math.max(rPin, P.anchorD / 2);
   const neckLen = Math.max(cc, neckR - rPin + pen + 0.5);
+  const flareSlope = Math.tan(tiltMax) * 0.9;                      // 渐缩段允许的最大「半径增量 / 长度」
   const rOf = nd => Math.max(nd.Rmin, Math.min(rMax, WIDENING_SCALE * P.widening * nd.w));
   const clearSeg = (a, b, r) => capsuleClear(bvh, a.x, a.y, a.z, b.x, b.y, b.z, r + gap);
   // 底座锥台 footprint 净空：自板面向上射线（中心查满高，0.5/0.9 倍底半径圆周查对应锥台高度）在底座高度内不碰模型。
@@ -113,7 +114,7 @@ export function buildBranchingTree(ctx, points, P) {
     return true;
   };
 
-  const st = { points: points.length, heads: 0, ground: 0, anchors: 0, heavy: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0 };
+  const st = { points: points.length, heads: 0, ground: 0, anchors: 0, shortAnchors: 0, heavy: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0 };
   const plateKind = P.shortKind === 'tower';
   const pointState = new Array(points.length).fill('');
   const ground = [], anchorG = [];
@@ -298,8 +299,11 @@ export function buildBranchingTree(ctx, points, P) {
         const yTip = pt.y + (rPin - penIn);
         const avail = nd.y - yTip;
         if (avail < 0.2) return false;
-        const rTop = Math.min(rN, rPin + Math.max(0, avail - 0.8) * 0.85);
-        nd.parent = MESH; nd.shortAnchor = { y: yTip, rTip: rPin, rTop };
+        // 先立一段锚点直径的细颈（触点保持细小），颈顶以上才按临界角允许的斜率放大到分支半径
+        const rNeck = Math.min(neckR, rN);
+        const neckH = Math.min(Math.max(neckR - rPin + pen + 0.35, 0.35), avail * 0.6);
+        const rTop = Math.min(rN, rNeck + (avail - neckH) * flareSlope);
+        nd.parent = MESH; nd.shortAnchor = { y: yTip, rTip: rPin, rNeck, neckH, rTop };
         return true;
       }
       return false;
@@ -384,8 +388,11 @@ export function buildBranchingTree(ctx, points, P) {
       anchorG.push(strap(s.upper, s.lower, s.rFrom, s.rTip, s.thick, 10, s.thickRoot));
       st.plates++;
     } else if (nd.parent === MESH && nd.shortAnchor) {
-      const { y, rTip, rTop } = nd.shortAnchor;   // 下端细尖，上方才收到杆身半径
-      anchorG.push(pill({ x: nd.x, y, z: nd.z }, nd, rTip, rTop, SEG));
+      const { y, rTip, rNeck, neckH, rTop } = nd.shortAnchor;   // 接触端细颈（锚点直径），颈上才放大到杆身半径
+      const knee = { x: nd.x, y: y + neckH, z: nd.z };
+      anchorG.push(pill({ x: nd.x, y, z: nd.z }, knee, rTip, rNeck, SEG));
+      if (nd.y - knee.y > 0.05) anchorG.push(pill(knee, nd, rNeck, rTop, SEG));
+      st.shortAnchors++;
     } else if (nd.parent === MESH) {
       const { a, rN, neckR: nr, neckLen: nl } = nd.anchor;
       anchorG.push(pill(nd, a.back, rN, nr, SEG));

@@ -29,7 +29,7 @@ export const params = {
   spacing: 3,         // 支撑间距（mm）：六角网格的目标间距，局部可略密，空洞不超过约 1.7 倍
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
-  shortKind: 'tree',  // 短小支撑样式：'tree' 树状细尖 / 'tower' 桥板（单片竖板，两端细尖，没有格架）
+  shortKind: 'tree',  // 短小支撑样式：'tree' 树状细尖 / 'tower' 支撑塔模式为十字贴面短连接（两端收到接触宽），树状模式为单片桥板
   supMode: 'tree',    // 支撑结构：'tree' 树状（PrusaSlicer branching）/ 'tower' 支撑塔（Materialise e-Stage 菱形格架）
   tipMode: 'normal',  // 接触朝向：'normal' 沿法线（钳制到接触最大倾角）/ 'vertical' 竖直 / 'fixed' 固定倾角（沿法线方位）
   tipTilt: 45,        // 接触最大倾角（°，接触端与竖直方向夹角；针身 / 分支仍受自支撑角约束）
@@ -38,6 +38,7 @@ export const params = {
   pen: 0.2,           // 嵌入深度（head_penetration）
   headLen: 1.0,       // 支撑头长度（前后球心距 = r_pin + head_width + r_back）
   midD: 0.65,         // 分支起始直径（pillar_diameter，后端球 / 叶分支）
+  anchorD: 0.65,      // 锚点直径：落在模型表面的接触端（锚定支撑头肩部 / 短锚细颈）直径，独立于分支直径
   maxBranchD: 2.0,    // 分支最大直径（负载加粗上限）
   widening: 0.5,      // 加宽系数（pillar_widening_factor：分支半径随负载线性增长的斜率）
   baseD: 3,           // 底座直径（base_diameter）

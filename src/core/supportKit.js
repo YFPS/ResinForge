@@ -218,8 +218,11 @@ export function bridgeSpan(bvh, faces, from, opts = {}) {
   if (bvh) {
     // 胶囊停在落点前一个包络半径处，尖端扎入段不参与净空，否则短间隙会被落点自己挡掉
     const env = Math.max(thick * 0.5 + 0.05, Math.min(opts.envR || 0.45, Math.max(rTip, thickRoot * 0.5)));
+    // 出发端也要离「接触面」一个包络半径以上：起点若仍在面下 0.2（旧值），窄间隙里起点自己贴着面，
+    // 净空必失败（雕像头顶 0.76 缝的兜底点实测如此）
+    const sStart = opts.sinkTop ? Math.max(0.2, env + 0.06) : 0;
     const start = opts.sinkTop
-      ? { x: from.x + dx * 0.2, y: from.y + dy * 0.2, z: from.z + dz * 0.2 }
+      ? { x: from.x + dx * sStart, y: from.y + dy * sStart, z: from.z + dz * sStart }
       : upper;
     const stop = { x: land.x - dx * (env + 0.08), y: land.y - dy * (env + 0.08), z: land.z - dz * (env + 0.08) };
     const travel = Math.hypot(start.x - stop.x, start.y - stop.y, start.z - stop.z);

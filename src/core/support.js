@@ -275,6 +275,7 @@ function paramSnapshot() {
     tipMode: p.tipMode || 'normal', tipTilt: num(p.tipTilt, 45),   // 接触朝向 / 接触最大倾角（两套结构共用）
     // 树状（PrusaSlicer branching 默认值）
     tipD: num(p.tipD, 0.4), pen: num(p.pen, 0.2), headLen: num(p.headLen, 1.0), midD: num(p.midD, 0.65),
+    anchorD: num(p.anchorD, 0.65),
     maxBranchD: num(p.maxBranchD, 2.0), widening: num(p.widening, 0.5), baseD: num(p.baseD, 3), baseH: num(p.baseH, 1),
     maxBridgeLen: num(p.maxBridgeLen, 5), maxBranchLen: num(p.maxBranchLen, 10), maxWeightOnModel: num(p.maxWeightOnModel, 10),
     // 支撑塔（e-Stage 菱形格架）
@@ -716,12 +717,12 @@ export async function runGenSup(opts = {}) {
     const al = (s.needlesV || 0) + (s.needlesP || 0);
     if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}，接触点平均偏移 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）· 自由直针 ${s.needlesFree || 0} 根`, 'ok');
     const fb = params.shortKind === 'tower' && params.shortSup
-      ? `连不上格架的 ${s.fallback || 0} 点里，桥板 ${s.plates || 0}，绕到平台 ${s.ground || 0}`
+      ? `连不上格架的 ${s.fallback || 0} 点里，贴面短连接 ${s.plates || 0}，绕到平台 ${s.ground || 0}`
       : `连不上格架转树状兜底 ${s.fallback} 点（落地 ${s.ground} · 锚定 ${s.anchors} · 微型短柱 ${s.micro}）`;
     log(`e-Stage 支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段）；${fb}，${state.supportStats.ms}ms`, 'ok');
     if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   } else {
-    log(`树状支撑：支撑头 ${s.heads}，合并 ${s.merges}，桥接 ${s.bridges}，避让下行 ${s.avoid}，落地柱 ${s.ground}，锚定模型 ${s.anchors}${s.heavy ? `（其中超重锚定 ${s.heavy}：负载超过模型最大负载但无路落地）` : ''}，微型短柱 ${s.micro}${s.plates ? `，桥板 ${s.plates}` : ''}，${state.supportStats.ms}ms`, 'ok');
+    log(`树状支撑：支撑头 ${s.heads}，合并 ${s.merges}，桥接 ${s.bridges}，避让下行 ${s.avoid}，落地柱 ${s.ground}，锚定模型 ${s.anchors}${s.shortAnchors ? `（其中短锚 ${s.shortAnchors}：间隙放不下锚头，竖直细颈短柱）` : ''}${s.heavy ? `，超重锚定 ${s.heavy}：负载超过模型最大负载但无路落地` : ''}，微型短柱 ${s.micro}${s.plates ? `，桥板 ${s.plates}` : ''}，${state.supportStats.ms}ms`, 'ok');
   }
   const bad = (s.noHead || 0) + (s.unroutable || 0);
   if (bad) log(`⚠ ${mode}结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');

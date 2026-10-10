@@ -219,12 +219,12 @@ npm run build     # 产物到 dist/（双入口：index.html + demo.html）
 
 ### 树状支撑（普通模式，`supportTree.js`）——PrusaSlicer branching tree 移植
 
-- 出处：PrusaSlicer `BranchingTree/BranchingTree.cpp`（`build_tree` / `find_merge_pt`）、`SLA/SupportTreeBranching.cpp`（`add_merger` / `add_bridge` / `add_ground_bridge` / `add_mesh_bridge` / `suggest_avoidance` / `get_radius`）、`SLA/SupportTreeMesher.cpp`。默认参数取 PrusaSlicer `branchingsupport_*`：前端球 Ø0.4、嵌入 0.2、支撑头长 1.0（前后球心距）、分支 Ø0.65（最大 Ø2.0）、加宽系数 0.5、底座 Ø3×1、最大桥接 5、最大分支长 10、模型最大负载 10。
+- 出处：PrusaSlicer `BranchingTree/BranchingTree.cpp`（`build_tree` / `find_merge_pt`）、`SLA/SupportTreeBranching.cpp`（`add_merger` / `add_bridge` / `add_ground_bridge` / `add_mesh_bridge` / `suggest_avoidance` / `get_radius`）、`SLA/SupportTreeMesher.cpp`。默认参数取 PrusaSlicer `branchingsupport_*`：前端球 Ø0.4、嵌入 0.2、支撑头长 1.0（前后球心距）、分支 Ø0.65（最大 Ø2.0）、锚点 Ø0.65（`anchorD`，模型侧接触端，独立于分支直径）、加宽系数 0.5、底座 Ø3×1、最大桥接 5、最大分支长 10、模型最大负载 10。
 - 流程：
   1. **支撑头**：窄间隙 → 微型短柱；接触点离底座顶不足「头 + 后端球」（抬高过小）→ 底座直连短柱（药丸 + 底座锥台，相当于头直接落在 pad 上，否则头会扎穿底座）；否则 `placeTip` 放置 PrusaSlicer 支撑头，后端球心即叶节点。
   2. **建树**（按高度从高到低出队，候选依次尝试、净空即连接）：
      ① **合并**：两节点各向对方发出不陡于临界角的下行射线，交点即合并点（`find_merge_pt`；合并距离 < 落地距离且 ≤ 最大分支长，每节点最多试 24 个）；合并点恰为下方节点时直接桥接（该节点有空槽）。
-     ② **落模型**：竖直下方被模型挡住、允许短小支撑、负载 ≤ 模型最大负载 → 倒置支撑头锚入可承载面（法线 y ≥ 0.5、不近保护面）；下方表面近到放不下锚头 → **短锚**（竖直短粗杆直接扎入。合并点可能恰好落在下方表面上方 1mm 内，实测环面结 0.84mm，不兜底会剪掉汇入的整棵子树）。
+     ② **落模型**：竖直下方被模型挡住、允许短小支撑、负载 ≤ 模型最大负载 → 倒置支撑头锚入可承载面（法线 y ≥ 0.5、不近保护面）；下方表面近到放不下锚头 → **短锚**（竖直短柱直接扎入。合并点可能恰好落在下方表面上方 1mm 内，实测环面结 0.84mm，不兜底会剪掉汇入的整棵子树）。**模型侧接触端粗细一律取锚点直径 `anchorD`（`neckR`），不跟随分支直径**：锚定支撑头的肩部球用 `neckR`；短锚为两段——自接触点起一段 `rPin → neckR` 的细颈（颈高 ≤ 可用间隙的 0.6 倍），颈顶以上才放大到负载半径，且放大量受临界角约束（`rTop ≤ neckR + 剩余长 × tan(90° − selfAngle) × 0.9`），故分支调粗不会把触点撑成一片宽锥。日志单列「短锚 N」。
      ③ **落地**：离底座 > 最大分支长 → 先下行一段（`suggest_avoidance`：段长 L / L/2 / L/4，竖直优先，优先选其后还能竖直落地的方向）生成新结点再参与合并——树逐级汇聚的来源；否则地面柱（`groundRoute` 避让）+ 底座锥台（**footprint 射线检测**：自板面向上在底座高度内不碰模型；不用球形采样——顶面处的采样球会凸出顶面一个半径，模型贴近底座时必误判）。
      ④ 锥内斜向模型锚点。
      ⑤ **超重兜底**：负载已超模型最大负载却无路落地 → 放宽限制锚入模型。PrusaSlicer 此处直接丢弃，代价是汇入的整棵子树悬空（构造用例 15 个点）；日志单列「超重锚定」。

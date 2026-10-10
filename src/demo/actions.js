@@ -66,7 +66,7 @@ export function setSupMode(v, setParam) {
   return Promise.resolve();
 }
 
-/** 短小支撑样式：树状细尖或桥板。已有支撑时按新样式重算结构。 */
+/** 短小支撑样式：树状细尖，或支撑塔的十字贴面短连接（树状模式下退化为单片桥板）。已有支撑时按新样式重算结构。 */
 export function setShortKind(v, setParam) {
   setParam('shortKind', v === 'tower' ? 'tower' : 'tree');
   if (hasSupports()) return rebuildStructure();

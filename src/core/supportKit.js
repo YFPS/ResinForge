@@ -302,16 +302,27 @@ export function groundRoute(bvh, p, r, yTop, tiltMax, maxBridge, gap, footOK) {
   return null;
 }
 
-/* 合并几何零件（非索引化 + 拼接），返回单一 BufferGeometry——零件间重叠由下游切片器并集（同 PrusaSlicer its_merge） */
+/* 合并几何零件（非索引化 + 拼接），返回单一 BufferGeometry——零件间重叠由下游切片器并集（同 PrusaSlicer its_merge）。
+   同时保留构件边界 userData.runs：导出前的布尔并要靠它把这堆三角形还原成一个个闭合壳 */
 export function mergeParts(geoms) {
   const list = geoms.filter(Boolean).map(g => (g.index ? g.toNonIndexed() : g));
   let total = 0;
   for (const g of list) total += g.attributes.position.array.length;
   const arr = new Float32Array(total);
   let off = 0;
-  for (const g of list) { arr.set(g.attributes.position.array, off); off += g.attributes.position.array.length; g.dispose(); }
+  const runs = [];
+  for (const g of list) {
+    const a = g.attributes.position.array;
+    arr.set(a, off);
+    const t0 = off / 9;
+    const sub = g.userData && g.userData.runs;
+    if (sub && sub.length) for (const [s, e] of sub) runs.push([t0 + s, t0 + e]);
+    else runs.push([t0, t0 + a.length / 9]);
+    off += a.length; g.dispose();
+  }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(arr, 3));
   out.computeVertexNormals();
+  out.userData.runs = runs;
   return out;
 }

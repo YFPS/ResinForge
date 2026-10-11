@@ -76,6 +76,8 @@ export const params = {
   gridT: 0.8,         // 网格板厚度（mm）
   gridBar: 0.8,       // 网格梁宽（mm）
   gridStep: 3,        // 网格梁间距（mm，孔 = 间距 − 梁宽）
+  /* 导出 */
+  unionExport: true,  // 导出前用 manifold-3d 把支撑各构件布尔并成一张水密外壳（消共面重复面与非流形边；仅导出时算，不进实时回路）
 };
 
 /* 应用状态（对应旧 main.js 的 state；faces 为原模块级变量——完整面数据 {nrm,area,cent}，随几何重建） */

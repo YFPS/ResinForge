@@ -42,6 +42,11 @@ export default function ExportCard() {
           <label className="f"><span>孔距</span><InputNumber value={params.gridStep} min={1.5} max={8} step={0.5} onChange={gridParam('gridStep')} />mm</label>
         </div>
       )}
+      <div className="row" style={{ marginTop: 6 }}>
+        <Checkbox checked={!!params.unionExport} onChange={v => setParam('unionExport', v)}>
+          熔合成单一实体（导出前布尔并成一张水密外壳，可能要几秒）
+        </Checkbox>
+      </div>
       <div className="row">
         <Button type="primary" style={{ flex: 1 }} onClick={() => exportSTL(true, true, 'model_with_supports.stl')}>导出 模型+支撑 STL</Button>
         <Button onClick={() => exportSTL(false, true, 'supports_only.stl')}>仅支撑 STL</Button>

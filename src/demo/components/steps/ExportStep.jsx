@@ -36,10 +36,12 @@ export default function ExportStep() {
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const exportNow = includeModel => {
-    doExport(includeModel);
-    setJustExported(includeModel ? 'all' : 'sup');
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setJustExported(''), 2400);
+    runTask('export', async () => {
+      await doExport(includeModel);
+      setJustExported(includeModel ? 'all' : 'sup');
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setJustExported(''), 2400);
+    });
   };
 
   const { name } = splitModelName(info && info.name);
@@ -111,6 +113,15 @@ export default function ExportStep() {
           </Grid>
         </Section>
       ) : null}
+
+      <Section title="导出">
+        <SwitchRow
+          label="熔合成单一实体"
+          desc="导出前把所有支撑构件布尔并成一张水密外壳，去掉互相穿插的内壁（可能要几秒）"
+          checked={!!params.unionExport}
+          onChange={v => setParam('unionExport', v)}
+        />
+      </Section>
 
       <Section title="导出内容">
         <dl className="summary">

@@ -19,6 +19,7 @@ import { drawLayer } from './inspect.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
 import { buildBranchingTree } from './supportTree.js';
 import { buildEStageTowers } from './supportTower.js';
+import { loadManifold } from './union.js';
 import { crossGroundPosts } from './supportOptimize.js';
 import { mergeParts } from './supportKit.js';
 
@@ -634,9 +635,11 @@ export async function rebuildStructure() {
   setProgress(0.8, '生成支撑结构（避让 / 合并）…'); await nextFrame();
   const t0 = performance.now();
   const ctx = makeCtx();
-  clearMeshes();
   const P = paramSnapshot();
   const mode = params.supMode === 'tower' ? 'tower' : 'tree';
+  // 支撑塔的实体化（墙面二维并集 / 圆角、三维布尔并）用 manifold-3d：首次用到时才取 WASM
+  if (mode === 'tower') ctx.manifold = await loadManifold();
+  clearMeshes();
   const pts = state.supportPoints;
   const res = mode === 'tower' ? buildEStageTowers(ctx, pts, P) : buildBranchingTree(ctx, pts, P);
   state.groundPosts = res.posts || null;
@@ -656,6 +659,7 @@ export async function rebuildStructure() {
     state.supports.push({ mesh: m, kind });
   };
   add(res.geomGround, supMat, 'ground');
+  add(res.geomGround2, supMat, 'ground');            // 支撑塔模式：兜底树的落地部分（格架塔本身是 geomGround）
   add(res.geomAnchor, supMatAnchor, 'anchor');
   add(res.geomBase, supMatBase, 'base');
   pts.forEach((p, k) => { p.state = res.pointState[k] || ''; });

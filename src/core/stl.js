@@ -2,10 +2,22 @@
    导出二进制 STL：合并模型与/或支撑顶点数据（80 字节头 + 4 字节面数 + 每面 50 字节）。
    写出前统一 Y-up → Z-up 逆变换 (x,y,z) → (x,-z,y)，与载入的 rotateX(-90°) 互逆。
    大模型导出用 part.source（聚类前的原始顶点），显示和支撑用的是简化网格。
+   params.unionExport 打开时，支撑先经 manifold-3d 布尔并成一张水密外壳（见 union.js）。
 ================================================================ */
 import * as THREE from 'three';
-import { state, params, log, toast } from '../store.js';
+import { state, params, log, toast, setProgress } from '../store.js';
 import { raftOn, raftMargin, RAFT_T, buildGridRaftGeom, raftAnchor, placeVertex, raiseH } from './model.js';
+import { unionShells } from './union.js';
+
+/** 把 mesh 的位移烘进顶点副本——布尔并要的是真实世界坐标，烘过之后写出的位移就归零 */
+function bakeOffset({ arr, dx, dy, dz }) {
+  if (!dx && !dy && !dz) return arr;
+  const out = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i += 3) {
+    out[i] = arr[i] + dx; out[i + 1] = arr[i + 1] + dy; out[i + 2] = arr[i + 2] + dz;
+  }
+  return out;
+}
 
 function writeFace(dv, off, ax, ay, az, bx, by, bz, cx, cy, cz) {
   const ux = bx - ax, uy = by - ay, uz = bz - az;
@@ -20,7 +32,7 @@ function writeFace(dv, off, ax, ay, az, bx, by, bz, cx, cy, cz) {
   return off + 2;
 }
 
-export function exportSTL(includeModel, includeSupports, filename) {
+export async function exportSTL(includeModel, includeSupports, filename) {
   const arrays = [];
   const modelParts = [];
   if (includeModel) {
@@ -30,21 +42,42 @@ export function exportSTL(includeModel, includeSupports, filename) {
     }
   }
   if (includeSupports) {
+    const supParts = [];
     if (state.mesh && params.gridRaftOn) {
       const anchor = raftAnchor();
-      arrays.push({ arr: buildGridRaftGeom().attributes.position.array, dx: anchor.x, dy: 0, dz: anchor.z });
+      const g = buildGridRaftGeom();
+      supParts.push({ arr: g.attributes.position.array, dx: anchor.x, dy: 0, dz: anchor.z, runs: g.userData.runs });
     } else if (state.mesh && raftOn()) {
       const bb = state.mesh.geometry.boundingBox;
       const anchor = raftAnchor();
       const rr = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
       const rg = new THREE.CylinderGeometry(rr, rr, RAFT_T, 48).toNonIndexed();
-      arrays.push({ arr: rg.attributes.position.array, dx: anchor.x, dy: RAFT_T / 2, dz: anchor.z });
+      supParts.push({ arr: rg.attributes.position.array, dx: anchor.x, dy: RAFT_T / 2, dz: anchor.z });
     }
     for (const s of state.supports) {
-      let a = s.mesh.geometry.attributes.position.array;
-      if (s.mesh.geometry.index) a = s.mesh.geometry.toNonIndexed().attributes.position.array;
-      arrays.push({ arr: a, dx: s.mesh.position.x, dy: s.mesh.position.y, dz: s.mesh.position.z });
+      const g = s.mesh.geometry;
+      let a = g.attributes.position.array;
+      if (g.index) a = g.toNonIndexed().attributes.position.array;
+      supParts.push({ arr: a, dx: s.mesh.position.x, dy: s.mesh.position.y, dz: s.mesh.position.z, runs: g.userData.runs, solids: g.userData.solids });
     }
+    /* 布尔并：把一堆「面贴面」堆叠的构件熔成一张水密外壳。
+       模型不参与并集——支撑必须能撕下来，两者留在一个文件里但保持各自独立的壳。 */
+    let merged = null;
+    if (params.unionExport && supParts.length) {
+      setProgress(0.05, '布尔并（manifold）…');
+      try {
+        merged = await unionShells(supParts.map(p => ({
+          pos: bakeOffset(p), runs: p.runs,
+          // 支撑塔：每面墙 / 每段针都是闭合流形，索引网格原样交给内核（只烘位移），不拆、不焊
+          solids: p.solids ? p.solids.map(sd => ({ vert: bakeOffset({ arr: sd.vert, dx: p.dx, dy: p.dy, dz: p.dz }), tri: sd.tri })) : null,
+        })));
+      }
+      catch (e) { log(`布尔并异常（${e.message}），已按原样导出`, 'warn'); }
+      if (!merged) log('布尔并未生效，导出的是构件堆叠原样', 'warn');
+      setProgress(null);
+    }
+    if (merged) arrays.push({ arr: merged.pos, dx: 0, dy: 0, dz: 0 });
+    else arrays.push(...supParts);
   }
   let count = 0;
   for (const m of modelParts) count += m.pos.length / 9;

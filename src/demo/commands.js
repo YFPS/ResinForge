@@ -69,8 +69,8 @@ export function buildCommands(ctx) {
     { id: 'base-none', group: '导出', title: '底板：无', hint: '支撑直接落在平台', icon: ic(Square), run: () => setBaseType('none', setParam) },
     { id: 'base-raft', group: '导出', title: '底板：实心筏层', icon: ic(Layers), run: () => setBaseType('raft', setParam) },
     { id: 'base-grid', group: '导出', title: '底板：网格底板', icon: ic(Grid3x3), run: () => setBaseType('grid', setParam) },
-    { id: 'export-all', group: '导出', title: '导出模型和支撑', hint: 'STL', icon: ic(Download), run: () => doExport(true) },
-    { id: 'export-sup', group: '导出', title: '仅导出支撑', hint: 'STL', icon: ic(Download), run: () => doExport(false) },
+    { id: 'export-all', group: '导出', title: '导出模型和支撑', hint: 'STL', icon: ic(Download), run: () => runTask('export', () => doExport(true)) },
+    { id: 'export-sup', group: '导出', title: '仅导出支撑', hint: 'STL', icon: ic(Download), run: () => runTask('export', () => doExport(false)) },
 
     ...THEME_MODES.map(t => ({
       id: 'theme-' + t.value,

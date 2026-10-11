@@ -106,10 +106,10 @@ export function doClearSupports() {
   clearSupports();
 }
 
-export function doExport(includeModel) {
+export async function doExport(includeModel) {
   // 没有可导出的内容时 core 会自己提示；这里只在真的写出了文件时才把导出这一步记为完成
   const empty = !state.mesh || (!includeModel && !hasSupports() && currentBaseType() === 'none');
-  exportSTL(includeModel, true, includeModel ? 'model_with_supports.stl' : 'supports_only.stl');
+  await exportSTL(includeModel, true, includeModel ? 'model_with_supports.stl' : 'supports_only.stl');
   if (!empty) markExported();
 }
 

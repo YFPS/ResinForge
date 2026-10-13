@@ -33,6 +33,7 @@ export default function SupportCard() {
       </div>
       <div className="row">
         {num('spacing', '支撑间距', 1, 10, 0.5)}
+        {num('edgeInset', '边缘距离', 0, 10, 0.1)}
         {num('minSupArea', '最小悬空面积', 0.5, 50, 0.5, 'mm²')}
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
@@ -40,7 +41,7 @@ export default function SupportCard() {
       </div>
       {params.shortSup ? (
         <div className="row" style={{ alignItems: 'center' }}>
-          <Radio.Group type="button" size="small" value={params.shortKind === 'tower' ? 'tower' : 'tree'} onChange={v => { setParam('shortKind', v); if (hasPoints()) run('rebuild', rebuildStructure); }}>
+          <Radio.Group type="button" size="small" value={(params.supMode === 'tower' ? params.esShortKind : params.shortKind) === 'tower' ? 'tower' : 'tree'} onChange={v => { setParam(params.supMode === 'tower' ? 'esShortKind' : 'shortKind', v); if (hasPoints()) run('rebuild', rebuildStructure); }}>
             <Radio value="tree">树状细尖</Radio>
             <Radio value="tower">支撑塔桥板</Radio>
           </Radio.Group>
@@ -84,6 +85,13 @@ export default function SupportCard() {
         </>
       ) : (
         <>
+          <div className="row" style={{ alignItems: 'center' }}>
+            <Radio.Group type="button" size="small" value={params.esFallback === 'tree' ? 'tree' : 'none'} onChange={v => { setParam('esFallback', v); if (hasPoints()) run('rebuild', rebuildStructure); }}>
+              <Radio value="tree">树状兜底</Radio>
+              <Radio value="none">标红不生成</Radio>
+            </Radio.Group>
+            <span className="hint">连不上格架的点</span>
+          </div>
           <div className="row">
             {num('esCell', '菱形宽', 1.5, 8, 0.5, 'mm', 'Diamond width：格架最小菱形宽 = 墙距')}
             {num('esDiamAngle', '菱形角', 25, 80, 5, '°', 'Diamond angle：菱形斜边仰角（不低于自支撑临界角）')}
@@ -91,17 +99,17 @@ export default function SupportCard() {
           </div>
           <div className="row">
             {num('esBarW', '边宽', 0.15, 2, 0.05, 'mm', 'Edge width：菱形边在墙面内的宽度')}
-            {num('esBarT', '边厚', 0.15, 1.5, 0.05, 'mm', 'Edge thickness：墙厚（专利取激光束宽）')}
+            {num('esBarT', '边厚', 0.15, 1.5, 0.05, 'mm', 'Edge thickness：墙厚（默认同边宽，杆件截面为方形）')}
             {num('esColRatio', '柱高宽比', 2, 20, 1, '', 'Column height to width ratio：展宽前柱内菱形数（手册推荐 7）')}
           </div>
           <div className="row">
-            {num('esHullRed', '壳层缩减', 0, 3, 1, '级', 'Hull reduction：每下降一个柱高，菱形宽翻倍一次（孔洞放大省料、利于排液），最多翻倍这么多级（0=关闭）')}
+            {num('esHullRed', '壳层缩减', 0, 3, 1, '级', 'Hull reduction：每下降一个柱高，菱形宽翻倍一次（孔洞放大省料、利于排液），最多翻倍这么多级（0=底部全密，细支撑用；套用模板时自动设定）')}
             {num('esTowerMaxR', '最大展宽', 0, 10, 1, '格', '每下降一个柱高（柱高宽比 × 菱形宽）向四周展宽一格，每侧最多展宽的格数')}
             {num('esNeedleMax', '针最大长', 1, 12, 0.5, 'mm', '格架节点到接触点的十字针最大长度')}
           </div>
           <div className="row">
             {num('esConnW', '连接宽', 0.1, 1.5, 0.05, 'mm', 'Connection width：十字针针身板宽（默认同边宽）')}
-            {num('esNeedleT', '针板厚', 0.1, 1, 0.05, 'mm', '十字针「+」截面的板厚（默认同边厚）')}
+            {num('esNeedleT', '针板厚', 0.1, 1, 0.05, 'mm', '十字针「+」截面的板厚（默认同连接宽，针身截面为方形）')}
             {num('esTipW', '接触宽', 0.05, 1, 0.05, 'mm', 'Contact width：针尖接触模型处的宽度')}
           </div>
           <div className="row">

@@ -64,10 +64,11 @@ export async function exportSTL(includeModel, includeSupports, filename) {
        模型不参与并集——支撑必须能撕下来，两者留在一个文件里但保持各自独立的壳。 */
     let merged = null;
     if (params.unionExport && supParts.length) {
-      setProgress(0.05, '布尔并（manifold）…');
+      setProgress(0.05, '布尔并（后台线程）…');
       try {
         merged = await unionShells(supParts.map(p => ({
-          pos: bakeOffset(p), runs: p.runs,
+          // 有 solids 的（支撑塔）只交实体网格，不再复制一份显示用的非索引顶点（环面结约 23MB）
+          pos: p.solids ? null : bakeOffset(p), runs: p.runs,
           // 支撑塔：每面墙 / 每段针都是闭合流形，索引网格原样交给内核（只烘位移），不拆、不焊
           solids: p.solids ? p.solids.map(sd => ({ vert: bakeOffset({ arr: sd.vert, dx: p.dx, dy: p.dy, dz: p.dz }), tri: sd.tri })) : null,
         })));

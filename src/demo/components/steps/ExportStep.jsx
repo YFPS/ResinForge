@@ -8,6 +8,7 @@ import Button from '@/components/arc/button/button';
 import { state } from '../../../store.js';
 import { supMat, supMatAnchor } from '../../../core/scene.js';
 import { handleRaftMarginChange, updateRaft } from '../../../core/model.js';
+import { joinPlateHeight } from '../../../core/joinPlate.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
 import { currentBaseType, doExport, setBaseChamfer, setBaseFlush, setBaseHole, setBaseJoin, setBaseType, splitModelName } from '../../actions.js';
 import { STEPS, goStep, runTask, useUI } from '../../ui.js';
@@ -72,7 +73,9 @@ export default function ExportStep() {
         />
         <SwitchRow
           label="连接底板"
-          desc="把支撑塔底部的锯齿收成一条立起来的连接条"
+          desc={params.supMode === 'tower'
+            ? `把支撑塔底部的锯齿收成一条立起来的连接条；模型随之抬高一个板高（当前 ${+joinPlateHeight(params).toFixed(2)} mm），板上的支撑与不开时相同`
+            : '把支撑塔底部的锯齿收成一条立起来的连接条（只对支撑塔生效，树状支撑不加）'}
           checked={!!params.baseJoin}
           onChange={v => runTask('base-join', () => setBaseJoin(v, setParam))}
         />

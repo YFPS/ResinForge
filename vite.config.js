@@ -14,6 +14,9 @@ export default defineConfig({
     // Arc UI 组件按 shadcn 约定用 @/ 引用
     alias: { '@': path.resolve(root, 'src') },
   },
+  // 几何后台线程（core/geom.worker.js）里按需动态加载 manifold-3d 的 WASM，属于代码分割；
+  // Worker 默认打包格式 iife 不支持代码分割，改用 ES 模块（创建时已是 { type: 'module' }）
+  worker: { format: 'es' },
   build: {
     // 双入口：index.html 为旧 Arco 界面，demo.html 为 Arc UI 新版界面
     rollupOptions: {

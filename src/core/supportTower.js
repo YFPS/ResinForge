@@ -9,7 +9,7 @@
    - 半格序号 a/b（水平，步长 w/2）、n（竖向，步长 h/2）；周期 q 半格：墙在 a≡0 / b≡0 (mod q)，
      上行斜边 a−n≡0、a+n≡0 (mod q) 两组分开判定；壳层缩减 = q 逐级翻倍（2→4→8→16），粗格是细格的子集
    - 支撑网格 = 初始网格 − 外扩「离模净距」的模型（节点点距 / 杆件胶囊体，BVH 判定）
-   - 节点平滑过渡（几何实体化见 towerSolid.js，manifold-3d / Clipper2）：每面墙在面内二维坐标里把杆件条带 + 节点圆盘并成一个区域，
+   - 节点平滑过渡（几何实体化见 manifoldKit.js，在后台线程里算：manifold-3d / Clipper2）：每面墙在面内二维坐标里把杆件条带 + 节点圆盘并成一个区域，
      再做闭运算——凹角自动成半径 r 的圆角、凸侧是半径 边宽/2 的圆形接头，整面墙是一张连续穿孔板；只有一根杆的端头不放圆盘（端面平直）。
      旧版手写节点板轮廓、逐根修剪杆端，接缝靠凑：「<」顶点出锯齿缺口、针脚露台阶（用户截图），已整体废弃
    结构生成：
@@ -33,8 +33,9 @@
 import * as THREE from 'three';
 import { pointDist, capsuleClear, coneClear, ldiInside, raycast } from './collide.js';
 import { buildBranchingTree } from './supportTree.js';
-import { mergeParts, dirCandidates, tipCone, bridgeToSurface } from './supportKit.js';
-import { solidifyTower } from './towerSolid.js';
+import { mergeParts, dirCandidates, tipCone, bridgeToSurface, bridgeSpan } from './supportKit.js';
+import { solidifyAsync } from './geomClient.js';
+import { joinPlateHeight } from './joinPlate.js';
 
 /* ---------- 三角形缓冲：板条/针/基础带直接写顶点，避免成千上万个 three 几何对象 ---------- */
 /* runs 记录「一个构件 = 哪几段连续三角形」。导出前的布尔并要靠它把这一大坨还原成
@@ -194,7 +195,9 @@ const BEAM = 24;             // 柱化路径束搜索宽度
 
 /* ctx：{ bvh, ld, groundY, faces, protNear, topY }；points：支撑点 [{x,y,z,n}]；P：参数快照
    返回 { geomGround, geomAnchor, stats, pointState } */
-export function buildEStageTowers(ctx, points, P) {
+export async function buildEStageTowers(ctx, points, P) {
+  // 长循环里定期让出主线程（ctx.yieldUI 由调用方给：每 ~24ms 让一次，界面照常响应）；几何实体化放在后台线程
+  const tick = ctx.yieldUI || null;
   const { bvh, ld, groundY } = ctx;
   const w = Math.max(1, P.esCell);                                      // 菱形宽 = 墙距（俯视正方形网格边长）
   const crit = Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
@@ -206,10 +209,16 @@ export function buildEStageTowers(ctx, points, P) {
   const R = Math.hypot(b / 2, t / 2) + gap;                             // 杆件离模判定半径（板条外接圆 + 离模净距）
   const foundH = Math.max(0, P.esFoundH);
   const join = !!P.baseJoin;
-  // 连接底板（连接条）：格架自板顶起步——板内不留任何格架杆件 / 节点板，底板开孔不会暴露内部构件；
-  // 否则格架从基础带顶起步（基础带只垫在下面）。
-  const bandH = join ? Math.max(foundH + hs * 0.85, 1.5) : foundH;
-  const baseTop = groundY + (join ? bandH : foundH);
+  // 连接底板（连接条）：板高 plateH = 基础带高 + 0.85 × 竖直半格（不低于 1.5 mm，joinPlate.js），模型同步抬高 plateH（model.js 的 raiseH）。
+  // 板条垫在原来的支撑下面：原来的基础带（不开三角缺口）连同板条成一条，总高 bandH = plateH + 基础带高；格架从条顶起步——
+  // 相对模型的位置与不开底板时完全相同，支撑点、针、角度、兜底件逐一相同，只是整体上移一个板高。
+  // 用户 2026-10-12：「开启连接底板支撑会产生一些变化……出单根支撑没有底板连接的情况」「连接底板后模型再往上抬高一些，这高度用连接底板的高度」
+  // （选定「整整一个板高」）。旧实现模型不动、格架从板顶起步：板高 3.3～4.3 mm 吃掉模型下面的空间，针的角度全变，
+  // 模型最底下一圈点够不着格架改走兜底（粗模板：环面结 1 → 17、悬臂雕像 10 → 109 根不连底板的单杆）。
+  // 板高不随模型高低变化（曾改成随最低支撑点收缩，用户 2026-10-12 指出高度被改错，已还原）
+  const plateH = join ? joinPlateHeight(P) : 0;
+  const bandH = foundH + plateH;                                        // 连接条总高（不开底板时即基础带高）
+  const baseTop = groundY + bandH;
   const tiltMax = Math.PI / 2 - crit, tanT = Math.tan(tiltMax);
   // 十字针（e-Stage Top connection，自格架节点直通接触点）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 沿针轴扎入渗透长度
   const connW = Math.max(0.1, P.esConnW), needleT = Math.max(0.1, P.esNeedleT);   // 连接宽 / 针板厚
@@ -222,8 +231,9 @@ export function buildEStageTowers(ctx, points, P) {
   const maxWid = Math.max(0, Math.round(P.esTowerMaxR));                // 最大展宽（每侧格数）
   const hullRed = Math.max(0, Math.min(3, Math.round(P.esHullRed || 0)));   // 壳层缩减级数（0 = 关闭）
   const mid = P.esMidBars !== false;
-  const st = { points: points.length, needles: 0, nodes: 0, bars: 0, towers: 0, foundRuns: 0, fallback: 0, ground: 0, anchors: 0, shortAnchors: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, capped: false };
+  const st = { points: points.length, needles: 0, nodes: 0, bars: 0, towers: 0, foundRuns: 0, fallback: 0, ground: 0, anchors: 0, shortAnchors: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, unconnected: 0, capped: false };
   const pointState = new Array(points.length).fill('');
+  if (join) { st.bandH = +plateH.toFixed(2); st.stripH = +bandH.toFixed(2); }   // 连接底板高（= 模型额外抬高）/ 连接条总高（日志 / 验收）
   const pos = (a, bb, n) => [a * ws, baseTop + n * hs, bb * ws];
 
   /* ---------- 离模判定（缓存） ---------- */
@@ -332,10 +342,13 @@ export function buildEStageTowers(ctx, points, P) {
      针轴只取格架自身的方向：① 竖直，与「+」柱 / 墙内竖杆同轴；② 墙面内斜向（针轴落在节点所在的墙面里，倾角 ≤ 接触最大倾角 ∩ 临界锥）。
      十字截面与格架对齐（专利 FIG.13c 截面 A-A′）：一片板就在墙面内、与墙内杆件同宽同厚，经节点圆角板无缝相接；另一片板垂直墙面。
      接触点按专利做法重定义：针轴延长线与模型的首个交点（「structure 125 is virtually prolonged until it intersects with the object」），
-     偏移受限（普通点 ≤ min(1.2, 0.4·菱形宽)；手动点 ≤ 0.4；孤岛种子不得上移 > 0.1——最低点先打印）。
+     偏移 ≤ 接触宽（至少 0.15 mm）；孤岛种子不得上移 > 0.1——最低点先打印。
+     偏移原先允许到 min(1.2, 0.4·菱形宽)：支撑点挪到接触点后被吸到格架墙线附近，边缘环 / 内部六角格的均匀分布被打乱
+     （用户 2026-10-12 截图指出；环面结 206 点里 143 点被挪动，中位 0.53、最大 1.2 mm）。现在接不进这个范围的点改用自由直针，直接接到支撑点本身。
      旧实现让直针朝法线任意方位斜出：十字板离开墙面、针脚水平切口外露，节点处出现小方块 / 台阶（用户截图红框指出）。 */
   const thMax = Math.min(tc.tilt, tiltMax);              // 墙面内斜针最大倾角
-  const shiftOf = p => (p.manual ? 0.4 : Math.min(1.2, 0.4 * w));
+  const shiftTol = Math.max(0.15, tipW);                 // 接触点偏移上限：不超过接触宽，针尖落在支撑点标记球（半径 0.55）里
+  const shiftOf = () => shiftTol;
   const arP = Math.ceil(Lmax * Math.tan(thMax) / ws) + 1;
   const triNrm = f => {                                  // 三角形外法线（世界系，与 computeFaceDataFull 同绕序）
     const T = bvh.tri, i = f * 9;
@@ -416,6 +429,13 @@ export function buildEStageTowers(ctx, points, P) {
     if (!needleClear(C, N)) { why.clear++; return null; }
     return { ...c, C, L: hit.t, shift, fn };
   };
+  // 挪支撑点到接触点 C：与其它支撑点的净距不得低于布点下限（支撑杆直径 + 0.4 mm，与布点同口径），否则两点收敛到同一处会重叠显示；挪不动返回 false
+  const clearD = Math.max(0.3, (P.esBarW || 0.6) + 0.4);
+  const moveTo = (p, C) => {
+    for (const q of points) if (q !== p && Math.hypot(q.x - C[0], q.y - C[1], q.z - C[2]) < clearD) { st.moveBlocked = (st.moveBlocked || 0) + 1; return false; }
+    p.x = C[0]; p.y = C[1]; p.z = C[2];
+    return true;
+  };
   /* ---- 自由直针（兜底：格架同向针在偏移限度内接不上时，接触点不动，节点 → 支撑点直连）---- */
   const DEV_MAX = 25 * Math.PI / 180;
   const needleCost = (p, N, d) => {
@@ -442,12 +462,13 @@ export function buildEStageTowers(ctx, points, P) {
     return { pts, acc, L, posAt };
   };
   // 针净空（直针，接触点 C、节点 N）：针身（节点 → 过渡段起点）按十字截面外接圆 + 0.1 做胶囊体判定；
-  // 过渡段按锥台（接触端 tipW/2 → 起点 rCross，+0.1），自接触点起豁免「接触边距 + 0.2」（接触段本就贴住 / 扎入表面）
+  // 过渡段按锥台（接触端 tipW/2 → 起点 rCross，+0.1），自接触点起豁免「顶端长度（过渡段 + 接触边距）+ 0.2」
+  // （针头本就贴住 / 扎入表面；接触边距为 0 时只豁免过渡段，否则过渡段贴近模型的那一截会被整根误判为穿模）
   const needleClear = (C, N) => {
     const L = len(sub(C, N)), u = nrm(sub(C, N)), s1 = Math.max(0, L - taper - cMargin);
     const S1 = [N[0] + u[0] * s1, N[1] + u[1] * s1, N[2] + u[2] * s1];
     if (s1 > 0.02 && !capsuleClear(bvh, N[0], N[1], N[2], S1[0], S1[1], S1[2], rCross + 0.1)) return false;
-    return coneClear(bvh, C[0], C[1], C[2], tipW / 2 + 0.1, S1[0], S1[1], S1[2], rCross + 0.1, cMargin + 0.2);
+    return coneClear(bvh, C[0], C[1], C[2], tipW / 2 + 0.1, S1[0], S1[1], S1[2], rCross + 0.1, taper + cMargin + 0.2);
   };
 
   /* ---------- 1. 每个支撑点：针最省、可落地的接入节点 + 柱化路径 ---------- */
@@ -455,6 +476,7 @@ export function buildEStageTowers(ctx, points, P) {
   const ar = Math.ceil(Lmax * tanT / ws) + 1;
   const dirsOf = points.map(tipDirs);                // 每点的接触方向（主方向 + 竖直替补）
   for (let pi = 0; pi < points.length; pi++) {
+    if (tick) await tick();
     const p = points[pi];
     // 优先：格架同向针（竖直 / 墙面内斜向，接触点重定义）
     let tries = 0;
@@ -569,6 +591,7 @@ export function buildEStageTowers(ctx, points, P) {
     }
   }
   for (let n = 1; n <= nMax && cur.length; n++) {
+    if (tick) await tick();
     const next = new Map();
     const take = (a, bb, a2, b2, kind, vx, vz) => {
       if (regGet(a2, b2, n) === undefined || !edgeOK(a, bb, n - 1, a2, b2, n)) return;
@@ -600,15 +623,16 @@ export function buildEStageTowers(ctx, points, P) {
   const needles = [];
   const fallbackIdx = [];
   for (let pi = 0; pi < points.length; pi++) {
+    if (tick) await tick();
     const p = points[pi], g = plan[pi];
     let hook = null;
-    if (g && G.has(k3(g.top.a, g.top.b, g.top.n))) hook = g.top;
+    if (g && G.has(k3(g.top.a, g.top.b, g.top.n)) && (g.top.kind === 'free' || moveTo(p, g.top.C))) hook = g.top;   // 挪不动（与其它点挤在一起）就改走下面的兜底
     if (!hook) {                                     // 格架同向针接已保留节点
       let tries = 0;
       for (const c of alignedCands(p, pi, (a, bb, n) => G.has(k3(a, bb, n)))) {
         if (tries++ >= 24) break;
         const v = verifyAligned(p, c);
-        if (v) { hook = v; break; }
+        if (v && moveTo(p, v.C)) { hook = v; break; }
       }
     }
     if (!hook) {                                     // 自由直针接已保留节点
@@ -626,8 +650,31 @@ export function buildEStageTowers(ctx, points, P) {
       cand.sort((x, y) => x.cost - y.cost);
       for (let i = 0; i < cand.length && i < 24; i++) if (needleClear(C, cand[i].N)) { hook = cand[i]; break; }
     }
+    if (!hook) {                                     // 就近接格架（2026-10-12 用户：「这种就直接算法就近连接啊」——别让短杆孤零零立在格架旁边）
+      // 常规两种针都接不上时：在 2 倍针最大长内找最近的已保留节点直连；针身仍须在临界锥内（自支撑），
+      // 接触方向放宽到接触最大倾角（常规自由直针限 25°）。接不上的才交给分叉 / 十字短杆 / 树状兜底
+      const C = [p.x, p.y, p.z], reach = 2 * Lmax, rr = Math.ceil(reach / hc);
+      const nq = p.n || [0, -1, 0], cosTip = Math.cos(tc.tilt);
+      const ci = Math.floor(p.x / hc), cj = Math.floor(p.y / hc), ck = Math.floor(p.z / hc);
+      const cand = [];
+      for (let da = -rr; da <= rr; da++) for (let db = -rr; db <= 0; db++) for (let dc = -rr; dc <= rr; dc++) {
+        const arr = gHash.get((ci + da) + ',' + (cj + db) + ',' + (ck + dc));
+        if (!arr) continue;
+        for (const [a, bb, n, x, y, z] of arr) {
+          const dy = p.y - y, hx = x - p.x, hz = z - p.z, dh = Math.hypot(hx, hz);
+          if (dy < 0.3 || dh > dy * tanT + 1e-6) continue;
+          const L = Math.hypot(dh, dy);
+          if (L > reach) continue;
+          if ((hx * nq[0] - dy * nq[1] + hz * nq[2]) / L < cosTip) continue;   // 接触点 → 节点的方向须在接触锥内
+          cand.push({ kind: 'free', a, b: bb, n, cost: L, N: [x, y, z], C, near: true });
+        }
+      }
+      cand.sort((x, y) => x.cost - y.cost);
+      for (let i = 0; i < cand.length && i < 24; i++) if (needleClear(C, cand[i].N)) { hook = cand[i]; st.needlesNear = (st.needlesNear || 0) + 1; break; }
+    }
     if (hook) {
       const u = hook.u || nrm(sub(hook.C, hook.N)), L = hook.kind === 'free' ? len(sub(hook.C, hook.N)) : hook.L;
+      // 同向针的支撑点已在 moveTo 里挪到接触点 C（显示 / 选点 / 删点与结构同位）；自由直针的 C 即支撑点本身
       needles.push({ pi, kind: hook.kind, pl: hook.pl, a: hook.a, b: hook.b, n: hook.n, N: hook.N, C: hook.C, u, L, fn: hook.fn, shift: hook.shift || 0 });
     } else fallbackIdx.push(pi);
   }
@@ -646,7 +693,7 @@ export function buildEStageTowers(ctx, points, P) {
   // 自检：n>0 的保留节点都必须有下行杆（否则就是打印时的孤岛起点）
   { const hasDown = new Set(used.map(e => k3(e.a2, e.b2, e.n2))); st.minima = 0; for (const k of keep) if (k >= LAYER && !hasDown.has(k)) st.minima++; }
 
-  /* ---------- 6. 几何：规格 → 实体（towerSolid.js） ----------
+  /* ---------- 6. 几何：规格 → 实体（manifoldKit.solidifySpec，后台线程） ----------
      旧实现在这里手写几千个六面体 + 扇形节点板 + 分段针，各自闭合、只是贴着摆放，接缝靠端面切法与节点板轮廓凑齐——
      「<」顶点（节点板被切齐削平、两根斜杆的端角伸出平面）与自由直针针脚（端面垂直针轴、柱顶一角外露）两类裂口 / 台阶都出在这里。
      现在这一步只描述「每面墙由哪些条带 / 圆盘组成、每根针由哪些截面组成」，并集、圆角、闭合交给 manifold-3d（内含 Clipper2）。 */
@@ -719,8 +766,9 @@ export function buildEStageTowers(ctx, points, P) {
   const half = join ? Math.max(b, t) / 2 : t / 2;
   const topY = groundY + bandH;
   const wallRuns = [];
+  const baseLines = new Map();                       // 墙线 → 线上的格架底层节点（连接底板最后要核一遍每个节点都被立板托住）
   {
-    const lines = new Map();
+    const lines = baseLines;
     for (const k of keep) {
       const [a, bb, n] = unk(k);
       if (n !== 0) continue;
@@ -734,7 +782,8 @@ export function buildEStageTowers(ctx, points, P) {
       arr.sort((x, y) => x.s - y.s);
       const dir = lk[0], line = +lk.slice(1);
       let s0 = arr[0].s, prev = arr[0], q0 = arr[0].q;
-      const flush = () => wallRuns.push(prev.s > s0 ? { dir, line, s0, s1: prev.s, q: q0 } : { dir, line, s0: s0 - 0.5, s1: s0 + 0.5, q: q0 });
+      // nLo / nHi：段上格架底层节点的范围（「去掉外伸」不得收过它们，否则节点上的柱 / 斜杆悬空）
+      const flush = () => wallRuns.push(prev.s > s0 ? { dir, line, s0, s1: prev.s, q: q0, nLo: s0, nHi: prev.s } : { dir, line, s0: s0 - 0.5, s1: s0 + 0.5, q: q0, nLo: s0, nHi: s0 });
       for (let i = 1; i < arr.length; i++) {
         const c = arr[i];
         if (c.s - prev.s <= Math.max(c.q, prev.q)) { prev = c; q0 = Math.min(q0, c.q); continue; }
@@ -767,20 +816,23 @@ export function buildEStageTowers(ctx, points, P) {
     let cur = wallRuns[0];
     for (let i = 1; i < wallRuns.length; i++) {
       const n = wallRuns[i];
-      if (bridgeOk(cur, n)) cur = { ...cur, s1: Math.max(cur.s1, n.s1), q: Math.min(cur.q, n.q) };
+      if (bridgeOk(cur, n)) cur = { ...cur, s1: Math.max(cur.s1, n.s1), q: Math.min(cur.q, n.q), nLo: Math.min(cur.nLo, n.nLo), nHi: Math.max(cur.nHi, n.nHi) };
       else { merged.push(cur); cur = n; }
     }
     merged.push(cur);
     wallRuns.length = 0;
     for (const r of merged) wallRuns.push(r);
   }
-  // 去掉外伸：每条底板只留到最外一层交叉墙，不再从外墙侧面吐出一截
+  // 去掉外伸：每条底板只留到最外一层交叉墙，不再从外墙侧面吐出一截——但不收过段上的格架底层节点。
+  // 只在这一条墙线上的节点（不在交叉墙上）也立着柱 / 斜杆，收掉它下面的立板，杆端就悬在平台上方「板高 − 0.25」处
+  // （用户 2026-10-12 截图：粗模板塔块外沿的竖杆底端悬空；环面结 / 蘑菇 / 悬臂雕像都有）。无交叉的短段同理收到节点本身，不再整段删掉。
+  // 交叉判定一律用收之前的段（旧实现边收边判，结果与段的先后顺序有关）
   if (join && P.baseFlush && wallRuns.length) {
-    const snap = wallRuns.map(r => ({ dir: r.dir, line: r.line, s0: r.s0, s1: r.s1, q: r.q }));
+    const crossAt = (r, s) => wallRuns.some(o => o.dir !== r.dir && o.line === s && o.s0 <= r.line && r.line <= o.s1);
     const kept = [];
-    for (const r of snap) {
+    for (const r of wallRuns) {
       let lo = Infinity, hi = -Infinity;
-      for (const o of snap) {
+      for (const o of wallRuns) {
         if (o.dir === r.dir) continue;
         // 差一格也算交上，否则外伸的小段会停在外墙外面，判不成交叉
         if (o.line < r.s0 - 1 || o.line > r.s1 + 1) continue;
@@ -788,14 +840,62 @@ export function buildEStageTowers(ctx, points, P) {
         lo = Math.min(lo, o.line);
         hi = Math.max(hi, o.line);
       }
-      if (lo <= hi) {
-        r.s0 = Math.max(r.s0, lo);
-        r.s1 = Math.min(r.s1, hi);
-      } else if (r.s1 - r.s0 < 2) continue;
-      if (r.s1 - r.s0 > 0.2) kept.push(r);
+      let s0 = r.s0, s1 = r.s1;
+      if (lo <= hi) { s0 = Math.max(s0, lo); s1 = Math.min(s1, hi); }
+      else if (s1 - s0 < 2) { s0 = r.nLo; s1 = r.nHi; }
+      if (s1 < s0) { s0 = r.nLo; s1 = r.nHi; }
+      s0 = Math.min(s0, r.nLo); s1 = Math.max(s1, r.nHi);
+      // 只剩一个节点、交叉立板正好从它上面过：节点已由那块立板托住，这一小块不再单出
+      if (s1 - s0 < 0.2 && crossAt(r, s0)) continue;
+      kept.push({ ...r, s0, s1 });
     }
     wallRuns.length = 0;
     for (const r of kept) wallRuns.push(r);
+  }
+  // 连接底板的立板不得顶进模型：模型随板高抬高后条顶一般在模型底面以下（差 模型抬高 − 基础带高），但模型抬高调得比基础带还低、
+  // 或模型有部分伸到条高以内时，节点之间补上的那截、跨空档并起来的立板会从模型下面穿过去
+  // （模型不随板抬高的旧版实测：环面结粗模板顶进 0.23 mm）。
+  // 沿立板中线在板底 / 半高 / 板顶三个高度采样，离模不足「立板半厚 + 0.2」（与跨空档合并同一口径）的地方断开
+  if (join && bandH > 0 && wallRuns.length) {
+    const ys = [Math.min(0.3, bandH * 0.5), bandH * 0.5, Math.max(bandH * 0.5, bandH - 0.05)].map(v => groundY + v);
+    const need = half + 0.2;
+    const clearAt = (r, x) => {
+      for (const y of ys) {
+        const p = r.dir === 'x' ? [x, y, r.line * ws] : [r.line * ws, y, x];
+        if (ld && ldiInside(ld, p[0], p[1], p[2])) return false;
+        if (pointDist(bvh, p[0], p[1], p[2], need + 0.1) < need) return false;
+      }
+      return true;
+    };
+    const parts = [];
+    for (const r of wallRuns) {
+      // 采样位置是立板中线上的 x（立板轮廓 = s0·ws − 半厚 … s1·ws + 半厚）；连续净空的一截换回 s0 / s1，太短（不足一个板厚）的丢掉，节点由下面补
+      const xa = r.s0 * ws - half, xb = r.s1 * ws + half, n = Math.max(1, Math.ceil((xb - xa) / 0.4)), dx = (xb - xa) / n;
+      let a = null, last = null;
+      const cut = () => {
+        if (a !== null && last - a >= 2 * half) parts.push({ ...r, s0: (a + half) / ws, s1: (last - half) / ws });
+        a = null;
+      };
+      for (let i = 0; i <= n; i++) {
+        const x = xa + dx * i;
+        if (clearAt(r, x)) { if (a === null) a = x; last = x; } else { if (a !== null) st.slabCuts = (st.slabCuts || 0) + 1; cut(); }
+      }
+      cut();
+    }
+    wallRuns.length = 0;
+    for (const r of parts) wallRuns.push(r);
+  }
+  // 每个格架底层节点都要落在立板上（去掉外伸、净空断开之后再核一遍）：节点上立着柱 / 斜杆，下面没有立板就悬在平台上方
+  if (join && bandH > 0) {
+    for (const [lk, arr] of baseLines) {
+      const dir = lk[0], line = +lk.slice(1);
+      for (const { s, q } of arr) {
+        if (wallRuns.some(r => r.dir === dir && r.line === line && r.s0 - 1e-6 <= s && s <= r.s1 + 1e-6)) continue;
+        if (wallRuns.some(o => o.dir !== dir && Math.abs(o.line - s) < 1e-6 && o.s0 - 1e-6 <= line && line <= o.s1 + 1e-6)) continue;
+        wallRuns.push({ dir, line, s0: s, s1: s, q, nLo: s, nHi: s });
+        st.slabForced = (st.slabForced || 0) + 1;
+      }
+    }
   }
   // 和后面打孔用同一套位置，孔再外扩一个杆件半径，杆头才不会露在孔里
   // 孔心对齐格架节距：落在「两根竖杆之间」的半格交点（墙面内坐标为奇数半格），与节点（对穿槽所在）恒错开一个半格；
@@ -810,7 +910,10 @@ export function buildEStageTowers(ctx, points, P) {
     const hw = Math.min(w * 0.42, Math.max(0.35, hh * 1.05));
     const out = [];
     if (hh <= 0.35 || hw <= 0.28) return out;
-    for (let s = r.s0 + (md(r.s0, 2) === 0 ? 1 : 2); s <= r.s1 - 1; s += 2) {
+    // 段端可能不在整半格上（立板在模型下方断开）：从 s0 之后第一个奇数半格起
+    let s1st = Math.floor(r.s0) + 1;
+    if (md(s1st, 2) === 0) s1st++;
+    for (let s = s1st; s <= r.s1 - 1; s += 2) {
       const cx = s * ws;                                  // 奇数半格：两侧各一根竖杆的中点
       if (cx - hw < x0 + chamfer + 0.4 || cx + hw > x1 - chamfer - 0.4) continue;
       out.push({ dir: r.dir, line: r.line, cx, cy, hw, hh });
@@ -827,7 +930,7 @@ export function buildEStageTowers(ctx, points, P) {
   const wallOf = (pl, line) => {
     const k = pl * SPAN + line + OFF;
     let wv = wallMap.get(k);
-    if (!wv) { wv = { pl, c: line * ws, col: [], web: [], clip: [] }; wallMap.set(k, wv); spec.walls.push(wv); }
+    if (!wv) { wv = { pl, c: line * ws, col: [], web: [], clip: [], sub: [] }; wallMap.set(k, wv); spec.walls.push(wv); }
     return wv;
   };
   const lineOf = (pl, a, bb) => (pl === 0 ? bb : a);          // 墙线（半格序号）
@@ -933,8 +1036,9 @@ export function buildEStageTowers(ctx, points, P) {
     const pl = kk % 2, kN = (kk - pl) / 2, sg = -Math.sign(arr[0][0]);
     if (st.vertexList.length < 400) st.vertexList.push({ N: pos(...unk(kN)), pl, open: sg, clip: clipSide(kN, pl, sg) });
   }
-  // 连接底板：格架自板顶起步，底层节点的杆端 / 圆盘正好停在板顶面上（几乎共面）——每个底层节点向立板里多伸 0.25（藏在比墙厚的立板里）
-  if (join && bandH > 0) {
+  // 连接底板：格架自条顶起步，底层节点的杆端（只有一根杆、不放圆盘的竖杆端面）正好停在条顶面上（几乎共面）——
+  // 每个底层节点向连接条里多伸 0.25（下面的 sub 只留条顶以下 0.05 的一截：重叠而非贴面）
+  if (join) {
     for (const [kk] of incid) {
       const pl = kk % 2, kN = (kk - pl) / 2, [a, bb, n] = unk(kN);
       if (n !== 0) continue;
@@ -975,6 +1079,7 @@ export function buildEStageTowers(ctx, points, P) {
   st.needlesV = 0; st.needlesP = 0; st.needlesFree = 0; st.shiftSum = 0; st.shiftMax = 0;
   const emitted = new Set();                         // 同节点同向的格架同向针几何相同（孤岛周界种子可能密于间距、选中同一根竖杆），只出一份
   for (const nd of needles) {
+    if (tick) await tick();
     const p = points[nd.pi], N = nd.N, kN = k3(nd.a, nd.b, nd.n), u = nd.u, L = nd.L;
     const s1 = Math.max(0, L - taper - cMargin), s2 = Math.max(s1, L - cMargin), s3 = L + pen;
     const dupKey = nd.kind === 'free' ? null : `${kN}|${u.map(v => Math.round(v * 200)).join(',')}`;
@@ -1123,8 +1228,12 @@ export function buildEStageTowers(ctx, points, P) {
         poly.push([x1, 0], [x1, bandH], [x0, bandH]);
       }
       const polyW = poly.map(([s, y]) => [s, groundY + y]);
-      if (join) spec.slabs.push({ pl, c: r.line * ws, half, polys: [polyW] });
-      else wallOf(pl, r.line).web.push(polyW);
+      if (join) {
+        spec.slabs.push({ pl, c: r.line * ws, half, polys: [polyW] });
+        // 同一面墙上被板吞掉的那截格架减掉（板厚 ≥ 墙厚，减掉的部分整个在板里）：开孔时孔里不露杆件，导出也少一层内部重叠。
+        // 顶部与两端各留 0.05 让杆件伸进板里（重叠而非贴面——贴面处布尔并会切出碎片）
+        wallOf(pl, r.line).sub.push([[x0 + 0.05, groundY - 0.1], [x1 - 0.05, groundY - 0.1], [x1 - 0.05, groundY + bandH - 0.05], [x0 + 0.05, groundY + bandH - 0.05]]);
+      } else wallOf(pl, r.line).web.push(polyW);
       st.foundRuns++;
     }
     // 底板开孔：本墙菱形孔沿墙法线贯穿（多出 0.05 免得与板面共面）
@@ -1134,15 +1243,23 @@ export function buildEStageTowers(ctx, points, P) {
     }
   }
 
-  /* ---- 6d. 实体化：Clipper2 并集 + 闭运算 → 挤出；凸包；三维布尔并 ---- */
+  /* ---- 6d. 实体化：在几何后台线程里算（geomClient → geom.worker → manifoldKit.solidifySpec：Clipper2 并集 + 闭运算 → 挤出；凸包），
+     主线程只等结果。被更新的请求取代时这里抛 aborted，由调用方安静退出 ---- */
   let towerG = null;
   if (spec.walls.length || spec.hulls.length || spec.slabs.length) {
-    if (!ctx.manifold) throw new Error('几何内核（manifold-3d）未加载，无法生成支撑塔');
-    const solid = solidifyTower(ctx.manifold, spec);
+    if (ctx.progress) ctx.progress(0.9, '几何实体化（后台线程）…');
+    const tW = performance.now();
+    const solid = await (ctx.solidify || solidifyAsync)(spec);
     if (solid) {
-      towerG = solid.geometry;
+      towerG = new THREE.BufferGeometry();
+      towerG.setAttribute('position', new THREE.BufferAttribute(solid.pos, 3));
+      towerG.setAttribute('normal', new THREE.BufferAttribute(solid.nrm, 3));   // 后台线程已算好面法线
+      // 导出：每份都是闭合流形，原样交给内核做三维布尔并（不拆、不焊）
+      towerG.userData.solids = solid.parts;
+      let acc = 0;
+      towerG.userData.runs = solid.parts.map(pt => { const a0 = acc; acc += pt.tri.length / 3; return [a0, acc]; });
       const ss = solid.stats;
-      st.solid = { walls: ss.walls, hulls: ss.hulls, parts: ss.parts, tris: ss.tris, ms: ss.ms, knuckles: st.knuckles };
+      st.solid = { walls: ss.walls, hulls: ss.hulls, parts: ss.parts, tris: ss.tris, ms: ss.ms, wait: Math.round(performance.now() - tW), knuckles: st.knuckles };
     }
   }
   // 塔块数：保留格架的连通分量（孤立的底层接入节点 = 基础带上直接立针，也算一座）
@@ -1161,13 +1278,18 @@ export function buildEStageTowers(ctx, points, P) {
   }
 
   /* ---------- 7. 兜底：连不上格架的点 ----------
-     短小支撑样式为「支撑塔」时，正下方有朝上表面的点用「十字贴面短连接」（gusset）直接连过去；
+     短小支撑样式为「支撑塔」时：相邻两点先试「分叉」（一主干两头，见 forkSolve）；其余正下方有朝上表面的点用「十字贴面短连接」（gusset）直接连过去；
      形态参考 e-Stage 手册的 close-to-part 连接（§5.2.6 / FIG.13 的直连接），几何为本项目自研：
      十字截面（连接宽 × 针板厚，水平截面恒为「+」）+ 两端渐缩到接触宽 + 渗透扎入——
      不做专利图中的「根部喇叭锥」，接触点保持细，省树脂、好折断。
      放不下的点仍可绕到平台，但不再往模型上种树状锚点。
      短小支撑样式为「树状细尖」时，整段仍交给树状支撑。 */
-  const emitGusset = (gBuf, A, B) => {
+  /* 十字针截面的杆：A→B，截面沿轴渐变；thinA / thinB 决定该端是否收到接触宽（默认两端都细 = 十字贴面短连接）。
+     分叉的主干 / 头：分叉点 F 端保持连接宽（粗），落点 / 接触端收细。 */
+  // penA / penB：两端沿杆轴扎入的长度（默认渗透长度）；落到平台的一端为 0——平头立在平台上，不扎到平台下面
+  // flatA：A 端落在平台上，端面水平平切（正好贴住平台）。端面垂直杆轴时斜杆一歪就有一角低于平台
+  // （实测环面结中细模板 + 连接底板：4 根斜向短杆扎到平台下 0.093 mm，导出最低点不再是 z = 0）
+  const emitMember = (gBuf, A, B, thinA = true, thinB = true, penA = pen, penB = pen, flatA = false) => {
     const ax = [A.x, A.y, A.z], bx = [B.x, B.y, B.z];
     const d = sub(bx, ax), L = len(d);
     if (L < 0.35) return false;                                // 更短的间隙交给树状侧微柱处理
@@ -1176,55 +1298,134 @@ export function buildEStageTowers(ctx, points, P) {
     let tp = Math.min(taper, Math.max(0.06, L * 0.22));        // 过渡段（接触宽 → 连接宽）
     if (cm + tp > L * 0.46) tp = Math.max(0, L * 0.46 - cm);
     const at = s => [ax[0] + u[0] * s, ax[1] + u[1] * s, ax[2] + u[2] * s];
-    const prof = s => {                                        // 两端 g=0（接触宽）、中段 g=1（连接宽）
-      const g = Math.min(1, Math.max(0, (s - cm) / (tp || 1e-9)), Math.max(0, (L - cm - s) / (tp || 1e-9)));
+    const prof = s => {                                        // 细端 g=0（接触宽）、粗端 / 中段 g=1（连接宽）
+      const gA = thinA ? Math.min(1, Math.max(0, (s - cm) / (tp || 1e-9))) : 1;
+      const gB = thinB ? Math.min(1, Math.max(0, (L - cm - s) / (tp || 1e-9))) : 1;
+      const g = Math.min(gA, gB);
       return [tipW + (connW - tipW) * g, tipT + (needleT - tipT) * g];
     };
     const KS = [];
-    for (const s of [-pen, 0, cm, cm + tp, L - cm - tp, L - cm, L, L + pen]) if (!KS.length || s > KS[KS.length - 1] + 1e-9) KS.push(s);
+    for (const s of [-penA, 0, cm, cm + tp, L - cm - tp, L - cm, L, L + penB]) if (!KS.length || s > KS[KS.length - 1] + 1e-9) KS.push(s);
     const emit = (e, m, s0, s1) => {
       const list = [s0, ...KS.filter(s => s > s0 + 1e-9 && s < s1 - 1e-9), s1];
       for (let i = 0; i + 1 < list.length; i++) {
         const [w0, t0] = prof(list[i]), [w1, t1] = prof(list[i + 1]);
         // 端面：中间段界水平（错切连续），最外两端垂直轴——斜杆上水平切端面会被剪切投影成塌缩细针
-        const nA = Math.abs(list[i] + pen) < 1e-6 ? u : Y;
-        const nB = Math.abs(list[i + 1] - (L + pen)) < 1e-6 ? u : Y;
+        const nA = Math.abs(list[i] + penA) < 1e-6 ? (flatA ? Y : u) : Y;
+        const nB = Math.abs(list[i + 1] - (L + penB)) < 1e-6 ? u : Y;
         bar(gBuf, at(list[i]), at(list[i + 1]), e, m, w0, t0, w1, t1, nA, nB, 0, 0, 'gusset');
       }
     };
-    emit(X, Z, -pen, L + pen);                                 // 第一片：全段（含两端渗透）
+    emit(X, Z, -penA, L + penB);                               // 第一片：全段（含两端渗透）
     // 接触段截面为正方形时两片完全重合，第二片只补中段（少一份重合几何）；否则两片各自全段
-    if (Math.abs(tipW - tipT) < 1e-6) emit(Z, X, cm, L - cm); else emit(Z, X, -pen, L + pen);
+    if (Math.abs(tipW - tipT) < 1e-6) emit(Z, X, cm, L - cm); else emit(Z, X, -penA, L + penB);
     return true;
   };
   let geomTreeG = null, geomTreeA = null;
-  // 连接底板时兜底树状的地面是板顶面：落地柱与底座落在板上，不再穿过底板、柱顶从板面露头
-  const treeCtx = join ? { ...ctx, groundY: topY } : ctx;
-  if (fallbackIdx.length && P.shortSup && P.shortKind === 'tower') {
+  // 兜底件（树状落地柱 / 十字短杆 / 分叉主干）一律落到真正的平台（或筏层顶）上：连接底板只是沿底层墙线的一圈竖立板条，不是整块板。
+  // 旧实现按板顶 topY 落地，落点正下方没有立板时就停在离平台约 3 mm 的半空（环面结 13 个落点里 9 个悬空，用户 2026-10-12 报
+  // 「开启连接底板后出支撑就出 bug」）。落点正好压在立板上时与立板重叠，导出时布尔并熔成一体
+  const treeCtx = ctx;
+  if (fallbackIdx.length && P.shortSup && P.esShortKind === 'tower') {
     const plates = [];
     const rest = [];
     const rTip = Math.max(0.12, (P.tipD || 0.4) / 2);
     const tiltMax = Math.PI / 2 - Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
     const gBuf = new TriBuf();
+    const gBufG = new TriBuf();   // 落到平台的短杆 / 分叉：属落板支撑，归入绿色那一组（落到模型上的才是琥珀色的短小支撑）
+    /* ---- 分叉短杆（一主干两头，2026-10-12 用户提议）：相邻的两个兜底点共用一根主干，在 F 处分叉成两个接触头 ----
+       主干：自 F 竖直落到模型面 / 平台（F 端粗、落点端细）；头：F → 接触点（F 端粗、接触端细）。
+       F 取两点水平中点的上方，高度从接触点下方 0.5 mm 起逐级下探，取第一个同时满足：头长 ∈ [0.55, 针最大长]、
+       头与接触点法线的夹角 ≤ 接触最大倾角、头离模净空、F 在模型外且离表面 ≥ 0.45（连接宽截面外接圆）、主干能落地且长 ≥ 0.35。 */
+    const cosTilt = Math.cos(tc.tilt);
+    const forkSolve = (a, b) => {
+      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, yTop = Math.min(a.y, b.y);
+      for (let k = 0; k < 36; k++) {
+        const F = { x: mx, y: yTop - 0.5 - 0.15 * k, z: mz };
+        if (ld && ldiInside(ld, F.x, F.y, F.z)) continue;
+        if (pointDist(bvh, F.x, F.y, F.z, 0.6) < 0.45) continue;
+        let ok = true;
+        for (const q of [a, b]) {
+          const dv = [q.x - F.x, q.y - F.y, q.z - F.z], L = len(dv);
+          if (L < 0.55 || L > Lmax) { ok = false; break; }
+          const u = [dv[0] / L, dv[1] / L, dv[2] / L];
+          const nq = q.n || [0, -1, 0];
+          // 头的方向（自接触点指向 F）与被托面法线的夹角须在接触锥内
+          if (-(u[0] * nq[0] + u[1] * nq[1] + u[2] * nq[2]) < cosTilt) { ok = false; break; }
+          // 头离模净空：停在接触点前 0.33 mm，胶囊半径 0.25（与十字短杆的包络半径同口径）
+          const sx = q.x - u[0] * 0.33, sy = q.y - u[1] * 0.33, sz = q.z - u[2] * 0.33;
+          if (Math.hypot(sx - F.x, sy - F.y, sz - F.z) > 0.12 && !capsuleClear(bvh, F.x, F.y, F.z, sx, sy, sz, 0.25)) { ok = false; break; }
+        }
+        if (!ok) continue;
+        // 主干：自 F 竖直落到朝上的模型面或平台（与十字短杆同一套落地判定，中途不碰模型）
+        const tr = bridgeSpan(bvh, ctx.faces, F, { dir: [0, -1, 0], maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: false, rFrom: 0.3, groundY: treeCtx.groundY });
+        if (!tr || Math.hypot(tr.lower.x - F.x, tr.lower.y - F.y, tr.lower.z - F.z) < 0.35) continue;
+        return { F, trunk: tr.lower, ground: tr.ground };
+      }
+      return null;
+    };
+    // 配对：水平距离 ≤ 1.6 × 支撑间距、高度相近的兜底点，依距离由近到远试 3 个；配不上的点照旧单独用十字短杆
+    const paired = new Set();
+    const dPair = 1.6 * P.spacing;
     for (const pi of fallbackIdx) {
+      if (paired.has(pi)) continue;
+      const a = points[pi];
+      const cands = [];
+      for (const pj of fallbackIdx) {
+        if (pj === pi || paired.has(pj)) continue;
+        const b = points[pj];
+        const dh = Math.hypot(b.x - a.x, b.z - a.z);
+        if (dh <= dPair && Math.abs(b.y - a.y) <= 2) cands.push({ pj, dh });
+      }
+      cands.sort((x, y) => x.dh - y.dh);
+      for (const c of cands.slice(0, 3)) {
+        const b = points[c.pj];
+        const fk = forkSolve(a, b);
+        if (!fk) continue;
+        const buf = fk.ground ? gBufG : gBuf, ps = fk.ground ? 'ground' : 'mesh';
+        emitMember(buf, fk.trunk, fk.F, !fk.ground, false, fk.ground ? 0 : pen, pen, fk.ground);   // 主干：落在模型上那端收细扎入、落在平台上那端平头立住；F 端粗
+        emitMember(buf, fk.F, a, false, true);           // 头：F 端粗、接触端细
+        emitMember(buf, fk.F, b, false, true);
+        paired.add(pi); paired.add(c.pj);
+        pointState[pi] = ps; pointState[c.pj] = ps;
+        if (fk.ground) st.ground += 2; else st.anchors += 2;
+        st.plates += 2; st.forks = (st.forks || 0) + 1;
+        (st.forkList || (st.forkList = [])).push({ F: fk.F, L: fk.trunk, p: [a, b] });
+        break;
+      }
+    }
+    for (const pi of fallbackIdx) {
+      if (paired.has(pi)) continue;
       const s = bridgeToSurface(ctx.bvh, ctx.faces, points[pi], {
-        rTip, maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax,
+        rTip, maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax, groundY: treeCtx.groundY,
       });
-      if (s && emitGusset(gBuf, s.lower, s.upper)) {
-        pointState[pi] = 'mesh'; st.anchors++; st.plates++;
+      if (s && emitMember(s.ground ? gBufG : gBuf, s.lower, s.upper, !s.ground, true, s.ground ? 0 : pen, pen, s.ground)) {
+        pointState[pi] = s.ground ? 'ground' : 'mesh';
+        if (s.ground) st.ground++; else st.anchors++;
+        st.plates++;
         (st.gussetList || (st.gussetList = [])).push({ A: s.lower, B: s.upper });   // 调试 / 验收：落点与支撑点
       } else rest.push(pi);
     }
     const gg = gBuf.geometry();
     if (gg) plates.push(gg);
-    if (rest.length) {
+    if (rest.length && P.esFallback !== 'tree') {
+      // 不兜底树状：连不上格架、也贴不上面的点不生成支撑，标红，由用户加点或改用树状模式
+      for (const pi of rest) pointState[pi] = 'unroutable';
+      st.unconnected = rest.length;
+    } else if (rest.length) {
       const tr = buildBranchingTree(treeCtx, rest.map(i => points[i]), P);
       geomTreeG = tr.geomGround;
       if (tr.geomAnchor) plates.push(tr.geomAnchor);
       rest.forEach((pi, k) => { pointState[pi] = tr.pointState[k]; });
       for (const k of ['ground', 'anchors', 'shortAnchors', 'micro', 'plates', 'noHead', 'unroutable']) st[k] += tr.stats[k] || 0;
     }
+    const ggG = gBufG.geometry();
+    if (ggG) geomTreeG = geomTreeG ? mergeParts([geomTreeG, ggG]) : ggG;
     geomTreeA = plates.length ? mergeParts(plates) : null;
+    st.fallback = fallbackIdx.length;
+  } else if (fallbackIdx.length && P.esFallback !== 'tree') {
+    for (const pi of fallbackIdx) pointState[pi] = 'unroutable';
+    st.unconnected = fallbackIdx.length;
     st.fallback = fallbackIdx.length;
   } else if (fallbackIdx.length) {
     const tr = buildBranchingTree(treeCtx, fallbackIdx.map(i => points[i]), P);

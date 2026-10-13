@@ -13,7 +13,8 @@
       ③ 落地：距底座 > 最大分支长 → 先下行一段（suggest_avoidance，竖直优先、碰撞则锥内斜行）生成新结点再参与合并；
               否则地面柱（竖直优先，碰撞则「斜段 + 竖直」两段式避让）+ 底座锥台
       ④ 竖直方向通畅却落地失败时，再试锥内斜向的模型锚点
-   3. 剪枝：未能落地/落模型的子树整体丢弃（PrusaSlicer discard_subtree），不留悬空几何
+   3. 合并点走投无路时先撤销这次合并、两个子节点各自重新路由（本项目补充）；仍不行的子树整体丢弃
+      （PrusaSlicer discard_subtree），不留悬空几何
    分支半径随负载（自叶节点累计的最长路径长）加粗：r = clamp(r_min, r_max, 0.05·加宽系数·负载)（get_radius）
    与 PrusaSlicer 的差异：竖直落地路径通畅时优先落地，不因下方斜向有模型面就锚到模型上（少在模型表面留疤）
 ================================================================ */
@@ -114,7 +115,7 @@ export function buildBranchingTree(ctx, points, P) {
     return true;
   };
 
-  const st = { points: points.length, heads: 0, ground: 0, anchors: 0, shortAnchors: 0, heavy: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0 };
+  const st = { points: points.length, heads: 0, ground: 0, anchors: 0, shortAnchors: 0, heavy: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, merges: 0, bridges: 0, avoid: 0, unmerged: 0, undescended: 0, released: 0, posts: 0, thinPosts: 0 };
   const plateKind = P.shortKind === 'tower';
   const pointState = new Array(points.length).fill('');
   const ground = [], anchorG = [];
@@ -179,6 +180,10 @@ export function buildBranchingTree(ctx, points, P) {
   const heap = new MaxHeap(i => nodes[i].y);
   for (let i = 0; i < nodes.length; i++) heap.push(i);
   const edges = [];   // { a, b, ra, rb }：节点 a → 下游节点 b
+  // 撤销过的合并（两节点编号对）：同一对不再互相合并
+  const noMerge = new Set();
+  const pairKey = (a, b) => (a < b ? a * 1e6 + b : b * 1e6 + a);
+  let undoBudget = 4 * points.length + 16;
 
   // 模型锚点候选：沿下行方向扇射线，命中可承载面（法线 y ≥ 0.5）且远离保护面
   const meshCands = (nd, fan) => {
@@ -225,7 +230,8 @@ export function buildBranchingTree(ctx, points, P) {
     return true;
   };
   // suggest_avoidance：下行一段，优先选「段净空且其后竖直落地也净空」的方向，其次只要段净空；
-  // 被挡住时依次缩短段长（L、L/2、L/4）再搜
+  // 被挡住时依次缩短段长（L、L/2、L/4）再搜。「其后竖直落地」按将来落地柱的半径（负载 + 剩余高度加粗后）与底座占地检查——
+  // 只按当前杆半径查，下一层按加粗后的落地柱一查处处碰撞（实测环面结一团 13 个点因此整片被剪）
   const descend = (nd, r, L0) => {
     for (const f of [1, 0.5, 0.25]) {
       const L = Math.min(L0 * f, nd.y - baseTop - 2 * r);
@@ -234,7 +240,8 @@ export function buildBranchingTree(ctx, points, P) {
       for (const d of downFan(tiltMax)) {
         const q = { x: nd.x + d[0] * L, y: nd.y + d[1] * L, z: nd.z + d[2] * L };
         if (q.y < baseTop + 2 * r || !clearSeg(nd, q, r)) continue;
-        if (clearSeg(q, { x: q.x, y: baseTop, z: q.z }, r)) return q;
+        const rG = Math.max(r, rOf({ Rmin: nd.Rmin, w: nd.w + L + (q.y - baseTop) }));
+        if (clearSeg(q, { x: q.x, y: baseTop, z: q.z }, rG) && footOK({ x: q.x, y: baseTop, z: q.z })) return q;
         if (!fallback) fallback = q;
       }
       if (fallback) return fallback;
@@ -256,7 +263,7 @@ export function buildBranchingTree(ctx, points, P) {
     const span = P.maxBranchLen * 1.5;
     for (let j = 0; j < nodes.length; j++) {
       const o = nodes[j];
-      if (!o.alive || j === id) continue;
+      if (!o.alive || j === id || noMerge.has(pairKey(id, j))) continue;
       if (Math.abs(o.x - nd.x) > span || Math.abs(o.z - nd.z) > span || o.y > nd.y + P.maxBranchLen) continue;
       const mp = findMergePt(nd, o, crit);
       if (!mp || mp.y < baseTop + 2 * Math.max(nd.Rmin, o.Rmin)) continue;
@@ -268,7 +275,7 @@ export function buildBranchingTree(ctx, points, P) {
     for (let k = 0; k < cands.length && k < MAX_MERGE_CANDS && !routed; k++) {
       const c = cands[k], o = nodes[c.j];
       if (c.dO > 1e-4 && c.dn > 1e-4) {
-        const m = { x: c.mp.x, y: c.mp.y, z: c.mp.z, Rmin: Math.max(nd.Rmin, o.Rmin), w: Math.max(nd.w, o.w) + Math.max(c.dn, c.dO), type: JUNC, alive: true, parent: -1, kids: 2 };
+        const m = { x: c.mp.x, y: c.mp.y, z: c.mp.z, Rmin: Math.max(nd.Rmin, o.Rmin), w: Math.max(nd.w, o.w) + Math.max(c.dn, c.dO), type: JUNC, alive: true, parent: -1, kids: 2, mergedFrom: [id, c.j] };
         const rM = rOf(m), rO = rOf(o);
         if (!clearSeg(nd, m, Math.max(rN, rM)) || !clearSeg(o, m, Math.max(rO, rM))) continue;
         const mi = nodes.push(m) - 1;
@@ -310,18 +317,27 @@ export function buildBranchingTree(ctx, points, P) {
     };
     if (vHit && allowMesh && anchorVertical()) { st.anchors++; continue; }
 
-    // ③ 落地：高处先下行一段生成新结点（树逐级汇聚），近地直接建地面柱
-    if (dBed > P.maxBranchLen) {
+    // ③ 落地：高处先下行一段生成新结点（树逐级汇聚），近地直接建地面柱；下行被撤销过的节点（见 ⑥）不再下行，直接找落地路由
+    if (dBed > P.maxBranchLen && !nd.noDescend) {
       const q = descend(nd, rN, P.maxBranchLen);
       if (q) {
-        const m = { x: q.x, y: q.y, z: q.z, Rmin: nd.Rmin, w: nd.w + dist(nd, q), type: JUNC, alive: true, parent: -1, kids: 1 };
+        const m = { x: q.x, y: q.y, z: q.z, Rmin: nd.Rmin, w: nd.w + dist(nd, q), type: JUNC, alive: true, parent: -1, kids: 1, descFrom: id };
         const mi = nodes.push(m) - 1;
         edges.push({ a: id, b: mi, ra: rN, rb: rOf(m) });
         nd.parent = mi; heap.push(mi); st.avoid++; routed = true;
       }
     } else {
-      const rG = rOf({ Rmin: nd.Rmin, w: nd.w + dBed });
-      const route = groundRoute(bvh, nd, Math.max(rN, rG), baseTop, tiltMax, P.maxBridgeLen, gap, footOK);
+      let rG = rOf({ Rmin: nd.Rmin, w: nd.w + dBed });
+      let route = groundRoute(bvh, nd, Math.max(rN, rG), baseTop, tiltMax, P.maxBridgeLen, gap, footOK);
+      // 按负载加粗后的落地柱塞不进去（两面模型壁之间的窄缝）：退到当前分支粗细、再退到最细分支粗细再找一次——
+      // 细柱也比整棵子树剪掉强（500 个零件实测：负载 70 的分支离板面 7mm、正下方是空的，粗柱碰壁被整棵剪掉）
+      if (!route) {
+        for (const r of [rN, rMin]) {
+          if (r >= Math.max(rN, rG) - 1e-6) continue;
+          route = groundRoute(bvh, nd, r, baseTop, tiltMax, P.maxBridgeLen, gap, footOK);
+          if (route) { rG = r; st.thinPosts++; break; }
+        }
+      }
       if (route) { nd.parent = GROUND; nd.route = route; nd.rG = rG; st.ground++; routed = true; }
     }
     if (routed) continue;
@@ -339,6 +355,45 @@ export function buildBranchingTree(ctx, points, P) {
       if (!routed && !plateKind) for (const c of meshCands(nd, downFan(tiltMax, [0.5, 1], 8))) if ((routed = tryMesh(nd, rN, c))) break;
       if (routed) { st.anchors++; st.heavy++; continue; }
     }
+    // ⑥ 撤销：走投无路的合并点 / 下行点不算失败——汇入它的节点（合并的两个子节点、下行前的节点、后来桥接进来的节点）放回队列
+    //    各自重新路由（更轻、更细、位置不同，通常各有出路）；撤销过的合并这一对以后不再互相合并，撤销过的下行那个节点以后不再下行。
+    //    PrusaSlicer 此处整棵子树丢弃；实测环面结一团 13 个点逐级合并到两段管子之间（负载超限不能锚模型、加粗后落地全碰），被整片剪掉；
+    //    500 个零件实测，下行到两段模型之间卡住的下行点同样把汇入的整棵子树带走（手办帽檐下 21 点、tail_6 39 点）。
+    //    旧实现只撤销合并、只放回合并的两个子节点，桥接进来的节点仍挂在撤销掉的合并点上，连同子树一起剪掉
+    const release = () => {
+      if (undoBudget <= 0) return false;
+      const inc = [];
+      for (let k = 0; k < nodes.length; k++) if (nodes[k].parent === id) inc.push(k);
+      if (!inc.length) return false;
+      undoBudget--;
+      if (nd.mergedFrom) { noMerge.add(pairKey(nd.mergedFrom[0], nd.mergedFrom[1])); st.merges--; st.unmerged++; }
+      else if (nd.descFrom !== undefined) { nodes[nd.descFrom].noDescend = true; st.avoid--; st.undescended++; }
+      else st.released++;
+      for (let e = edges.length - 1; e >= 0; e--) if (edges[e].b === id) edges.splice(e, 1);
+      for (const k of inc) { const c = nodes[k]; c.parent = -1; c.alive = true; heap.push(k); }
+      return true;
+    };
+    if (nd.type !== LEAF && release()) continue;
+    // ⑦ 竖直立柱锚定（剪枝前最后一道）：正下方是模型上可承载的面（法线 y ≥ 0.3、不近保护面）就立一根竖直柱锚上去——
+    //    接触端仍是锚点直径的细颈，柱身按胶囊体查净空，不管负载、不管离多远。整棵子树剪掉、那一片悬空，比一根立在模型上的柱子代价大得多：
+    //    500 个零件实测，杯 / 盆内部、自带支撑的零件里，汇得很重的分支落到离模型面 2～4mm 处（加粗后放不下倒置支撑头），或窄腔里的叶节点
+    //    四面都下不去、正下方几十毫米才是模型面，整片被剪（tail_6 65 点、METAL PS 79 点）
+    if (P.shortSup && !plateKind && vHit && faces.nrm[vHit.f * 3 + 1] >= 0.3) {
+      const pt = { x: nd.x, y: nd.y - vHit.t, z: nd.z };
+      if (!(protNear && protNear(pt))) {
+        const penIn = Math.min(pen, 0.2), yTip = pt.y + (rPin - penIn), avail = nd.y - yTip;
+        const rNeck = Math.min(neckR, rN);
+        const neckH = Math.min(Math.max(neckR - rPin + pen + 0.35, 0.35), avail * 0.6);
+        const rTop = Math.min(rN, rNeck + (avail - neckH) * flareSlope);
+        const from = { x: nd.x, y: yTip + neckH + rTop + gap, z: nd.z };
+        if (avail >= 0.2 && (from.y >= nd.y || clearSeg(from, nd, rTop))) {
+          nd.parent = MESH; nd.shortAnchor = { y: yTip, rTip: rPin, rNeck, neckH, rTop };
+          st.anchors++; st.posts++;
+          continue;
+        }
+      }
+    }
+    if (nd.type === LEAF) release();     // 支撑头自己落不了地，桥接到它上面的节点还有别的出路
     nd.dead = true;
     nd.why = { leaf: nd.type === LEAF, y: +nd.y.toFixed(2), w: +nd.w.toFixed(1), dBed: +dBed.toFixed(1), vHit: vHit ? +vHit.t.toFixed(2) : null, allowMesh, mergeCands: cands.length };
   }

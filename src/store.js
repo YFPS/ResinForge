@@ -26,7 +26,8 @@ export const params = {
   minIslArea: 0.5,    // 孤岛最小面积（mm²）
   minAttach: 1,       // 最小附着面积（mm²）
   /* 支撑点（两种结构共用） */
-  spacing: 3,         // 支撑间距（mm）：六角网格的目标间距，局部可略密，空洞不超过约 1.7 倍
+  spacing: 2.5,       // 支撑间距（mm；默认与细档一致：间距 = max(3.3 × 主干直径, 2.5 × (主干直径 + 0.4))，粗支撑要按直径放大）：等距环上的点距；环与环之间的行距为间距 × √3/2（相邻环错开半步，近似正六角）
+  edgeInset: 1.5,     // 边缘距离（mm）：支撑区域投影轮廓内缩这么多放第一圈（边缘环），边缘支撑离边处处一致
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
   shortKind: 'tree',  // 短小支撑样式：'tree' 树状细尖 / 'tower' 支撑塔模式为十字贴面短连接（两端收到接触宽），树状模式为单片桥板
@@ -37,8 +38,8 @@ export const params = {
   tipD: 0.4,          // 前端球直径（head_front_diameter，接触模型）
   pen: 0.2,           // 嵌入深度（head_penetration）
   headLen: 1.0,       // 支撑头长度（前后球心距 = r_pin + head_width + r_back）
-  midD: 0.65,         // 分支起始直径（pillar_diameter，后端球 / 叶分支）
-  anchorD: 0.65,      // 锚点直径：落在模型表面的接触端（锚定支撑头肩部 / 短锚细颈）直径，独立于分支直径
+  midD: 0.6,          // 分支起始直径（pillar_diameter，后端球 / 叶分支）
+  anchorD: 0.6,       // 锚点直径：落在模型表面的接触端（锚定支撑头肩部 / 短锚细颈）直径，独立于分支直径
   maxBranchD: 2.0,    // 分支最大直径（负载加粗上限）
   widening: 0.5,      // 加宽系数（pillar_widening_factor：分支半径随负载线性增长的斜率）
   baseD: 3,           // 底座直径（base_diameter）
@@ -48,20 +49,22 @@ export const params = {
   maxWeightOnModel: 10, // 模型上支撑最大负载（max_weight_on_model：分支累计长度超过则不锚到模型）
   /* 支撑塔（Materialise e-Stage 菱形格架；参数名对齐 e-Stage 7.0 手册 Grid / Top connection / Foundation） */
   esCell: 3.5,        // 菱形宽（Diamond width：格架最小菱形宽 = 墙距）
-  esDiamAngle: 45,    // 菱形角（Diamond angle：菱形斜边仰角，不低于自支撑临界角）
-  esBarW: 0.45,       // 边宽（Edge width：菱形边在墙面内的宽度）
-  esBarT: 0.35,       // 边厚（Edge thickness：墙厚，专利取激光束宽）
+  esDiamAngle: 55,    // 菱形角（Diamond angle：菱形斜边仰角，不低于自支撑临界角）
+  esBarW: 0.6,        // 边宽（Edge width：菱形边在墙面内的宽度）
+  esBarT: 0.6,        // 边厚（Edge thickness：墙厚；默认与边宽相等，杆件截面为方形，不做扁板条）
   esMidBars: true,    // 菱形竖直对角线（墙上每半格一根竖杆，专利「vertical diagonal」）
   esGap: 1.2,         // 离模净距（Margin to part：格架与模型保持的最小净距，针不受此限）
-  esColRatio: 7,      // 柱高宽比（Column height to width ratio：展宽前柱内菱形数，手册推荐 7）
+  esColRatio: 2,      // 柱高宽比（Column height to width ratio：展宽前柱内菱形数；手册推荐 7，但支撑只有十几毫米高，7 时第一级在 30 mm 以上，整座塔看不到分级，默认改为 2）
   esTowerMaxR: 4,     // 最大展宽（每侧格数：每下降一个柱高向四周展宽一格，最多展宽这么多格）
-  esHullRed: 1,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个菱形允许菱形宽翻倍；0=关闭）
-  esConnW: 0.45,      // 连接宽（Connection width：十字针针身板宽；默认同边宽，竖直针即格架竖杆的延伸）
-  esNeedleT: 0.35,    // 针板厚（十字针「+」截面板厚；默认同边厚）
+  esHullRed: 0,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个菱形允许菱形宽翻倍；0=底部全密，与「细」模板一致；中粗 / 粗模板为 1，底部稀）
+  esConnW: 0.6,       // 连接宽（Connection width：十字针针身板宽；默认同边宽，竖直针即格架竖杆的延伸）
+  esNeedleT: 0.6,     // 针板厚（十字针「+」截面板厚；默认与连接宽相等，针身截面为方形）
   esTipW: 0.3,        // 接触宽（Contact width：针尖接触模型处的宽度）
-  esContactMargin: 0.5, // 接触边距（Contact margin：贴模型前保持接触宽的细直段长）
-  esTaper: 1,         // 过渡段长（连接宽 → 接触宽 的渐缩长度）
+  esContactMargin: 0, // 接触边距（Contact margin：贴模型前保持接触宽的细直段长；0 = 针头为纯梯形，过渡段直接到接触点）
+  esTaper: 1.5,       // 过渡段长（连接宽 → 接触宽 的渐缩长度；与黑格连接体长度一致，PAP10 / PAU10 / PARP10 / PAWR10 全部为 1.5 mm）
   esNeedleMax: 6,     // 针最大长度（格架节点到接触点）
+  esFallback: 'tree', // 连不上格架的点：'tree' 树状兜底（默认，按短小支撑样式生成，会与格架混在一起，避免留下悬空）/ 'none' 标红不生成（这些点没有支撑，只适合纯塔调试）
+  esShortKind: 'tower', // 支撑塔模式的短小支撑样式（先于树状兜底）：'tower' 十字短杆（默认，两端收到接触宽，接到下方表面或平台）/ 'tree' 不用十字短杆、直接交给树状兜底
   esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
   esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）
   baseJoin: false,    // 连接底板：支撑塔底部的锯齿收成一条实心立板

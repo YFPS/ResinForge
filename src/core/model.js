@@ -24,7 +24,11 @@ import { hideInspector } from './inspect.js';
 /* 打印工艺参数：世界系 = 打印系（平台顶面 y=0，模型底面抬高 raiseH，筏层厚 RAFT_T） */
 export const RAFT_T = 1.2;    // 筏层厚度（mm），固定
 let raftMesh = null;          // 筏层显示 Mesh
-export const raiseH = () => Math.max(0, params.raiseH || 0);   // 模型抬高（mm），默认 4
+// 模型抬高（mm）= 用户设的抬高（默认 4）+ 连接底板高（支撑塔开连接底板时，见 joinPlate.js）。
+// 连接底板那部分取「已提交」的值 state.joinLift：只在生成 / 重建支撑（或切换连接底板 / 结构 / 模板）时由 support.js 的 syncModelLift 更新，
+// 改了菱形宽等参数但还没重建时，模型、分析与已有支撑仍在同一高度上，导出不会错位
+export const raiseH = () => Math.max(0, params.raiseH || 0) + (state.joinLift || 0);
+export const baseRaiseH = () => Math.max(0, params.raiseH || 0);   // 用户设的抬高（不含连接底板）
 export const raftOn = () => params.raftOn;
 export const raftMargin = () => params.raftMargin || 3;
 
@@ -1224,19 +1228,23 @@ export function updateRaft() {
 /* 参数变更副作用（复刻旧 main.js 的 change 监听；React 组件 onChange 调用） */
 export function handleRaftOnChange() { updateRaft(); toast('底板设置已变更，请重新生成支撑'); }
 export function handleRaftMarginChange() { updateRaft(); }
+/** 把模型挪到当前抬高 raiseH()（含已提交的连接底板高）。只挪位置，分析与支撑由调用方处理 */
+export function placeModelAtLift() {
+  if (!state.mesh) return;
+  state.mesh.position.y = raiseH();
+  if (state.mesh.matrixAutoUpdate) state.mesh.updateMatrix();
+  else previewPartPose();
+  syncFocusRing();
+}
 export function handleRaiseHChange() {
   const h = raiseH();
-  if (state.mesh) {
-    state.mesh.position.y = h;
-    if (state.mesh.matrixAutoUpdate) state.mesh.updateMatrix();
-    else previewPartPose();
-  }
+  placeModelAtLift();
   clearSupports(false); updateSupStats();
   state.analysis = null;
   hideInspector();
   bus.emit('sliceStats', null);
-  syncFocusRing();
-  log(`抬高已改为 ${h}mm（模型底面离平台），请重新运行逐层分析`, 'warn');
+  const lift = state.joinLift || 0;
+  log(`抬高已改为 ${baseRaiseH()}mm${lift ? `（连接底板再抬 ${+lift.toFixed(2)}mm，模型底面离平台 ${+h.toFixed(2)}mm）` : '（模型底面离平台）'}，请重新运行逐层分析`, 'warn');
 }
 
 /** 板面或打印高度变了：只更新体积框，不挪已排好的模型 */

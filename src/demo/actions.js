@@ -1,11 +1,12 @@
 /* 集中操作层：顶栏 / 侧栏 / 命令面板共用同一套动作，避免各写一遍。
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
-import { params, state } from '../store.js';
+import { params, state, log, toast } from '../store.js';
 import { loadDemo, loadSTLBuffers, handleRaftOnChange, setActivePart, simplifySelection } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis } from '../core/inspect.js';
-import { runGenSup, rebuildStructure, clearSupports, setPointsOnly, optimizeSupports } from '../core/support.js';
+import { runGenSup, rebuildStructure, clearSupports, setPointsOnly, optimizeSupports, syncModelLift } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
+import { SUPPORT_TEMPLATES, getSupportTemplate, templateParams } from '../core/supportTemplates.js';
 import { markOriented, markExported } from './ui.js';
 
 export const hasSupports = () => (state.supportPoints || []).length > 0;
@@ -59,18 +60,49 @@ export function doOptimizeSupports() {
   return optimizeSupports();
 }
 
-/** 切换结构模式：已有支撑点时立即重建结构（同旧 SupportCard 行为） */
+/** 切换结构模式：已有支撑点时立即重建结构（同旧 SupportCard 行为）。开着连接底板时模型抬高随结构变（树状没有连接底板），没有支撑也要挪模型 */
 export function setSupMode(v, setParam) {
   setParam('supMode', v);
+  if (hasSupports()) return rebuildStructure();
+  return syncModelLift();
+}
+
+/** 短小支撑样式：树状模式写 shortKind（树状细尖 / 单片桥板）；支撑塔模式写 esShortKind（十字短杆 / 不用十字短杆、交给树状兜底）。已有支撑时按新样式重算结构。 */
+export function setShortKind(v, setParam) {
+  const tower = params.supMode === 'tower';
+  setParam(tower ? 'esShortKind' : 'shortKind', v === 'tower' ? 'tower' : 'tree');
   if (hasSupports()) return rebuildStructure();
   return Promise.resolve();
 }
 
-/** 短小支撑样式：树状细尖，或支撑塔的十字贴面短连接（树状模式下退化为单片桥板）。已有支撑时按新样式重算结构。 */
-export function setShortKind(v, setParam) {
-  setParam('shortKind', v === 'tower' ? 'tower' : 'tree');
+/** 支撑塔「连不上时」：标红不生成，或树状兜底（会与格架混在一起）。已有支撑时按新设置重算结构。 */
+export function setEsFallback(v, setParam) {
+  setParam('esFallback', v === 'tree' ? 'tree' : 'none');
   if (hasSupports()) return rebuildStructure();
   return Promise.resolve();
+}
+
+/** 当前生效的支撑模板 id：模板写入的全部键值都与 params 一致才算（数值容差 1e-6）；默认参数或手动改过任一项返回 null */
+export function activeSupportTemplate(p = params) {
+  for (const t of SUPPORT_TEMPLATES) {
+    const ok = Object.entries(templateParams(t)).every(([k, v]) => (typeof v === 'number' ? Math.abs(p[k] - v) < 1e-6 : p[k] === v));
+    if (ok) return t.id;
+  }
+  return null;
+}
+
+/** 套用支撑模板：树状与支撑塔两套参数一起写入（与当前结构模式无关）。模型抬高（标准 4 mm）与临界角（标准 45°）不在模板里，保持当前值。
+    有支撑时一律按新参数重新布点（保留手动加的点）再生成结构——与「重新生成」走同一条路（runGenSup），只多保留手动点。
+    旧实现只在间距 / 边缘距离变了时才重新布点、否则只重建结构：布点还取决于主干直径（防粘连净距 = 主干直径 + 0.4），
+    两者恰好没变时沿用旧粗细布的点、配上新粗细的结构（实测环面结：间距 3.4 / 边缘距离 0.5、主干 0.6 时生成，再套粗模板 181 点，重新生成 180 点） */
+export function applySupportTemplate(id, setParam) {
+  const tpl = getSupportTemplate(id);
+  if (!tpl) return Promise.resolve();
+  for (const [k, v] of Object.entries(templateParams(tpl))) setParam(k, v);
+  log(`已套用「${tpl.name}」支撑模板（支撑杆直径 ${tpl.diameter} mm，支撑间距 ${tpl.spacing} mm，${tpl.source}；切片层厚请在分析步骤设置）`, 'ok');
+  toast(`已套用「${tpl.name}」模板`);
+  if (!hasSupports()) return syncModelLift();      // 板高随菱形宽 / 基础带高变：开着连接底板时模型跟着挪
+  return doGenSupports({ keepManual: true });
 }
 
 export function doOrient() {
@@ -93,11 +125,13 @@ async function ensureAnalysis() {
 }
 
 export async function doGenSupports(opts = {}) {
+  await syncModelLift();                           // 先按连接底板挪好模型：没分析过时，下面的分析直接在新高度上做（不白算一遍）
   if (!(await ensureAnalysis())) return;
   await runGenSup(opts);
 }
 
 export async function doRebuild() {
+  await syncModelLift();
   if (!(await ensureAnalysis())) return;
   await rebuildStructure();
 }
@@ -113,11 +147,11 @@ export async function doExport(includeModel) {
   if (!empty) markExported();
 }
 
-/** 连接底板：支撑塔底部锯齿收成一条立板。已有支撑时立刻重算。 */
+/** 连接底板：支撑塔底部锯齿收成一条立板，模型同步抬高一个板高（joinPlate.js）。已有支撑时立刻重算；没有支撑也立刻挪模型 */
 export function setBaseJoin(v, setParam) {
   setParam('baseJoin', !!v);
   if (hasSupports()) return rebuildStructure();
-  return Promise.resolve();
+  return syncModelLift();
 }
 
 /** 底板开孔：连接条上打菱形孔。已有支撑时立刻重算。 */

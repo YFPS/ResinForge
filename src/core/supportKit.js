@@ -202,12 +202,23 @@ export function bridgeSpan(bvh, faces, from, opts = {}) {
   if (dy > -0.2) return null;
   if (opts.tiltMax != null && Math.acos(Math.min(1, -dy)) > opts.tiltMax + 1e-3) return null;
   const hit = raycast(bvh, from.x, from.y, from.z, dx, dy, dz, 0.05, maxLen);
-  if (!hit || faces.nrm[hit.f * 3 + 1] < 0.5) return null;
-  const land = { x: from.x + dx * hit.t, y: from.y + dy * hit.t, z: from.z + dz * hit.t };
+  let land = null;
+  if (hit) {
+    // 先碰到的是朝上的模型面才落上去；碰到朝下的面（别的零件的底面）说明被挡住
+    if (faces.nrm[hit.f * 3 + 1] < 0.5) return null;
+    land = { x: from.x + dx * hit.t, y: from.y + dy * hit.t, z: from.z + dz * hit.t };
+  } else if (opts.groundY != null) {
+    // 下方没有模型面：可竖直落到平台面（groundY，连接底板时为板顶）
+    const tg = (from.y - opts.groundY) / -dy;
+    if (tg > 0.05 && tg <= maxLen) land = { x: from.x + dx * tg, y: opts.groundY, z: from.z + dz * tg };
+  }
+  if (!land) return null;
   if (opts.protNear && opts.protNear(land)) return null;
   const sink = Math.min(opts.pen ?? 0.2, 0.2);
   const back = rTip - sink;
-  const lower = { x: land.x - dx * back, y: land.y - dy * back, z: land.z - dz * back };
+  // 落在平台上时下端正好贴住平台面：退让量是给「收细 + 扎入模型」的接触端用的，平台端不收细、不扎入，退了就悬空 0.05
+  const backL = hit ? back : 0;
+  const lower = { x: land.x - dx * backL, y: land.y - dy * backL, z: land.z - dz * backL };
   const upper = opts.sinkTop
     ? { x: from.x - dx * back, y: from.y - dy * back, z: from.z - dz * back }
     : { x: from.x, y: from.y, z: from.z };
@@ -228,7 +239,8 @@ export function bridgeSpan(bvh, faces, from, opts = {}) {
     const travel = Math.hypot(start.x - stop.x, start.y - stop.y, start.z - stop.z);
     if (travel > 0.12 && !capsuleClear(bvh, start.x, start.y, start.z, stop.x, stop.y, stop.z, env)) return null;
   }
-  return { upper, lower, rFrom, rTip, thick, thickRoot };
+  // ground：落在平台面（groundY）而不是模型面——落点端不该收细、不该扎进平台，由调用方决定端头形状
+  return { upper, lower, rFrom, rTip, thick, thickRoot, ground: !hit };
 }
 
 /* 竖直优先，再在临界锥里试几个斜向。命中的第一块板即可。 */

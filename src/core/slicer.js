@@ -156,6 +156,12 @@ export function analyze(pos, q, opts) {
   // 区域邻接有向图：节点 = 每层连通域（含噪点小域，保证边权总和 = 像素级重叠数），
   // 边 = 与下层的重叠（权重 = 重叠像素数）。孤岛判定 = 出边权重总和 < attachPx。
   const graph = detail ? { nodes: [], adj: [], labels: new Int32Array(N).fill(-1), prevLabels: new Int32Array(N).fill(-1) } : null;
+  // 浮空链：下面什么都没有的连通块（太小、没判孤岛时）是一条浮空链的起点；往上只搭在浮空链上的层继续算浮空，接上已托住的结构即托住。
+  // 浮空链长到「最小孤岛面积」还没接上任何托住的结构 → 起点那一层判为孤岛（种子落在尖上），这条链从此算托住。
+  // 只按「与下层的接触面积」判的话，从一个小尖开始往上长的结构（朝下的锥尖、指尖、剑尖）一层也判不成孤岛：
+  // 起点太小被当噪点，往上每层都搭在下层上（实测锥尖朝下、抬高 4mm：0 个支撑点，整件悬空）。墙上的小凸点几层内就并进墙里，不会误报
+  const chain = detail ? [] : null;            // 每节点 { open, root }
+  const rootPix = detail ? new Map() : null;   // 浮空链起点 → 像素表
 
   for (let l = 0; l < layers; l++) {
     const z = minY + (l + 0.5) * layerH + 1e-5;
@@ -258,6 +264,24 @@ export function analyze(pos, q, opts) {
             const nd = graph.nodes[nid];
             islands.push({ y: nd.y, area: nd.area, px: nd.px, cx: nd.cx, cz: nd.cz, layer: nd.layer, node: nid });
           }
+          let open = false, root = -1;
+          if (!isIsl && l >= lMin) {
+            if (!edges.length) { open = true; root = nid; rootPix.set(nid, Int32Array.from(comp)); }
+            else {
+              open = true;
+              let bestW = -1;
+              for (const { t, w } of edges) { const c = chain[t]; if (!c.open) { open = false; break; } if (w > bestW) { bestW = w; root = c.root; } }
+            }
+            if (open && comp.length >= minIslPx) {
+              const rn = graph.nodes[root];
+              if (!rn.island) {
+                rn.island = true; rn.pixels = rootPix.get(root); rn.chainTip = true;
+                islands.push({ y: rn.y, area: rn.area, px: rn.px, cx: rn.cx, cz: rn.cz, layer: rn.layer, node: root });
+              }
+              open = false; root = -1;
+            }
+          }
+          chain.push({ open, root });
         }
       }
     }

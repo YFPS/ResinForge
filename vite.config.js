@@ -29,6 +29,8 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 8123,
+    // 端口固定：Tauri 桌面壳的 devUrl（tauri.conf.json）指向 8123，漂移了就连不上
+    strictPort: true,
     // NAS 网络盘上 inotify/ReadDirectoryChanges 不可靠，用轮询保证 HMR 生效
     watch: { usePolling: true, interval: 500 },
   },

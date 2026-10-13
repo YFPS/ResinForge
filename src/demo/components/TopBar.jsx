@@ -16,7 +16,7 @@ import MachinePicker from './MachinePicker.jsx';
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 export const PALETTE_KEY = IS_MAC ? '⌘ K' : 'Ctrl K';
 
-function BrandMark() {
+export function BrandMark() {
   return (
     <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
       <rect x="1.2" y="1.2" width="29.6" height="29.6" rx="9" fill="none" stroke="currentColor" strokeWidth="2.4" />

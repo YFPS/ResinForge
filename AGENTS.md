@@ -28,6 +28,7 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 - **几何处理**：three.js 内置几何体 + 自定义 BufferGeometry 合并
 - **STL I/O**：three.js `STLLoader` 解析；自定义二进制 STL 写入
 - **运行时要求**：node 18+（开发/构建）；现代浏览器（WebGL 2 / WebGL 1）
+- **桌面壳**：Tauri 2（Rust + WebView2；无边框窗口 + 自绘标题栏，NSIS 出 exe 安装包，见「桌面版（Tauri）」）
 
 ---
 
@@ -80,9 +81,14 @@ resin-support-web/
 │       ├── commands.js # Ctrl/⌘ K 命令清单
 │       ├── theme.js / machines.js  # 外观（主题 + 强调色）与机型预设，均为持久化的环境配置 store
 │       ├── demo.css    # 仅布局层样式（视觉 token 全部取自 foundation.css）
-│       └── components/ # TopBar / MachinePicker / Sidebar / StepPanel / fields（分区与参数积木）/
+│       └── components/ # TitleBar（桌面版自定义标题栏，仅 Tauri 环境渲染） / TopBar / MachinePicker / Sidebar / StepPanel / fields（分区与参数积木）/
 │                       # steps/（ModelStep / OrientStep / AnalyzeStep / SupportStep / ExportStep）/
 │                       # ViewportStage / ModeBar / StatsCard / LayerInspector / LogPanel / CommandPalette / ToastHost
+├── src-tauri/          # Tauri 桌面壳（Rust）：无边框窗口 + NSIS 安装包（见「桌面版（Tauri）」）
+│   ├── tauri.conf.json # 窗口 / 构建 / 打包配置：decorations: false、入口 demo.html、1440×920、NSIS
+│   ├── capabilities/   # 权限：core:default + 窗口控制（拖动 / 最小化 / 最大化 / 关闭）
+│   ├── icons/          # 应用图标（npx tauri icon 生成）
+│   └── src/            # Rust 入口（main.rs → resinforge_lib::run，tauri-plugin-log 调试日志）
 └── AGENTS.md           # 本文件
 ```
 
@@ -101,6 +107,20 @@ npm run build     # 产物到 dist/（双入口：index.html + demo.html）
 - 旧界面：`http://127.0.0.1:8123/`
 - 新界面（Arc UI 版）：`http://127.0.0.1:8123/demo.html`
 
+### 桌面版（Tauri 无边框窗口）
+
+```bash
+npm run desktop:dev     # 桌面开发：起 vite（beforeDevCommand）+ 编译 Rust + 打开窗口
+npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/ResinForge_0.2.0_x64-setup.exe
+```
+
+- 工具链（首次需要）：Rust（rustup，stable-x86_64-pc-windows-msvc）+ VS 2022 Build Tools（Microsoft.VisualStudio.Workload.VCTools 工作负载）；WebView2 系统自带；NSIS 由 Tauri bundler 自动下载。首次编译约 2 分钟（346 个 crate）。
+- 窗口：`decorations: false` 无边框 + 自绘标题栏（`src/demo/components/TitleBar.jsx`，36px 独立一条：左 = 品牌图标 + 名称，右 = 最小化 / 最大化 / 关闭）；入口是 `demo.html`（新界面），1440×920（最小 1024×680）；产品名 ResinForge、标识符 `com.resinforge.app`。
+- 标题栏只在 Tauri 环境渲染（`'__TAURI_INTERNALS__' in window`，即 `TitleBar.jsx` 导出的 `IN_TAURI`）——浏览器版零回归；桌面版顶栏的品牌字标与斜分隔收起（`.app--desktop .topbar .brand`），避免与标题栏重复。
+- 拖动：`data-tauri-drag-region` 只对**直接标记的元素**生效——`.titlebar` 与品牌区标记，纯视觉子元素 `pointer-events: none`，按钮区天然可点；双击最大化 / 还原由 Tauri 内置；窗口按钮走 `@tauri-apps/api/window` 的 `minimize` / `toggleMaximize` / `close`，权限在 `src-tauri/capabilities/default.json`（`core:window:allow-*`），最大化状态的图标切换靠 `onResized` + `isMaximized`。
+- `vite.config.js` 的 `server.strictPort: true`：devUrl 固定 8123，端口漂移会连不上。
+- 实测（2026-10-13，桌面窗口截图逐项对照 + 模拟输入）：无系统标题栏；标题栏品牌与三按钮显示正确；拖动位移与输入精确一致；双击最大化（1936×1048）/ 还原；最小化按钮（IsIconic=true）；最大化按钮（JS → IPC）；最大化时按钮图标切换为双层还原框。浏览器版无标题栏、布局零回归。
+
 ### 网络盘（UNC 路径）注意事项
 
 项目位于 `\\Nas518dbd\SHARE\resin-support-web` 之类的 UNC 路径时：
@@ -112,6 +132,7 @@ npm run build     # 产物到 dist/（双入口：index.html + demo.html）
 ### 部署
 
 `npm run build` 后将 `dist/` 部署到任意静态托管（GitHub Pages / Vercel / Nginx 等）。无服务器端逻辑。
+桌面版用 `npm run desktop:build` 出的 NSIS 安装包分发（WebView2 系统自带，用户无需另装环境）。
 
 ---
 

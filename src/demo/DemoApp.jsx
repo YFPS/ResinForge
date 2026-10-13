@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Tabs } from '@/components/arc/tabs/tabs';
 import TopBar from './components/TopBar.jsx';
+import TitleBar, { IN_TAURI } from './components/TitleBar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import ViewportStage from './components/ViewportStage.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
@@ -32,8 +33,9 @@ export default function DemoApp() {
   useBus('orientResults', r => { if (r && r.length) goStep('orient'); });
 
   return (
-    <Tabs value={step} onValueChange={goStep} className="app">
+    <Tabs value={step} onValueChange={goStep} className={IN_TAURI ? 'app app--desktop' : 'app'}>
       <h1 className="srOnly">ResinForge 光固化自动支撑</h1>
+      <TitleBar />
       <TopBar onOpenPalette={openPalette} />
       <main className="workbench">
         <Sidebar />

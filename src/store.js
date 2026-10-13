@@ -67,10 +67,10 @@ export const params = {
   esShortKind: 'tower', // 支撑塔模式的短小支撑样式（先于树状兜底）：'tower' 十字短杆（默认，两端收到接触宽，接到下方表面或平台）/ 'tree' 不用十字短杆、直接交给树状兜底
   esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
   esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）
-  baseJoin: false,    // 连接底板：支撑塔底部的锯齿收成一条实心立板
+  baseJoin: true,     // 连接底板：支撑塔底部的锯齿收成一条实心立板（默认开）
   baseChamfer: false, // 栅角：连接条贴台面的底角斜切一小截（高 0.6mm）
-  baseFlush: false,   // 去掉外伸：交叉墙的底板收到外墙齐平，不再往外吐出
-  baseHole: false,    // 底板开孔：连接条上按格架打菱形孔，少用材料
+  baseFlush: true,    // 去掉外伸：交叉墙的底板收到外墙齐平，不再往外吐出（默认开）
+  baseHole: true,     // 底板开孔：连接条上按格架打菱形孔，少用材料（默认开）
   /* 筏层 */
   raftOn: false,      // 实心筏层开关（厚 1.2mm，默认关闭）
   raftMargin: 3,      // 筏层边距（mm）

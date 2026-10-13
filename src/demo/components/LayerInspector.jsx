@@ -43,6 +43,7 @@ export default function LayerInspector() {
           </div>
           <canvas ref={canvasRef} width={256} height={256} className="layerCanvas" />
           <Slider
+            className="inspSlider"
             label="层"
             min={1}
             max={layers}

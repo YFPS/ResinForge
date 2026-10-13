@@ -15,7 +15,7 @@ import { state, params, bus, log, toast, setProgress, nextFrame } from '../store
 import { supportGroup, supMat, supMatAnchor, supMatBase } from './scene.js';
 import { ldiGapAt } from './slicer.js';
 import { baseY, raiseH, placeModelAtLift } from './model.js';
-import { drawLayer, runSliceAnalysis } from './inspect.js';
+import { drawLayer, shiftAnalysisY } from './inspect.js';
 import { joinLiftWanted } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
 import { buildBranchingTree } from './supportTree.js';
@@ -904,7 +904,8 @@ export async function syncModelLift() {
     log(want
       ? `连接底板：模型随之抬高 ${+want.toFixed(2)}mm（模型底面离平台 ${+raiseH().toFixed(2)}mm），板上的支撑与不开底板时相同`
       : `连接底板已撤：模型回到离平台 ${+raiseH().toFixed(2)}mm`, 'ok');
-    if (state.analysis && state.mesh) await runSliceAnalysis();
+    // 分析结果与世界系只差一个 y 平移（模型整体挪 dy）：逐字段平移，不重跑逐层分析（约 0.6s 主线程）
+    if (state.analysis && state.mesh) shiftAnalysisY(dy);
   })();
   try { await liftSync; } finally { liftSync = null; }
   return true;

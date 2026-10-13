@@ -78,6 +78,28 @@ export async function runSliceAnalysis() {
   drawLayer(firstIsland);
 }
 
+/* 模型整体上移 / 下移（连接底板抬高与撤回，support.js 的 syncModelLift）时同步已有分析结果：
+   分析内容只取决于旋转后的几何，整体平移只是把所有世界系 y 加同一个偏移——逐字段平移即可，
+   不必重跑逐层分析（环面结约 0.6s 主线程，实测切换连接底板开关的卡顿来源）。
+   覆盖 analyze 输出中全部含世界系 y 的字段 + steepFaces 的面重心 + 惰性构建的 BVH 包围盒。
+   不含 y 的（bins 层桶、graph 拓扑、metrics 尺寸、栅格 XZ 参数）不动。 */
+export function shiftAnalysisY(dy) {
+  const A = state.analysis;
+  if (!A || !dy) return;
+  const p = A.p;
+  for (let i = 1; i < p.length; i += 3) p[i] += dy;
+  if (A.ld) { const ys = A.ld.ys; for (let i = 0; i < ys.length; i++) ys[i] += dy; }
+  if (A.overhang) for (const o of A.overhang) o.y += dy;
+  if (A.islands) for (const it of A.islands) it.y += dy;
+  if (A.graph) for (const n of A.graph.nodes) n.y += dy;
+  if (A.steepPts) for (const pt of A.steepPts) pt.y += dy;
+  A.grid.minY += dy;
+  A.raiseH += dy;
+  const bvh = A._bvh;
+  if (bvh) for (let i = 1; i < bvh.bmin.length; i += 3) { bvh.bmin[i] += dy; bvh.bmax[i] += dy; }
+  drawLayer();   // 层检查器标签里的 y 跟着更新（canvas 未挂时只发标签事件）
+}
+
 export function sliceAt(layerIdx) {
   const A = state.analysis;
   const nl = A.bins.length;

@@ -290,6 +290,8 @@ body {
   width: 100%; aspect-ratio: 1; display: block; border-radius: 14px;
   border: 1px solid var(--border); background: #0e0e0f; image-rendering: pixelated;
 }
+/* 滑块与切片图之间留出分组间距（Slider 自身无外边距，否则「层」标签贴着画布底边） */
+.inspSlider { margin-top: 12px; }
 .layerLabel { margin-top: 6px; font-size: var(--text-xs); color: var(--text-muted); }
 
 /* 日志（左下角） */

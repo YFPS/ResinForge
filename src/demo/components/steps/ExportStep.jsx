@@ -1,4 +1,4 @@
-/* 第 5 步 · 导出：底板三选一 → 尺寸 → 导出内容核对 → 导出（模型 + 支撑 / 仅支撑）。
+/* 第 5 步 · 导出：底板四选一 → 尺寸 → 导出内容核对 → 导出（模型 + 支撑 / 仅支撑）。
    导出成功在按钮上原地确认（「已导出」），不靠 toast。 */
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Download, Layers } from 'lucide-react';
@@ -21,6 +21,7 @@ const BASES = [
   { value: 'none', label: '无底板', description: '支撑直接落在打印平台上' },
   { value: 'raft', label: '实心筏层', description: '1.2mm 厚的圆板托住全部支撑' },
   { value: 'grid', label: '网格底板', description: '带孔的板，树脂可以从孔里流走' },
+  { value: 'auto', label: '自动底板', description: '按支撑投影自动定尺寸：栅角 + 蜂窝孔' },
 ];
 
 /* 图例颜色直接取 3D 场景里支撑的材质色，保证与视口一致 */
@@ -77,30 +78,63 @@ export default function ExportStep() {
           checked={!!params.baseJoin}
           onChange={v => runTask('base-join', () => setBaseJoin(v, setParam))}
         />
-        <SwitchRow
-          label="栅角"
-          desc="连接条贴着台面的底角斜切一小截"
-          checked={!!params.baseChamfer}
-          disabled={!params.baseJoin}
-          onChange={v => runTask('base-chamfer', () => setBaseChamfer(v, setParam))}
-        />
-        <SwitchRow
-          label="去掉外伸"
-          desc="交叉墙伸到外墙外面的底板收掉，外沿保持齐平"
-          checked={!!params.baseFlush}
-          disabled={!params.baseJoin}
-          onChange={v => runTask('base-flush', () => setBaseFlush(v, setParam))}
-        />
-        <SwitchRow
-          label="底板开孔"
-          desc="连接条上按格子打菱形孔，少用一些材料"
-          checked={!!params.baseHole}
-          disabled={!params.baseJoin}
-          onChange={v => runTask('base-hole', () => setBaseHole(v, setParam))}
-        />
+        {/* 子类分组：连接底板的三个子选项（主开关关闭时一并禁用） */}
+        <div className="subRows" aria-label="连接底板选项">
+          <SwitchRow
+            label="栅角"
+            desc="连接条贴着台面的底角斜切一小截"
+            checked={!!params.baseChamfer}
+            disabled={!params.baseJoin}
+            onChange={v => runTask('base-chamfer', () => setBaseChamfer(v, setParam))}
+          />
+          <SwitchRow
+            label="去掉外伸"
+            desc="交叉墙伸到外墙外面的底板收掉，外沿保持齐平"
+            checked={!!params.baseFlush}
+            disabled={!params.baseJoin}
+            onChange={v => runTask('base-flush', () => setBaseFlush(v, setParam))}
+          />
+          <SwitchRow
+            label="底板开孔"
+            desc="连接条上按格子打菱形孔，少用一些材料"
+            checked={!!params.baseHole}
+            disabled={!params.baseJoin}
+            onChange={v => runTask('base-hole', () => setBaseHole(v, setParam))}
+          />
+        </div>
       </Section>
 
-      {baseType !== 'none' ? (
+      {baseType === 'auto' ? (
+        <Section title="自动底板" desc="按支撑投影外接矩形自动定尺寸（无支撑时按模型）；孔为蜂窝六边形阵，边框保持实心。">
+          <Grid>
+            <Num k="apOffset" label="外扩距离" min={0} max={30} step={0.5} unit="mm" onChange={updateRaft} />
+            <Num k="apHeight" label="板厚" min={0.4} max={10} step={0.5} unit="mm" onChange={updateRaft} />
+            <Num k="apBorder" label="边框宽" min={0} max={10} step={0.5} unit="mm" onChange={updateRaft} />
+            <Num k="apHoleR" label="蜂窝孔径" min={1} max={20} step={0.5} unit="mm" onChange={updateRaft} />
+            <Num k="apWall" label="孔壁厚" min={0.3} max={6} step={0.1} unit="mm" onChange={updateRaft} />
+            <Num k="apCornerLen" label="切角长度" min={0} max={30} step={0.5} unit="mm" onChange={updateRaft} />
+          </Grid>
+          <SwitchRow
+            label="栅角"
+            desc="底面向内收缩，侧壁成斜面"
+            checked={!!params.apChamfer}
+            onChange={v => { setParam('apChamfer', v); updateRaft(); }}
+          />
+          {params.apChamfer ? (
+            <Grid>
+              <Num k="apChamferAngle" label="栅角角度" min={0} max={60} step={1} unit="°" onChange={updateRaft} />
+            </Grid>
+          ) : null}
+          <SwitchRow
+            label="四角切角"
+            desc="板四角沿边切一小截（八边形轮廓）"
+            checked={!!params.apCorner}
+            onChange={v => { setParam('apCorner', v); updateRaft(); }}
+          />
+        </Section>
+      ) : null}
+
+      {baseType === 'raft' || baseType === 'grid' ? (
         <Section title="底板尺寸">
           <Grid>
             <Num k="raftMargin" label="外接边距" min={1} max={10} step={0.5} unit="mm" onChange={handleRaftMarginChange} />

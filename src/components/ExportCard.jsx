@@ -10,10 +10,11 @@ import { exportSTL } from '../core/stl.js';
 /* 导出：底板类型（无 / 实心筏层 / 网格底板[e-Stage 风格]，变更即提示重新生成支撑）+ 边距/网格参数 + 两个导出按钮 */
 export default function ExportCard() {
   const [params, setParam] = useParams();
-  const baseType = params.gridRaftOn ? 'grid' : (params.raftOn ? 'raft' : 'none');
+  const baseType = params.autoPlateOn ? 'auto' : params.gridRaftOn ? 'grid' : (params.raftOn ? 'raft' : 'none');
   const setBaseType = v => {
     setParam('raftOn', v === 'raft');
     setParam('gridRaftOn', v === 'grid');
+    setParam('autoPlateOn', v === 'auto');
     handleRaftOnChange();
   };
   const gridParam = (k) => (v) => { setParam(k, v); if (params.gridRaftOn) updateRaft(); };
@@ -25,6 +26,7 @@ export default function ExportCard() {
             <Select.Option value="none">无底板（落平台）</Select.Option>
             <Select.Option value="raft">实心筏层（厚 1.2mm）</Select.Option>
             <Select.Option value="grid">网格底板（多孔排水）</Select.Option>
+            <Select.Option value="auto">自动底板（按支撑投影：栅角 + 蜂窝孔）</Select.Option>
           </Select>
         </label>
         <label className="f" style={{ flex: 1, marginBottom: 0 }}><span>边距</span><InputNumber value={params.raftMargin} min={1} max={10} step={0.5} onChange={v => { setParam('raftMargin', v); handleRaftMarginChange(); }} />mm</label>

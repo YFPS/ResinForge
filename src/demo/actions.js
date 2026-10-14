@@ -152,7 +152,8 @@ export function setBaseChamfer(v, setParam) {
 export function setBaseType(v, setParam) {
   setParam('raftOn', v === 'raft');
   setParam('gridRaftOn', v === 'grid');
+  setParam('autoPlateOn', v === 'auto');
   handleRaftOnChange();
 }
 
-export const currentBaseType = () => (params.gridRaftOn ? 'grid' : params.raftOn ? 'raft' : 'none');
+export const currentBaseType = () => (params.autoPlateOn ? 'auto' : params.gridRaftOn ? 'grid' : params.raftOn ? 'raft' : 'none');

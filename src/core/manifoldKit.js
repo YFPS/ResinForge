@@ -938,3 +938,71 @@ export function layoutPoints(MF, charts, opts) {
   }
   return out;
 }
+
+/* ---------- 自动底板（按支撑投影，spec 由 basePlate.js 生成） ---------- */
+/** 凸多边形等距内缩（世界 XZ）：每边沿内向法线平移 w、相邻边求交；法线用「朝形心」自校正，不依赖绕向 */
+function insetPolygon(poly, w) {
+  const n = poly.length;
+  let cx = 0, cz = 0;
+  for (const [x, z] of poly) { cx += x; cz += z; }
+  cx /= n; cz /= n;
+  const lines = [];
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    let dx = b[0] - a[0], dz = b[1] - a[1];
+    const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    let nx = -dz, nz = dx;
+    if ((a[0] + nx - cx) ** 2 + (a[1] + nz - cz) ** 2 > (a[0] - cx) ** 2 + (a[1] - cz) ** 2) { nx = -nx; nz = -nz; }
+    lines.push([a[0] + nx * w, a[1] + nz * w, dx, dz]);
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const [p1x, p1z, d1x, d1z] = lines[(i - 1 + n) % n], [p2x, p2z, d2x, d2z] = lines[i];
+    const den = d1x * d2z - d1z * d2x;
+    if (Math.abs(den) < 1e-9) { out.push([p2x, p2z]); continue; }
+    const t = ((p2x - p1x) * d2z - (p2z - p1z) * d2x) / den;
+    out.push([p1x + d1x * t, p1z + d1z * t]);
+  }
+  return out;
+}
+
+/**
+ * 自动底板实体：顶轮廓（可四角切角）打出蜂窝孔 → 挤出板厚 → 与「栅角棱台」求交
+ * （底面等距内缩 spec.chamferW，侧壁成斜面）。spec.outline / spec.holes 是相对底板中心的 XZ 点列，
+ * spec.cx / cz 平移到位。返回 { vert: Float32Array, tri: Uint32Array }（世界系，y∈[0, t]）或 null。
+ * 坐标约定：CrossSection 面内取 (x, −z)——挤出沿面内 +z、绕 X −90° 后 (x, y, w) → (x, w, −y)，(−z) 恰好还原 z。
+ */
+export function buildAutoPlate(MF, spec) {
+  const { CrossSection, Manifold } = MF;
+  const gc = [];
+  const K = o => { gc.push(o); return o; };
+  try {
+    const toIn = p => p.map(([x, z]) => [x, -z]);
+    let cs = K(new CrossSection([ccw(toIn(spec.outline))], 'Positive'));
+    const holes = (spec.holes || []).filter(h => h.length >= 3).map(h => ccw(toIn(h)));
+    if (holes.length) cs = K(cs.subtract(K(new CrossSection(holes, 'Positive'))));
+    cs = K(cs.simplify(SIMP));
+    if (cs.isEmpty()) return null;
+    let board = K(K(cs.extrude(spec.t, 0, 0, [1, 1], false)).rotate([-90, 0, 0]));   // center: false——板从 y=0 挤到 y=t（墙用 true 居中）
+    if (spec.chamferW > 1e-3) {
+      // 栅角棱台：顶轮廓（y = t）与底内缩轮廓（y = 0）的凸包（凸轮廓 + 等距内缩，凸包即棱台；hull 输入为平铺点数组）
+      const botPts = insetPolygon(spec.outline, Math.min(spec.chamferW, Math.min(spec.w, spec.d) / 2 - 0.2));
+      const pts = [];
+      for (const [x, z] of spec.outline) pts.push([x, spec.t, z]);
+      for (const [x, z] of botPts) pts.push([x, 0, z]);
+      const podium = K(Manifold.hull(pts));
+      if (podium.isEmpty()) return null;
+      board = K(board.intersect(podium));
+      if (board.isEmpty()) return null;
+    }
+    board = K(board.translate([spec.cx, 0, spec.cz]));
+    if (board.isEmpty()) return null;
+    const m = meshOut(board);
+    return m.tri.length ? m : null;
+  } catch (e) {
+    if (typeof window !== 'undefined') window.__apErr = String((e && e.stack) || e);
+    return null;
+  } finally {
+    for (const o of gc) { try { o.delete(); } catch { /* 已释放 */ } }
+  }
+}

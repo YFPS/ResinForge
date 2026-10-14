@@ -62,6 +62,17 @@ export const params = {
   gridT: 0.8,         // 网格板厚度（mm）
   gridBar: 0.8,       // 网格梁宽（mm）
   gridStep: 3,        // 网格梁间距（mm，孔 = 间距 − 梁宽）
+  /* 自动底板（按支撑投影自动定尺寸：栅角 + 蜂窝孔 + 四角切角；算法对照 3DPrintProject/3d 的底板生成器） */
+  autoPlateOn: false, // 自动底板开关（底板类型第四档；与实心筏层 / 网格底板互斥）
+  apOffset: 5,        // 外扩距离（mm）：底板超出支撑投影外接矩形的距离
+  apHeight: 2,        // 板厚（mm）
+  apBorder: 2.5,      // 边框宽（mm）：孔区外圈的实心边
+  apHoleR: 4,         // 蜂窝孔外接圆半径（mm；参考默认 8.66 是给 100mm 级大板配的，我们的板 30~60mm，调到 4）
+  apWall: 1.5,        // 孔壁厚（mm）
+  apChamfer: true,    // 栅角：底面向内收缩，侧壁成斜面
+  apChamferAngle: 15, // 栅角角度（°）
+  apCorner: true,     // 四角切角
+  apCornerLen: 5,     // 切角长度（mm）
   /* 导出 */
   unionExport: true,  // 导出前用 manifold-3d 把支撑各构件布尔并成一张水密外壳（消共面重复面与非流形边；仅导出时算，不进实时回路）
 };

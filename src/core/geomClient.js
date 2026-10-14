@@ -23,7 +23,7 @@ const queue = [];           // 排队的任务 { id, op, payload, resolve, rejec
 let load = 0;               // 本 Worker 已处理的三角形累计（实体化输出 + 布尔并输入输出）
 const LOAD_MAX = 6e6;       // 超过就换新 Worker：约为实测出错时累计量（环面结细模板约 4 千万）的七分之一
 const TRAP = /memory access out of bounds|null function|unreachable|out of memory|table index|signature mismatch|Aborted|RuntimeError/i;
-const loadOf = (op, r) => (!r ? 0 : op === 'solidify' ? (r.stats && r.stats.tris) || 0 : op === 'union' ? (r.inTris || 0) + (r.nTri || 0) : 0);
+const loadOf = (op, r) => (!r ? 0 : op === 'solidify' ? (r.stats && r.stats.tris) || 0 : op === 'union' ? (r.inTris || 0) + (r.nTri || 0) : op === 'autoplate' ? (r.tri ? r.tri.length / 3 : 0) : 0);
 
 /** 丢掉当前 Worker（下一个任务到来时 pump 再起一个新的） */
 function retire() {
@@ -85,6 +85,7 @@ async function runLocal(job) {
   const { kit, MF } = localKit;
   if (job.op === 'solidify') return kit.solidifySpec(MF, decodeSpec(job.payload));
   if (job.op === 'layout') return kit.layoutPoints(MF, job.payload.charts, job.payload.opts);
+  if (job.op === 'autoplate') return kit.buildAutoPlate(MF, job.payload);
   return kit.unionParts(MF, job.payload.parts);
 }
 
@@ -131,6 +132,19 @@ export function unionAsync(parts) {
 /** 支撑点布点（manifoldKit.layoutPoints：边缘环 + 内部按覆盖补点 + Lloyd 松弛）：charts 为各图块投影三角形 Float64Array，返回同序的二维点数组 */
 export function layoutAsync(charts, opts) {
   return submit('layout', { charts, opts });
+}
+
+/**
+ * 自动底板实体（manifoldKit.buildAutoPlate 的结果 { vert, tri } 或 null）。
+ * 排队中还没开始算的旧底板请求就地作废（连续改参数时只算最后一次）。
+ */
+export function autoPlateAsync(spec) {
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (queue[i].op !== 'autoplate') continue;
+    queue[i].reject(abortedError());
+    queue.splice(i, 1);
+  }
+  return submit('autoplate', spec);
 }
 
 /** 调试 / 验收：后台线程状态 */

@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor, supMatBase } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, placeModelAtLift } from './model.js';
+import { baseY, raiseH, placeModelAtLift, updateRaft } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
 import { joinLiftWanted } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
@@ -950,6 +950,7 @@ export async function rebuildStructure() {
   setProgress(null);
   updateSupStats();
   drawLayer();
+  updateRaft();                                       // 支撑变了 → 自动底板的投影跟着变（其余底板无副作用）
   return res;
 }
 

@@ -6,7 +6,7 @@
 ================================================================ */
 import * as THREE from 'three';
 import { state, params, log, toast, setProgress } from '../store.js';
-import { raftOn, raftMargin, RAFT_T, buildGridRaftGeom, raftAnchor, placeVertex, raiseH } from './model.js';
+import { raftOn, raftMargin, RAFT_T, buildGridRaftGeom, raftAnchor, placeVertex, raiseH, ensureAutoPlateGeom } from './model.js';
 import { unionShells } from './union.js';
 
 /* 跑在 Tauri 桌面壳（打包后的 exe）里还是普通浏览器：写出方式不同（见 exportSTL 尾部） */
@@ -46,7 +46,18 @@ export async function exportSTL(includeModel, includeSupports, filename) {
   }
   if (includeSupports) {
     const supParts = [];
-    if (state.mesh && params.gridRaftOn) {
+    if (state.mesh && params.autoPlateOn) {
+      // 自动底板（按支撑投影，几何在后台线程）：单一水密实体走内核路径；规格变了这里先算好（与显示共用缓存）
+      const g = await ensureAutoPlateGeom();
+      if (g) {
+        const nf = new Float32Array(g.tri.length * 3);
+        for (let i = 0; i < g.tri.length; i++) {
+          const v = g.tri[i] * 3;
+          nf[i * 3] = g.vert[v]; nf[i * 3 + 1] = g.vert[v + 1]; nf[i * 3 + 2] = g.vert[v + 2];
+        }
+        supParts.push({ arr: nf, dx: 0, dy: 0, dz: 0, solids: [{ vert: g.vert, tri: g.tri }] });
+      }
+    } else if (state.mesh && params.gridRaftOn) {
       const anchor = raftAnchor();
       const g = buildGridRaftGeom();
       supParts.push({ arr: g.attributes.position.array, dx: anchor.x, dy: 0, dz: anchor.z, runs: g.userData.runs });

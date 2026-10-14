@@ -13,6 +13,8 @@ import { historyReplaying, pushHistory, clearHistory } from './history.js';
 import { isBinarySTL, frameOf, applyFrame, bakeSource, smoothSoupNormals, blueprintRatio, SIMPLIFY_MIN_BYTES } from './simplify.js';
 import { decimate } from './decimate.js';
 import { scene, modelGroup, modelMat, prevScene, prev, framePart, frameParts, updateBuildVolume, syncFocusRing } from './scene.js';
+import { autoPlateSpec, plateFingerprint } from './basePlate.js';
+import { autoPlateAsync } from './geomClient.js';
 
 /* 包围盒八个角变换时复用，不外传 */
 const _corner = new THREE.Vector3();
@@ -1188,7 +1190,7 @@ export function raftAnchor() {
 
 /* 筏层/网格底板显示：模型 XZ 外接圆半径 + 边距。实心筏层厚 RAFT_T；网格底板为 X/Z 交叉梁格（e-Stage 风格多孔板）。
    支撑落点高度统一走 baseY()（网格板顶 / 筏层顶 / 平台 0）。 */
-export const baseY = () => (params.gridRaftOn ? (params.gridT || 0.8) : (raftOn() ? RAFT_T : 0));
+export const baseY = () => (params.autoPlateOn ? (params.apHeight || 2) : params.gridRaftOn ? (params.gridT || 0.8) : (raftOn() ? RAFT_T : 0));
 
 /* 网格底板几何：外接圆内 X/Z 双向梁格，梁在圆边界处截弦（多孔排水，e-Stage 风格） */
 export function buildGridRaftGeom() {
@@ -1209,9 +1211,24 @@ export function buildGridRaftGeom() {
 
 export function updateRaft() {
   if (raftMesh) { scene.remove(raftMesh); raftMesh.geometry.dispose(); raftMesh = null; }
-  if (!state.mesh || (!raftOn() && !params.gridRaftOn)) return;
+  if (!state.mesh || (!raftOn() && !params.gridRaftOn && !params.autoPlateOn)) return;
   const mat = new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05, transparent: true, opacity: 0.85 });
   const anchor = raftAnchor();
+  if (params.autoPlateOn) {
+    // 自动底板：几何在后台线程按「支撑投影 + 参数」算（规格没变走缓存）；序号防竞（期间又改参数 / 换模型）
+    const seq = ++autoPlateSeq;
+    ensureAutoPlateGeom().then(g => {
+      if (!g || seq !== autoPlateSeq || !state.mesh || !params.autoPlateOn) return;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(g.vert, 3));
+      geo.setIndex(new THREE.BufferAttribute(g.tri, 1));
+      geo.computeVertexNormals();
+      raftMesh = new THREE.Mesh(geo, mat);
+      raftMesh.raycast = () => {};
+      scene.add(raftMesh);
+    }).catch(() => { /* 被更新的请求取代：交给后一次 */ });
+    return;
+  }
   if (params.gridRaftOn) {
     raftMesh = new THREE.Mesh(buildGridRaftGeom(), mat);
     raftMesh.position.set(anchor.x, 0, anchor.z);
@@ -1223,6 +1240,26 @@ export function updateRaft() {
   }
   raftMesh.raycast = () => {};
   scene.add(raftMesh);
+}
+
+/* 自动底板几何缓存：规格指纹未变直接复用（显示与导出共用同一份）；同一规格的并发调用共享一个请求 */
+let autoPlateGeom = null, autoPlateFp = '', autoPlateSeq = 0, autoPlatePending = null;
+export async function ensureAutoPlateGeom() {
+  const spec = autoPlateSpec();
+  if (!spec) return null;
+  const fp = plateFingerprint(spec);
+  if (autoPlateGeom && autoPlateFp === fp) return autoPlateGeom;
+  if (autoPlatePending && autoPlatePending.fp === fp) return autoPlatePending.p;
+  const p = autoPlateAsync(spec).then(g => {
+    if (g) { autoPlateGeom = g; autoPlateFp = fp; }
+    if (autoPlatePending && autoPlatePending.p === p) autoPlatePending = null;
+    return g;
+  }, () => {                                   // 被更新的规格取代：本次返回 null，下一次触发按最新规格重算
+    if (autoPlatePending && autoPlatePending.p === p) autoPlatePending = null;
+    return null;
+  });
+  autoPlatePending = { fp, p };
+  return p;
 }
 
 /* 参数变更副作用（复刻旧 main.js 的 change 监听；React 组件 onChange 调用） */

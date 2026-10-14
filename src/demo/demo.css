@@ -174,6 +174,8 @@ body {
 
 /* 设置行：左文右开关 */
 .setRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+/* 子类分组：主开关下挂的子选项（连接底板的三个子开关）——缩进 + 左侧发丝线，与 Section 同一形态语言 */
+.subRows { display: flex; flex-direction: column; gap: 16px; padding-left: 12px; margin-left: 2px; border-left: 1px solid var(--border); }
 .setText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .setLabel { font-size: var(--text-sm); color: var(--foreground); }
 .setDesc { font-size: var(--text-xs); line-height: 1.5; color: var(--text-muted); }

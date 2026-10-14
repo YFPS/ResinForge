@@ -578,11 +578,15 @@ export async function buildEStageTowers(ctx, points, P) {
     const vx = wx && md(bb, vs) === 0, vz = wz && md(a, vs) === 0;
     if (vx || vz) out.push([a, bb, 'v', vx, vz]);
     const fwd = md(n, 2 * q) < q;                      // 本周期前半段斜边朝 + 一侧，后半段反向（在竖杆处折返）
+    // 斜边链的相位间距 qs（半格）：不随壳层缩减整级翻倍——跟着 q 翻倍时，粗格（q≥4）每两格才有一条链，
+    // 主干上长段没有斜边接点（用户 2026-10-14 截图：中粗 / 粗档的一根竖杆整段无加强，晃动隐患）。
+    // 最小保持细格的 2 半格（q=2 行为不变）；q≥4 时取 q/2，链的密度与细格一致，孔仍随折返周期放大。
+    const qs = Math.max(2, q >> 1);
     if (wz) {
-      if (fwd ? md(a - n, q) === 0 : md(a + n, q) === 0) out.push([a + (fwd ? 1 : -1), bb, 'x']);
+      if (fwd ? md(a - n, qs) === 0 : md(a + n, qs) === 0) out.push([a + (fwd ? 1 : -1), bb, 'x']);
     }
     if (wx) {
-      if (fwd ? md(bb - n, q) === 0 : md(bb + n, q) === 0) out.push([a, bb + (fwd ? 1 : -1), 'z']);
+      if (fwd ? md(bb - n, qs) === 0 : md(bb + n, qs) === 0) out.push([a, bb + (fwd ? 1 : -1), 'z']);
     }
     return out;
   };

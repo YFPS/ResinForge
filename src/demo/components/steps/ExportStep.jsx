@@ -73,9 +73,7 @@ export default function ExportStep() {
         />
         <SwitchRow
           label="连接底板"
-          desc={params.supMode === 'tower'
-            ? `把支撑塔底部的锯齿收成一条立起来的连接条；模型随之抬高一个板高（当前 ${+joinPlateHeight(params).toFixed(2)} mm），板上的支撑与不开时相同`
-            : '把支撑塔底部的锯齿收成一条立起来的连接条（只对支撑塔生效，树状支撑不加）'}
+          desc={`把支撑塔底部的锯齿收成一条立起来的连接条；模型随之抬高一个板高（当前 ${+joinPlateHeight(params).toFixed(2)} mm），板上的支撑与不开时相同`}
           checked={!!params.baseJoin}
           onChange={v => runTask('base-join', () => setBaseJoin(v, setParam))}
         />

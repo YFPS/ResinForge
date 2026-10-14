@@ -18,7 +18,7 @@ export function joinPlateHeight(P) {
   return Math.max(Math.max(0, num(P.esFoundH, 1)) + hs * 0.85, 1.5);
 }
 
-/** 当前参数下模型应额外抬高多少：支撑塔模式且开了连接底板才抬（树状模式没有连接底板） */
+/** 当前参数下模型应额外抬高多少：开了连接底板才抬 */
 export function joinLiftWanted(P) {
-  return P.baseJoin && P.supMode === 'tower' ? joinPlateHeight(P) : 0;
+  return P.baseJoin ? joinPlateHeight(P) : 0;
 }

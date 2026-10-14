@@ -4,14 +4,14 @@ import React from 'react';
 import {
   ArrowRight, Box, Compass, Download, Eraser, Flame, FolderOpen, FolderPlus, Grid3x3, Info, Layers, Moon, MousePointer2,
   Paintbrush, PanelLeft, Palette, Plus, RefreshCw, ScanLine, ShieldAlert, Sparkles, Square, Sun, SunMoon,
-  Trash2, TreePine, Building2, ExternalLink, Minus, TerminalSquare, Crosshair,
+  Trash2, ExternalLink, Minus, TerminalSquare, Crosshair,
 } from 'lucide-react';
 import { setMode, clearProtectedFaces } from '../core/scene.js';
 import { setHeat } from '../core/heat.js';
 import { pushToast } from './bridge.js';
 import {
   DEMOS, doLoadDemo, doOrient, doAnalyze, doGenSupports, doRebuild, doClearSupports, doExport,
-  doOptimizeSupports, doTogglePoints, pickSTL, setSupMode, setShortKind, setBaseType,
+  doTogglePoints, pickSTL, setBaseType,
 } from './actions.js';
 import { state } from '../store.js';
 import { STEPS, goStep, runTask, toggleSidebar } from './ui.js';
@@ -51,12 +51,7 @@ export function buildCommands(ctx) {
     { id: 'sup-isl', group: '支撑', title: '只补孤岛支撑', hint: '保留已有支撑点', icon: ic(ShieldAlert), run: () => { goStep('support'); return runTask('sup-isl', () => doGenSupports({ islandsOnly: true })); } },
     { id: 'sup-rebuild', group: '支撑', title: '按当前参数重建结构', icon: ic(RefreshCw), run: () => { goStep('support'); return runTask('sup-rebuild', doRebuild); } },
     { id: 'sup-clear', group: '支撑', title: '清空支撑', icon: ic(Trash2), run: doClearSupports },
-    { id: 'sup-opt', group: '支撑', title: '支撑优化', hint: '孤立底座加交叉两岸', icon: ic(Sparkles), run: () => { goStep('support'); return runTask('sup-opt', doOptimizeSupports); } },
     { id: 'sup-points', group: '支撑', title: state.viewPointsOnly ? '显示支撑结构' : '只显示支撑点', hint: '小球附着在模型上', icon: ic(Crosshair), run: () => { goStep('support'); doTogglePoints(!state.viewPointsOnly); } },
-    { id: 'mode-tree', group: '支撑', title: '支撑结构：树状', icon: ic(TreePine), run: () => runTask('sup-mode', () => setSupMode('tree', setParam)) },
-    { id: 'mode-tower', group: '支撑', title: '支撑结构：支撑塔', hint: 'e-Stage 菱形格架', icon: ic(Building2), run: () => runTask('sup-mode', () => setSupMode('tower', setParam)) },
-    { id: 'short-tree', group: '支撑', title: '短小支撑：树状细尖', hint: '落在模型上的一端收细', icon: ic(TreePine), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tree', setParam)); } },
-    { id: 'short-plate', group: '支撑', title: '短小支撑：支撑塔', hint: '十字短杆两端收到接触宽', icon: ic(Square), run: () => { goStep('support'); setParam('shortSup', true); return runTask('sup-short', () => setShortKind('tower', setParam)); } },
 
     { id: 'vmode-orbit', group: '视口', title: '旋转视角', icon: ic(MousePointer2), run: () => setMode('orbit') },
     { id: 'vmode-paint', group: '视口', title: '涂画保护面', icon: ic(Paintbrush), run: () => { goStep('orient'); setMode('paint'); } },

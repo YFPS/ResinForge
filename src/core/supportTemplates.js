@@ -1,5 +1,5 @@
 /* ================================================================
-   支撑模板：按支撑粗细套用一组树状 / 支撑塔参数（框架无关，core 层，不 import React）
+   支撑模板：按支撑粗细套用一组支撑塔参数（框架无关，core 层，不 import React）
    来源：HeyGears 工艺包导出 support_params_PAP10_family_flat.csv（pp_id 可回查原表）。
    换算口径（HeyGears 界面的 r2d 规则）：表内 diameter / sphereRadius / tipRadius 是半径口径，
    界面显示值 = 表内值 × 2。所以「主干直径」（界面 Trunk Diameter，即连接体直径）= 2 × diameter，
@@ -16,9 +16,9 @@
      壳层缩减 esHullRed 决定底部菱形大小——细 / 中细 = 0 级，底部与上部同为菱形宽 w（最密）；
      中粗 / 粗 = 1 级，每下降一个柱高内部菱形放大一倍（底部约 2w）。
      连接数不变（同一批支撑点都接得上），只改底部几何；代价是 0 级的杆件约为 1 级的 2～3 倍，生成更慢。
-   针最大长（2026-10-12 定，用户：粗支撑的支撑塔里混入了树状支撑）：= 10 × 主干直径（细 6 / 中细 7.5 / 中粗 8.5 / 粗 9.5 mm），长细比不变。
-     菱形宽随直径放大后格架节点变稀，针仍固定 6 mm、方向偏差仍限 25° 时，粗模板环面结 180 点里 69 点接不上格架、17 点落到树状兜底；
-     放到 9 mm 后 31 点、2 点。
+   针最大长（2026-10-12 定）：= 10 × 主干直径（细 6 / 中细 7.5 / 中粗 8.5 / 粗 9.5 mm），长细比不变。
+     菱形宽随直径放大后格架节点变稀，针仍固定 6 mm、方向偏差仍限 25° 时，粗模板环面结 180 点里 69 点接不上格架；
+     放到 9 mm 后 31 点。
    原表的粗档间距（1.5）反而比细档（2.0）更密，与等强度判断相反，这里不采用。
    模板不改切片层厚（层厚请在分析步骤里设置），也不改模型抬高（统一以 4 mm 为准）和临界角（统一以 45° 为准）。
 ================================================================ */
@@ -55,9 +55,7 @@ const SOURCES = {
 
 /* 表内字段 → 本系统参数（换算规则）
    共用：支撑间距 = max(3.3 × 主干直径, 2.5 × (主干直径 + 0.4)) → spacing（等强度 + 防粘连，见文件头）；
-         网格边界偏移 → edgeInset；嵌入深度 → pen（树状嵌入 / 支撑塔渗透长度）。
-   树状：接触球半径 ×2 → tipD（前端球直径）；主干直径 = 2 × diameter → midD（分支直径）与 anchorD（锚点直径）；
-         底座高 → baseH。
+         网格边界偏移 → edgeInset；嵌入深度 → pen（渗透长度）。
    支撑塔：菱形宽 = 5.8 × 主干直径 → esCell，菱形竖高 = 1.4 × 菱形宽 → esDiamAngle（菱形角 = atan 竖高/菱形宽）；
            主干直径 = 2 × diameter → esBarW（边宽）与 esConnW（连接宽）；边厚 = 边宽 → esBarT（墙厚），针板厚 = 连接宽 → esNeedleT（等宽方截面）；
            尖半径 ×2 → esTipW（接触宽）；过渡段 = 原表连接长（黑格「连接体长度」，四个工艺包均为 1.5 mm，不再减 0.5；粗档 taper 覆盖为 2.5 mm），接触边距取 0（针头为纯梯形）；
@@ -77,12 +75,6 @@ function toParams(s) {
       spacing,
       edgeInset: s.boundaryOffset,
       pen: s.embeddedDepth,
-    },
-    tree: {
-      tipD: r3(2 * s.sphereRadius),
-      midD: trunk,
-      anchorD: trunk,
-      baseH: s.baseHeight,
     },
     tower: {
       esCell: cell,
@@ -104,7 +96,7 @@ function toParams(s) {
 
 /** 四套支撑模板（细 → 粗）。name 为界面显示名；diameter（主干直径，已 ×2）、spacing（支撑间距）与 tipW（接触宽）即粗细的依据，source 为界面说明里的出处 */
 export const SUPPORT_TEMPLATES = Object.entries(SOURCES).map(([id, s]) => {
-  const { shared, tree, tower } = toParams(s);
+  const { shared, tower } = toParams(s);
   return {
     id,
     name: s.label,
@@ -114,7 +106,7 @@ export const SUPPORT_TEMPLATES = Object.entries(SOURCES).map(([id, s]) => {
     tipW: tower.esTipW,
     source: s.source,
     ppId: s.ppId,
-    shared, tree, tower,
+    shared, tower,
   };
 });
 
@@ -122,7 +114,7 @@ export function getSupportTemplate(id) {
   return SUPPORT_TEMPLATES.find(t => t.id === id) || null;
 }
 
-/** 模板要写入 params 的全部键值（共用 + 树状 + 支撑塔；与当前结构模式无关） */
+/** 模板要写入 params 的全部键值（共用 + 支撑塔） */
 export function templateParams(t) {
-  return { ...t.shared, ...t.tree, ...t.tower };
+  return { ...t.shared, ...t.tower };
 }

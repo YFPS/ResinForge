@@ -4,10 +4,8 @@
    - 支撑点：LDI 栅格悬空点 + 陡峭面（大三角形细分采样）+ 孤岛关键点，经区域面积过滤 /
      六角均匀布点（目标为设定间距，最近可收到约 0.68×，空洞补到覆盖半径 0.85× 以内；
      覆盖锥仅同一悬空区域，水平半径封顶 1.25×）/ 贴面·已托住·保护面过滤；每点带被托面外法线 n
-   - 结构：两种几何体系择一（params.supMode）
-     · 'tree'  树状支撑：PrusaSlicer branching tree（supportTree.js）
-     · 'tower' 支撑塔：Materialise e-Stage 菱形格架支撑塔（supportTower.js，依据 e-Stage 专利 US8903533B2 与官方实拍）
-   与 PrusaSlicer 一致：手动增删的是支撑点，结构由点集整体重建——树/格架的分支互相连接，不能逐根增删
+   - 结构：支撑塔（Materialise e-Stage 菱形格架，supportTower.js）
+   手动增删的是支撑点，结构由点集整体重建——格架的杆件互相连接，不能逐根增删
    避让：一律基于模型 BVH 的胶囊体净空判定（collide.js），取代旧实现的单条竖直射线
 ================================================================ */
 import * as THREE from 'three';
@@ -18,14 +16,12 @@ import { baseY, raiseH, placeModelAtLift } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
 import { joinLiftWanted } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
-import { buildBranchingTree } from './supportTree.js';
 import { buildEStageTowers } from './supportTower.js';
 import { layoutAsync } from './geomClient.js';
-import { crossGroundPosts } from './supportOptimize.js';
 import { mergeParts } from './supportKit.js';
 
 const PROT_R = 1.0;          // 保护面抑制半径：接触点（及模型锚点）1mm 内有任一保护面即不放
-const MAX_POINTS = 3000;     // 支撑点上限（树状/格架会合并分支，点数可比旧的独立 pin 多）
+const MAX_POINTS = 3000;     // 支撑点上限（格架会合并分支，点数可比旧的独立 pin 多）
 
 /* ---------- 状态 ---------- */
 let pointMesh = null;
@@ -278,12 +274,11 @@ export function clearSupports(refresh = true) {
   state.supportPoints = [];
   if (state.supportSel) state.supportSel.clear();
   state.supportStats = null;
-  state.groundPosts = null;
   if (refresh) { updateSupStats(); if (state.analysis) drawLayer(); }
 }
 export function updateSupStats() {
   const s = state.supportStats;
-  bus.emit('supStats', s ? { ...s, prot: state.protectedFaces.size } : { mode: params.supMode, points: state.supportPoints.length, prot: state.protectedFaces.size });
+  bus.emit('supStats', s ? { ...s, prot: state.protectedFaces.size } : { mode: 'tower', points: state.supportPoints.length, prot: state.protectedFaces.size });
 }
 
 /* 参数快照（结构生成器只读快照，缺省值兜底） */
@@ -291,20 +286,13 @@ function paramSnapshot() {
   const p = params, num = (v, d) => (Number.isFinite(v) ? v : d);
   return {
     selfAngle: num(p.selfAngle, 45), shortSup: !!p.shortSup, spacing: num(p.spacing, 2.5),
-    shortKind: p.shortKind === 'tower' ? 'tower' : 'tree',
-    tipMode: p.tipMode || 'normal', tipTilt: num(p.tipTilt, 45),   // 接触朝向 / 接触最大倾角（两套结构共用）
-    // 树状（PrusaSlicer branching 默认值）
-    tipD: num(p.tipD, 0.4), pen: num(p.pen, 0.2), headLen: num(p.headLen, 1.0), midD: num(p.midD, 0.6),
-    anchorD: num(p.anchorD, 0.6),
-    maxBranchD: num(p.maxBranchD, 2.0), widening: num(p.widening, 0.5), baseD: num(p.baseD, 3), baseH: num(p.baseH, 1),
-    maxBridgeLen: num(p.maxBridgeLen, 5), maxBranchLen: num(p.maxBranchLen, 10), maxWeightOnModel: num(p.maxWeightOnModel, 10),
+    tipMode: p.tipMode || 'normal', tipTilt: num(p.tipTilt, 45),   // 接触朝向 / 接触最大倾角
+    pen: num(p.pen, 0.2),                                          // 渗透长度（针尖扎入模型）
     // 支撑塔（e-Stage 菱形格架）
     esCell: num(p.esCell, 3.5), esDiamAngle: num(p.esDiamAngle, 55), esMidBars: p.esMidBars !== false,
     esBarW: num(p.esBarW, 0.6), esBarT: num(p.esBarT, 0.6), esGap: num(p.esGap, 1.2),
     esColRatio: num(p.esColRatio, 7), esTowerMaxR: num(p.esTowerMaxR, 4), esHullRed: num(p.esHullRed, 0),
     esConnW: num(p.esConnW, 0.6), esNeedleT: num(p.esNeedleT, 0.6), esTipW: num(p.esTipW, 0.3), esContactMargin: num(p.esContactMargin, 0), esTaper: num(p.esTaper, 1), esNeedleMax: num(p.esNeedleMax, 6),
-    esFallback: p.esFallback === 'none' ? 'none' : 'tree',   // 连不上格架的点：树状兜底（默认）/ 标红不生成
-    esShortKind: p.esShortKind === 'tree' ? 'tree' : 'tower',   // 塔模式短小支撑样式：十字短杆（默认）/ 不用十字短杆
     esFoundH: num(p.esFoundH, 1), esNotchH: num(p.esNotchH, 0.5), baseJoin: !!p.baseJoin, baseChamfer: !!p.baseChamfer, baseFlush: !!p.baseFlush, baseHole: !!p.baseHole,
   };
 }
@@ -532,7 +520,7 @@ async function collectContactPoints(ctx, islandsOnly) {
   const { bvh, ld, faces, groundY, protNear } = ctx;
   const spacing = Math.max(0.5, params.spacing);
   // 防粘连：相邻支撑的中心距不小于 主干直径 + 0.4 mm（净距），粗支撑即使间距按比例放大，也不能被布点挤到几乎贴在一起
-  const clearD = (params.supMode === 'tower' ? params.esBarW : params.midD) + 0.4;
+  const clearD = params.esBarW + 0.4;
   const edgeInset = Math.max(0, Number.isFinite(params.edgeInset) ? params.edgeInset : 1.5);
   const rep = { regions: 0, charts: 0, edgePts: 0, innerPts: 0, areaPruned: 0, heldFaces: 0, protFaces: 0, seeds: 0, low: 0, flush: 0, held: 0, wall: 0, prot: 0, pack: 0, filled: 0, capped: 0, islands: 0, islandsNoPoint: 0 };
   const tick = makeYielder();
@@ -851,7 +839,7 @@ async function collectContactPoints(ctx, islandsOnly) {
 }
 
 /* ================================================================
-   结构重建：按当前模式从支撑点集生成树状 / 格架几何
+   结构重建：从支撑点集生成支撑塔格架几何
 ================================================================ */
 const STATE_TEXT = { ground: '落地', mesh: '锚定模型', micro: '微型短柱', nohead: '头部无法放置', unroutable: '无法路由' };
 
@@ -925,17 +913,16 @@ export async function rebuildStructure() {
   ctx.yieldUI = makeYielder();
   ctx.progress = (p, text) => { if (seq === buildSeq) setProgress(p, text); };
   const P = paramSnapshot();
-  const mode = params.supMode === 'tower' ? 'tower' : 'tree';
   const pts = state.supportPoints.slice();            // 快照：后台计算期间点集可能被改
   // 支撑点的布点位置（锚点 ax / ay / az）：支撑塔会把点挪到针尖的接触点（≤ 接触宽），每次重建都从布点位置重新算——
-  // 多次重建之间不累积漂移，切回树状时恢复布点的均匀分布
+  // 多次重建之间不累积漂移
   for (const p of pts) {
     if (p.ax === undefined) { p.ax = p.x; p.ay = p.y; p.az = p.z; }
     else { p.x = p.ax; p.y = p.ay; p.z = p.az; }
   }
   let res;
   try {
-    res = mode === 'tower' ? await buildEStageTowers(ctx, pts, P) : buildBranchingTree(ctx, pts, P);
+    res = await buildEStageTowers(ctx, pts, P);
   } catch (err) {
     if (err && err.aborted) return null;              // 排队时就被更新的请求取代
     if (seq === buildSeq) setProgress(null);
@@ -944,15 +931,6 @@ export async function rebuildStructure() {
   if (seq !== buildSeq || state.analysis !== A0 || state.mesh !== M0) { disposeResult(res); return null; }
   // 算完再换：旧支撑在计算期间一直留在画面上，不会先消失一两秒
   clearMeshes();
-  state.groundPosts = res.posts || null;
-  if (params.supOptimize !== false && res.posts && res.posts.length) {
-    const opt = crossGroundPosts(ctx, res.posts, P);
-    if (opt.geom) res.geomGround = mergeParts([res.geomGround, opt.geom].filter(Boolean));
-    res.stats.optRibs = opt.ribs;
-    res.stats.optGussets = opt.gussets;
-    res.stats.optIsolated = opt.isolated;
-    res.stats.optSkipped = opt.skipped;
-  }
   const add = (g, mat, kind) => {
     if (!g) return;
     const m = new THREE.Mesh(g, mat);
@@ -961,44 +939,18 @@ export async function rebuildStructure() {
     state.supports.push({ mesh: m, kind });
   };
   add(res.geomGround, supMat, 'ground');
-  add(res.geomGround2, supMat, 'ground');            // 支撑塔模式：兜底树的落地部分（格架塔本身是 geomGround）
+  add(res.geomGround2, supMat, 'ground');            // 兜底件（十字短杆 / 分叉主干）的落地部分（格架塔本身是 geomGround）
   add(res.geomAnchor, supMatAnchor, 'anchor');
   add(res.geomBase, supMatBase, 'base');
   pts.forEach((p, k) => { p.state = res.pointState[k] || ''; });
   const ok = pts.filter(p => p.state === 'ground' || p.state === 'mesh' || p.state === 'micro').length;
-  state.supportStats = { mode, ...res.stats, ok, ms: Math.round(performance.now() - t0) };
+  state.supportStats = { mode: 'tower', ...res.stats, ok, ms: Math.round(performance.now() - t0) };
   syncPointMarkers();
   prepareSupportColors();
   setProgress(null);
   updateSupStats();
   drawLayer();
-  if (res.stats.optIsolated) {
-    log(`支撑优化：单个底座 ${res.stats.optIsolated} 处，交叉两岸 ${res.stats.optRibs || 0} 组（${res.stats.optGussets || 0} 根斜杆）${res.stats.optSkipped ? `，${res.stats.optSkipped} 处过远或会穿模已跳过` : ''}`, 'ok');
-  }
   return res;
-}
-
-/** 对已经生成的落地支撑再跑一遍交叉两岸（不重新布点）。已经加过就不再叠一层。 */
-export function optimizeSupports() {
-  if (!state.analysis || !state.mesh) { toast('请先生成支撑'); return null; }
-  const ground = state.supports.find(s => s.kind === 'ground');
-  if (!ground) { toast('没有落到底板的支撑'); return null; }
-  if (!state.groundPosts || !state.groundPosts.length) { toast('没有可加交叉撑的竖直落地柱'); return null; }
-  if ((state.supportStats || {}).optRibs) { log('交叉撑已经加过，没有再叠一层', 'ok'); return state.supportStats; }
-  const ctx = makeCtx();
-  const P = paramSnapshot();
-  const opt = crossGroundPosts(ctx, state.groundPosts, P);
-  if (opt.geom) {
-    // mergeParts 会释放传入的几何，返回的新几何直接换上
-    ground.mesh.geometry = mergeParts([ground.mesh.geometry, opt.geom]);
-  }
-  const prev = state.supportStats || {};
-  state.supportStats = { ...prev, optRibs: (prev.optRibs || 0) + opt.ribs, optGussets: (prev.optGussets || 0) + opt.gussets, optIsolated: opt.isolated, optSkipped: opt.skipped };
-  updateSupStats();
-  if (!opt.ribs) log(opt.isolated ? '这些单个底座没能连上（距离超过 70mm，或交叉撑会穿进模型）' : '底板已经连在一起，没有需要再加的交叉撑', 'ok');
-  else log(`支撑优化：单个底座 ${opt.isolated} 处，新增交叉两岸 ${opt.ribs} 组（${opt.gussets} 根斜杆）${opt.skipped ? `，跳过 ${opt.skipped}` : ''}`, 'ok');
-  prepareSupportColors();
-  return opt;
 }
 
 export async function runGenSup(opts = {}) {
@@ -1024,29 +976,23 @@ export async function runGenSup(opts = {}) {
   }
   const res = await rebuildStructure();
   if (!res) return;                                   // 计算期间又发起了新的重建，日志交给那一次
-  const s = res.stats, mode = params.supMode === 'tower' ? '支撑塔' : '树状';
+  const s = res.stats;
   const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点` : `支撑点 ${state.supportPoints.length} 个`;
   log(islandsOnly
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
       + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.5}mm）`, 'ok');
-  if (params.supMode === 'tower') {
-    const al = (s.needlesV || 0) + (s.needlesP || 0);
-    if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}）· 自由直针 ${s.needlesFree || 0} 根${s.needlesNear ? `（其中就近接格架 ${s.needlesNear} 根）` : ''}；同向针的支撑点已挪到接触点（平均 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）`, 'ok');
-    // 连不上格架的点：默认转树状兜底（会与格架混在一起）；选「标红不生成」则这些点只标红、不出结构
-    const plateOn = params.esShortKind === 'tower' && params.shortSup;   // 十字短杆（贴面短连接）
-    const fb = !s.fallback ? '全部连上格架'
-      : params.esFallback !== 'tree'
-        ? (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`)
-        : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}，绕到平台 ${s.ground || 0}` : `连不上格架转树状兜底 ${s.fallback} 点（落地 ${s.ground} · 锚定 ${s.anchors} · 微型短柱 ${s.micro}）`);
-    log(`e-Stage 支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
-    if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
-  } else {
-    log(`树状支撑：支撑头 ${s.heads}，合并 ${s.merges}，桥接 ${s.bridges}，避让下行 ${s.avoid}，落地柱 ${s.ground}，锚定模型 ${s.anchors}${s.shortAnchors ? `（其中短锚 ${s.shortAnchors}：间隙放不下锚头，竖直细颈短柱）` : ''}${s.heavy ? `，超重锚定 ${s.heavy}：负载超过模型最大负载但无路落地` : ''}，微型短柱 ${s.micro}${s.plates ? `，桥板 ${s.plates}` : ''}${s.posts ? `，竖直立柱锚定 ${s.posts}：无路落地、正下方是模型面` : ''}${s.thinPosts ? `，细落地柱 ${s.thinPosts}：加粗后的落地柱塞不进窄缝` : ''}，${state.supportStats.ms}ms`, 'ok');
-  }
+  const al = (s.needlesV || 0) + (s.needlesP || 0);
+  if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}）· 自由直针 ${s.needlesFree || 0} 根${s.needlesNear ? `（其中就近接格架 ${s.needlesNear} 根）` : ''}；同向针的支撑点已挪到接触点（平均 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）`, 'ok');
+  // 连不上格架的点：就近接格架 / 分叉 / 十字短杆之后仍接不上的，标红、不生成结构
+  const plateOn = !!params.shortSup;   // 十字短杆（贴面短连接）
+  const fb = !s.fallback ? '全部连上格架'
+    : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
+  log(`e-Stage 支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
+  if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   const bad = (s.noHead || 0) + (s.unroutable || 0);
-  if (bad) log(`⚠ ${mode}结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');
-  if (s.unconnected) log(`⚠ ${s.unconnected} 个支撑点连不上格架，已标红、未生成结构（可加点 / 删点，或把「连不上时」改为树状兜底）`, 'warn');
+  if (bad) log(`⚠ 支撑塔结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');
+  if (s.unconnected) log(`⚠ ${s.unconnected} 个支撑点连不上格架，已标红、未生成结构（可加点 / 删点）`, 'warn');
   if (rep.islandsNoPoint) log(`⚠ ${rep.islandsNoPoint} 处孤岛没有可放置的支撑点（贴面/保护面/间隙过小），请检查层检查器`, 'warn');
   // 孤岛结构覆盖：有支撑点的孤岛，至少一个点须生成结构，否则该孤岛实际悬空
   const isl = new Map();
@@ -1055,7 +1001,7 @@ export async function runGenSup(opts = {}) {
     isl.set(p.island, isl.get(p.island) || ['ground', 'mesh', 'micro'].includes(p.state));
   }
   const islFail = [...isl.values()].filter(v => !v).length;
-  if (islFail) log(`⚠ ${islFail} 处孤岛的支撑点全部未能生成结构（该孤岛将悬空），请查看层检查器红点或改用另一种结构`, 'warn');
+  if (islFail) log(`⚠ ${islFail} 处孤岛的支撑点全部未能生成结构（该孤岛将悬空），请查看层检查器红点`, 'warn');
   if (rep.capped) log(`⚠ 支撑点达到上限 ${MAX_POINTS}，其余 ${rep.capped} 个候选未放置（可增大支撑间距）`, 'warn');
 }
 

@@ -27,12 +27,11 @@
      接触点重定义为针轴延长线与模型的首个交点（偏移受限）
    - 自由直针（兜底，FIG.13a 斜向连接）：接触点不动；错切十字柱，针脚截面与「+」柱顶一致（FIG.13c 截面 A-A′）
    基础带（手册 Foundation）：底层节点按墙线连成段，墙下沿实心带，相邻竖杆之间的底边开三角缺口
-   连不上格架的支撑点：能直接落到朝上表面时，按短小支撑样式处理（树状细尖，或单片竖板）。
-   其余仍交给树状支撑绕行落地。竖板是单独的一块，不沿格架边接针，也不在两层之间再铺一套菱形格。
+   连不上格架的支撑点：就近接格架 → 分叉（一主干两头）→ 十字短杆（接到下方表面或平台）；
+   仍接不上的标红、不生成结构（由用户加点 / 删点处理）。
 ================================================================ */
 import * as THREE from 'three';
 import { pointDist, capsuleClear, coneClear, ldiInside, raycast } from './collide.js';
-import { buildBranchingTree } from './supportTree.js';
 import { mergeParts, dirCandidates, tipCone, bridgeToSurface, bridgeSpan } from './supportKit.js';
 import { solidifyAsync } from './geomClient.js';
 import { joinPlateHeight } from './joinPlate.js';
@@ -652,7 +651,7 @@ export async function buildEStageTowers(ctx, points, P) {
     }
     if (!hook) {                                     // 就近接格架（2026-10-12 用户：「这种就直接算法就近连接啊」——别让短杆孤零零立在格架旁边）
       // 常规两种针都接不上时：在 2 倍针最大长内找最近的已保留节点直连；针身仍须在临界锥内（自支撑），
-      // 接触方向放宽到接触最大倾角（常规自由直针限 25°）。接不上的才交给分叉 / 十字短杆 / 树状兜底
+      // 接触方向放宽到接触最大倾角（常规自由直针限 25°）。接不上的才交给分叉 / 十字短杆 / 标红
       const C = [p.x, p.y, p.z], reach = 2 * Lmax, rr = Math.ceil(reach / hc);
       const nq = p.n || [0, -1, 0], cosTip = Math.cos(tc.tilt);
       const ci = Math.floor(p.x / hc), cj = Math.floor(p.y / hc), ck = Math.floor(p.z / hc);
@@ -1278,12 +1277,11 @@ export async function buildEStageTowers(ctx, points, P) {
   }
 
   /* ---------- 7. 兜底：连不上格架的点 ----------
-     短小支撑样式为「支撑塔」时：相邻两点先试「分叉」（一主干两头，见 forkSolve）；其余正下方有朝上表面的点用「十字贴面短连接」（gusset）直接连过去；
+     相邻两点先试「分叉」（一主干两头，见 forkSolve）；其余正下方有朝上表面的点用「十字贴面短连接」（gusset）直接连过去；
      形态参考 e-Stage 手册的 close-to-part 连接（§5.2.6 / FIG.13 的直连接），几何为本项目自研：
      十字截面（连接宽 × 针板厚，水平截面恒为「+」）+ 两端渐缩到接触宽 + 渗透扎入——
      不做专利图中的「根部喇叭锥」，接触点保持细，省树脂、好折断。
-     放不下的点仍可绕到平台，但不再往模型上种树状锚点。
-     短小支撑样式为「树状细尖」时，整段仍交给树状支撑。 */
+     放不下的点仍可绕到平台；仍接不上的标红、不生成结构。 */
   /* 十字针截面的杆：A→B，截面沿轴渐变；thinA / thinB 决定该端是否收到接触宽（默认两端都细 = 十字贴面短连接）。
      分叉的主干 / 头：分叉点 F 端保持连接宽（粗），落点 / 接触端收细。 */
   // penA / penB：两端沿杆轴扎入的长度（默认渗透长度）；落到平台的一端为 0——平头立在平台上，不扎到平台下面
@@ -1292,7 +1290,7 @@ export async function buildEStageTowers(ctx, points, P) {
   const emitMember = (gBuf, A, B, thinA = true, thinB = true, penA = pen, penB = pen, flatA = false) => {
     const ax = [A.x, A.y, A.z], bx = [B.x, B.y, B.z];
     const d = sub(bx, ax), L = len(d);
-    if (L < 0.35) return false;                                // 更短的间隙交给树状侧微柱处理
+    if (L < 0.35) return false;                                // 更短的间隙放不下短杆，不生成
     const u = [d[0] / L, d[1] / L, d[2] / L];
     const cm = Math.min(cMargin, L * 0.24);                    // 接触段（表面外的细直段）
     let tp = Math.min(taper, Math.max(0.06, L * 0.22));        // 过渡段（接触宽 → 连接宽）
@@ -1322,14 +1320,13 @@ export async function buildEStageTowers(ctx, points, P) {
     return true;
   };
   let geomTreeG = null, geomTreeA = null;
-  // 兜底件（树状落地柱 / 十字短杆 / 分叉主干）一律落到真正的平台（或筏层顶）上：连接底板只是沿底层墙线的一圈竖立板条，不是整块板。
+  // 兜底件（十字短杆 / 分叉主干）一律落到真正的平台（或筏层顶）上：连接底板只是沿底层墙线的一圈竖立板条，不是整块板。
   // 旧实现按板顶 topY 落地，落点正下方没有立板时就停在离平台约 3 mm 的半空（环面结 13 个落点里 9 个悬空，用户 2026-10-12 报
   // 「开启连接底板后出支撑就出 bug」）。落点正好压在立板上时与立板重叠，导出时布尔并熔成一体
-  const treeCtx = ctx;
-  if (fallbackIdx.length && P.shortSup && P.esShortKind === 'tower') {
+  if (fallbackIdx.length && P.shortSup) {
     const plates = [];
     const rest = [];
-    const rTip = Math.max(0.12, (P.tipD || 0.4) / 2);
+    const rTip = 0.2;   // 短连接接触端半径（原取树状前端球直径的一半，固定为 0.2）
     const tiltMax = Math.PI / 2 - Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
     const gBuf = new TriBuf();
     const gBufG = new TriBuf();   // 落到平台的短杆 / 分叉：属落板支撑，归入绿色那一组（落到模型上的才是琥珀色的短小支撑）
@@ -1358,7 +1355,7 @@ export async function buildEStageTowers(ctx, points, P) {
         }
         if (!ok) continue;
         // 主干：自 F 竖直落到朝上的模型面或平台（与十字短杆同一套落地判定，中途不碰模型）
-        const tr = bridgeSpan(bvh, ctx.faces, F, { dir: [0, -1, 0], maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: false, rFrom: 0.3, groundY: treeCtx.groundY });
+        const tr = bridgeSpan(bvh, ctx.faces, F, { dir: [0, -1, 0], maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: false, rFrom: 0.3, groundY: ctx.groundY });
         if (!tr || Math.hypot(tr.lower.x - F.x, tr.lower.y - F.y, tr.lower.z - F.z) < 0.35) continue;
         return { F, trunk: tr.lower, ground: tr.ground };
       }
@@ -1397,7 +1394,7 @@ export async function buildEStageTowers(ctx, points, P) {
     for (const pi of fallbackIdx) {
       if (paired.has(pi)) continue;
       const s = bridgeToSurface(ctx.bvh, ctx.faces, points[pi], {
-        rTip, maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax, groundY: treeCtx.groundY,
+        rTip, maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax, groundY: ctx.groundY,
       });
       if (s && emitMember(s.ground ? gBufG : gBuf, s.lower, s.upper, !s.ground, true, s.ground ? 0 : pen, pen, s.ground)) {
         pointState[pi] = s.ground ? 'ground' : 'mesh';
@@ -1408,31 +1405,19 @@ export async function buildEStageTowers(ctx, points, P) {
     }
     const gg = gBuf.geometry();
     if (gg) plates.push(gg);
-    if (rest.length && P.esFallback !== 'tree') {
-      // 不兜底树状：连不上格架、也贴不上面的点不生成支撑，标红，由用户加点或改用树状模式
+    if (rest.length) {
+      // 连不上格架、也贴不上面的点不生成支撑，标红，由用户加点 / 删点处理
       for (const pi of rest) pointState[pi] = 'unroutable';
       st.unconnected = rest.length;
-    } else if (rest.length) {
-      const tr = buildBranchingTree(treeCtx, rest.map(i => points[i]), P);
-      geomTreeG = tr.geomGround;
-      if (tr.geomAnchor) plates.push(tr.geomAnchor);
-      rest.forEach((pi, k) => { pointState[pi] = tr.pointState[k]; });
-      for (const k of ['ground', 'anchors', 'shortAnchors', 'micro', 'plates', 'noHead', 'unroutable']) st[k] += tr.stats[k] || 0;
     }
     const ggG = gBufG.geometry();
     if (ggG) geomTreeG = geomTreeG ? mergeParts([geomTreeG, ggG]) : ggG;
     geomTreeA = plates.length ? mergeParts(plates) : null;
     st.fallback = fallbackIdx.length;
-  } else if (fallbackIdx.length && P.esFallback !== 'tree') {
+  } else if (fallbackIdx.length) {
     for (const pi of fallbackIdx) pointState[pi] = 'unroutable';
     st.unconnected = fallbackIdx.length;
     st.fallback = fallbackIdx.length;
-  } else if (fallbackIdx.length) {
-    const tr = buildBranchingTree(treeCtx, fallbackIdx.map(i => points[i]), P);
-    geomTreeG = tr.geomGround; geomTreeA = tr.geomAnchor;
-    fallbackIdx.forEach((pi, k) => { pointState[pi] = tr.pointState[k]; });
-    st.fallback = fallbackIdx.length;
-    for (const k of ['ground', 'anchors', 'shortAnchors', 'micro', 'plates', 'noHead', 'unroutable']) st[k] = tr.stats[k] || 0;
   }
   // 格架塔（已是水密实体，导出直接复用）与兜底树的落地部分分开返回：树由各自闭合的构件堆成，导出时另做布尔并
   return {

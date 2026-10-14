@@ -486,10 +486,10 @@ function resetWork() {
   hideInspector();
 }
 
-/* 货架排版：底面积从大到小，沿 X 成行，放不下就沿 Z 换行；间距至少 4mm 且不小于底座直径，边距 3mm，整组再居中到板面 */
+/* 货架排版：底面积从大到小，沿 X 成行，放不下就沿 Z 换行；间距 4mm，边距 3mm，整组再居中到板面 */
 export function arrangeParts(parts) {
   const plateX = params.plateX || 150, plateZ = params.plateZ || 85;
-  const gap = Math.max(4, params.baseD || 3);
+  const gap = 4;
   const margin = ARRANGE_MARGIN;
   const items = parts.map(p => ({ p, w: p.size.x, d: p.size.z }));
   items.sort((a, b) => (b.w * b.d) - (a.w * a.d) || b.w - a.w);

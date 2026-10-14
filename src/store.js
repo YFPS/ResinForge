@@ -22,32 +22,17 @@ export const params = {
   layerH: 0.1,        // 层厚（mm）
   gapThresh: 0.35,    // 悬空阈值（mm）
   raiseH: 4,          // 模型抬高（mm）：支撑生成前模型底面离平台的默认高度
-  supOptimize: true,  // 支撑优化：底板没连上的单个支撑，用交叉两岸（剪刀撑）接到邻近支撑
   minIslArea: 0.5,    // 孤岛最小面积（mm²）
   minAttach: 1,       // 最小附着面积（mm²）
-  /* 支撑点（两种结构共用） */
+  /* 支撑点 */
   spacing: 2.5,       // 支撑间距（mm；默认与细档一致：间距 = max(3.3 × 主干直径, 2.5 × (主干直径 + 0.4))，粗支撑要按直径放大）：等距环上的点距；环与环之间的行距为间距 × √3/2（相邻环错开半步，近似正六角）
   edgeInset: 1.5,     // 边缘距离（mm）：支撑区域投影轮廓内缩这么多放第一圈（边缘环），边缘支撑离边处处一致
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
-  shortKind: 'tree',  // 短小支撑样式：'tree' 树状细尖 / 'tower' 支撑塔模式为十字贴面短连接（两端收到接触宽），树状模式为单片桥板
-  supMode: 'tree',    // 支撑结构：'tree' 树状（PrusaSlicer branching）/ 'tower' 支撑塔（Materialise e-Stage 菱形格架）
   tipMode: 'normal',  // 接触朝向：'normal' 沿法线（钳制到接触最大倾角）/ 'vertical' 竖直 / 'fixed' 固定倾角（沿法线方位）
   tipTilt: 45,        // 接触最大倾角（°，接触端与竖直方向夹角；针身 / 分支仍受自支撑角约束）
-  /* 树状支撑（PrusaSlicer branching tree，默认值取 PrusaSlicer branchingsupport_*） */
-  tipD: 0.4,          // 前端球直径（head_front_diameter，接触模型）
-  pen: 0.2,           // 嵌入深度（head_penetration）
-  headLen: 1.0,       // 支撑头长度（前后球心距 = r_pin + head_width + r_back）
-  midD: 0.6,          // 分支起始直径（pillar_diameter，后端球 / 叶分支）
-  anchorD: 0.6,       // 锚点直径：落在模型表面的接触端（锚定支撑头肩部 / 短锚细颈）直径，独立于分支直径
-  maxBranchD: 2.0,    // 分支最大直径（负载加粗上限）
-  widening: 0.5,      // 加宽系数（pillar_widening_factor：分支半径随负载线性增长的斜率）
-  baseD: 3,           // 底座直径（base_diameter）
-  baseH: 1,           // 底座高度（base_height）
-  maxBridgeLen: 5,    // 最大桥接长度（落地避让斜段上限，max_bridge_length）
-  maxBranchLen: 10,   // 最大分支长度（合并距离 / 单段下行上限，max_pillar_link_distance）
-  maxWeightOnModel: 10, // 模型上支撑最大负载（max_weight_on_model：分支累计长度超过则不锚到模型）
   /* 支撑塔（Materialise e-Stage 菱形格架；参数名对齐 e-Stage 7.0 手册 Grid / Top connection / Foundation） */
+  pen: 0.2,           // 渗透长度（Penetration length）：针尖沿针轴扎入模型的深度
   esCell: 3.5,        // 菱形宽（Diamond width：格架最小菱形宽 = 墙距）
   esDiamAngle: 55,    // 菱形角（Diamond angle：菱形斜边仰角，不低于自支撑临界角）
   esBarW: 0.6,        // 边宽（Edge width：菱形边在墙面内的宽度）
@@ -63,8 +48,6 @@ export const params = {
   esContactMargin: 0, // 接触边距（Contact margin：贴模型前保持接触宽的细直段长；0 = 针头为纯梯形，过渡段直接到接触点）
   esTaper: 1.5,       // 过渡段长（连接宽 → 接触宽 的渐缩长度；与黑格连接体长度一致，PAP10 / PAU10 / PARP10 / PAWR10 全部为 1.5 mm）
   esNeedleMax: 6,     // 针最大长度（格架节点到接触点）
-  esFallback: 'tree', // 连不上格架的点：'tree' 树状兜底（默认，按短小支撑样式生成，会与格架混在一起，避免留下悬空）/ 'none' 标红不生成（这些点没有支撑，只适合纯塔调试）
-  esShortKind: 'tower', // 支撑塔模式的短小支撑样式（先于树状兜底）：'tower' 十字短杆（默认，两端收到接触宽，接到下方表面或平台）/ 'tree' 不用十字短杆、直接交给树状兜底
   esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
   esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）
   baseJoin: true,     // 连接底板：支撑塔底部的锯齿收成一条实心立板（默认开）

@@ -3,7 +3,7 @@
 import React from 'react';
 import {
   ArrowRight, Box, Compass, Download, Eraser, Flame, FolderOpen, FolderPlus, Grid3x3, Info, Layers, Moon, MousePointer2,
-  Paintbrush, PanelLeft, Palette, Plus, RefreshCw, ScanLine, ShieldAlert, Sparkles, Square, Sun, SunMoon,
+  Paintbrush, PanelLeft, Palette, Plus, RefreshCw, ScanLine, ShieldAlert, Sparkles, Sun, SunMoon,
   Trash2, ExternalLink, Minus, TerminalSquare, Crosshair,
 } from 'lucide-react';
 import { setMode, clearProtectedFaces } from '../core/scene.js';
@@ -11,7 +11,7 @@ import { setHeat } from '../core/heat.js';
 import { pushToast } from './bridge.js';
 import {
   DEMOS, doLoadDemo, doOrient, doAnalyze, doGenSupports, doRebuild, doClearSupports, doExport,
-  doTogglePoints, pickSTL, setBaseType,
+  doCycleSupView, pickSTL, setBaseType,
 } from './actions.js';
 import { state } from '../store.js';
 import { STEPS, goStep, runTask, toggleSidebar } from './ui.js';
@@ -51,7 +51,7 @@ export function buildCommands(ctx) {
     { id: 'sup-isl', group: '支撑', title: '只补孤岛支撑', hint: '保留已有支撑点', icon: ic(ShieldAlert), run: () => { goStep('support'); return runTask('sup-isl', () => doGenSupports({ islandsOnly: true })); } },
     { id: 'sup-rebuild', group: '支撑', title: '按当前参数重建结构', icon: ic(RefreshCw), run: () => { goStep('support'); return runTask('sup-rebuild', doRebuild); } },
     { id: 'sup-clear', group: '支撑', title: '清空支撑', icon: ic(Trash2), run: doClearSupports },
-    { id: 'sup-points', group: '支撑', title: state.viewPointsOnly ? '显示支撑结构' : '只显示支撑点', hint: '小球附着在模型上', icon: ic(Crosshair), run: () => { goStep('support'); doTogglePoints(!state.viewPointsOnly); } },
+    { id: 'sup-view', group: '支撑', title: `支撑显示：${state.supView === 'needle' ? '连接体' : state.supView === 'point' ? '接触点' : '全部'}`, hint: '快捷键 V 循环（全部 → 连接体 → 接触点）', icon: ic(Crosshair), run: () => { goStep('support'); doCycleSupView(); } },
 
     { id: 'vmode-orbit', group: '视口', title: '旋转视角', icon: ic(MousePointer2), run: () => setMode('orbit') },
     { id: 'vmode-paint', group: '视口', title: '涂画保护面', icon: ic(Paintbrush), run: () => { goStep('orient'); setMode('paint'); } },
@@ -61,10 +61,8 @@ export function buildCommands(ctx) {
     { id: 'sidebar', group: '视口', title: sidebarOpen ? '收起侧栏' : '展开侧栏', icon: ic(PanelLeft), run: toggleSidebar },
     { id: 'log', group: '视口', title: '打开或收起运行日志', icon: ic(TerminalSquare), run: () => window.dispatchEvent(new Event('demo:toggle-log')) },
 
-    { id: 'base-none', group: '导出', title: '底板：无', hint: '支撑直接落在平台', icon: ic(Square), run: () => setBaseType('none', setParam) },
-    { id: 'base-raft', group: '导出', title: '底板：实心筏层', icon: ic(Layers), run: () => setBaseType('raft', setParam) },
-    { id: 'base-grid', group: '导出', title: '底板：网格底板', icon: ic(Grid3x3), run: () => setBaseType('grid', setParam) },
-    { id: 'base-auto', group: '导出', title: '底板：自动底板', hint: '按支撑投影定尺寸：栅角 + 蜂窝孔', icon: ic(Grid3x3), run: () => setBaseType('auto', setParam) },
+    { id: 'base-join', group: '导出', title: '底板：连接底板', hint: '塔底连成一条立板，模型随板抬高', icon: ic(Layers), run: () => runTask('base-type', () => setBaseType('join', setParam)) },
+    { id: 'base-auto', group: '导出', title: '底板：自动底板', hint: '按支撑投影定尺寸：栅角 + 蜂窝孔', icon: ic(Grid3x3), run: () => runTask('base-type', () => setBaseType('auto', setParam)) },
     { id: 'export-all', group: '导出', title: '导出模型和支撑', hint: 'STL', icon: ic(Download), run: () => runTask('export', () => doExport(true)) },
     { id: 'export-sup', group: '导出', title: '仅导出支撑', hint: 'STL', icon: ic(Download), run: () => runTask('export', () => doExport(false)) },
 

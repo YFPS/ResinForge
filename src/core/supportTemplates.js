@@ -55,11 +55,13 @@ const SOURCES = {
 
 /* 表内字段 → 本系统参数（换算规则）
    共用：支撑间距 = max(3.3 × 主干直径, 2.5 × (主干直径 + 0.4)) → spacing（等强度 + 防粘连，见文件头）；
-         网格边界偏移 → edgeInset；嵌入深度 → pen（渗透长度）。
+         网格边界偏移 → edgeInset；嵌入深度 → pen（接触深度）。
    支撑塔：格宽 = 5.8 × 主干直径 → esCell，孔格竖高 = 1.4 × 格宽 → esDiamAngle（斜边角 = atan 竖高/格宽）；
-           主干直径 = 2 × diameter → esBarW（边宽）与 esConnW（连接宽）；边厚 = 边宽 → esBarT（墙厚），针板厚 = 连接宽 → esNeedleT（等宽方截面）；
-           尖半径 ×2 → esTipW（接触宽）；过渡段 = 原表连接长（黑格「连接体长度」，四个工艺包均为 1.5 mm，不再减 0.5；粗档 taper 覆盖为 2.5 mm），接触边距取 0（针头为纯梯形）；
-           离墙距离 → esGap（离模净距）；底座高 → esFoundH（基础带高）。
+           主干直径 = 2 × diameter → esBarW（边宽），边厚 = 边宽 → esBarT（方截面）；
+           主力针身（十字针）宽度 = 主干直径 → esConnW（连接宽），针板厚 = 连接宽 → esNeedleT（方截面）；
+           短小支撑（十字短杆 / 分叉 / 贴面短连接）的中段宽度 = 主干直径 × smallScale（界面「小支撑缩放比例」，表内 bracketSupportScalingRatio 0.8）——生成时由 supportTower 直接计算，不占独立参数；
+           尖半径 ×2 → esTipW（接触宽/接触直径）；过渡段 = 原表连接长（黑格「连接体长度」，四个工艺包均为 1.5 mm，不再减 0.5；粗档 taper 覆盖为 2.5 mm），接触边距取 0（针头为纯梯形）；
+           离墙距离 → esGap（界面「与模型最小间距」）；底座高 → esFoundH（基础带高）。
    未映射（沿用本系统默认）：模型抬高（统一 4 mm）、临界角（统一 45°）、密度、接触形状、壳层类型与壳厚、
    最低点加强、线底宽、顶补偿、曝光时间与功率。 */
 function toParams(s) {
@@ -75,6 +77,7 @@ function toParams(s) {
       spacing,
       edgeInset: s.boundaryOffset,
       pen: s.embeddedDepth,
+      smallScale: 0.8,    // 小支撑缩放比例（界面主参数；与表内 bracketSupportScalingRatio 一致）
     },
     tower: {
       esCell: cell,
@@ -85,8 +88,8 @@ function toParams(s) {
       esTaper: r3(s.taper ?? s.connectionLength),   // 过渡段：缺省 = 原表连接长（连接体长度 1.5，接触边距 0）；粗档由 taper 覆盖为 2.5
       esContactMargin: margin,
       esGap: s.awayFromWall,
-      esBarT: trunk,      // 边厚 = 边宽（等宽方截面，不做扁板条）
-      esNeedleT: trunk,   // 针板厚 = 连接宽
+      esBarT: trunk,      // 边厚 = 边宽（方截面，不做扁板条）
+      esNeedleT: trunk,   // 针板厚 = 连接宽（方截面）
       esFoundH: s.baseHeight,
       esHullRed: s.hullRed,   // 底部疏密：壳层缩减级数（细 / 中细 0 = 底部全密；中粗 / 粗 1 = 底部每柱高放大一倍）
       esNeedleMax: r1(10 * trunk),   // 针最大长 = 10 × 主干直径（长细比不变）：格宽随直径放大后节点变稀，针固定 6 mm 时粗模板近四成的点接不上格架
@@ -117,4 +120,29 @@ export function getSupportTemplate(id) {
 /** 模板要写入 params 的全部键值（共用 + 支撑塔） */
 export function templateParams(t) {
   return { ...t.shared, ...t.tower };
+}
+
+/** 主干直径联动（2026-10-14 简化设计：界面上只留主参数，其余按比例走）：
+    一个直径值推出的整套支撑塔参数（与 toParams 同一套公式）——格架杆 = 直径（边宽 = 边厚）；
+    针身（十字针）宽度 = 直径；格宽 = 5.8 × 直径；斜边角 = 格孔竖高 1.4×格宽 反算；
+    针最大长 = 10 × 直径；支撑间距 = max(3.3 × 直径, 2.5 × (直径 + 0.4))；
+    底部疏密按直径分档（≤ 0.82 → 0 级底部全密，> 0.82 → 1 级，与模板口径一致）。
+    短小支撑的宽度 = 直径 × smallScale 由生成端（supportTower）实时计算，不在联动集内。
+    界面「主干直径」滑杆写入 esBarW，其余键由调用方一并写入 params。 */
+export function trunkLinkage(trunk) {
+  const r1 = x => Math.round(x * 10) / 10;
+  const r3 = x => Math.round(x * 1000) / 1000;
+  const cell = r1(5.8 * trunk);
+  const cellZ = r1(1.4 * cell);
+  return {
+    esBarW: trunk,
+    esBarT: trunk,
+    esConnW: trunk,
+    esNeedleT: trunk,
+    esCell: cell,
+    esDiamAngle: r3(Math.atan2(cellZ, cell) * 180 / Math.PI),
+    esNeedleMax: r1(10 * trunk),
+    spacing: r1(Math.max(3.3 * trunk, 2.5 * (trunk + 0.4))),
+    esHullRed: trunk > 0.82 ? 1 : 0,
+  };
 }

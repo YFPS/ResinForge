@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { analyze, steepFaces, sampleLDILayer, rasterizeSection } from './slicer.js';
-import { raiseH, raftOn, RAFT_T, ensureBakedDisplay } from './model.js';
+import { raiseH, ensureBakedDisplay } from './model.js';
 
 let layerCanvas = null;   // React 层检查器的 canvas（256×256）
 let curLayer = 1;         // 当前滑块层（1-based；旧代码读 $('layerSlider').value）
@@ -47,7 +47,7 @@ export async function runSliceAnalysis() {
   const totIslandArea = r.islands.reduce((s, i) => s + i.area, 0);
   bus.emit('sliceStats', {
     layers: m.layers,
-    raiseText: `${rh}mm / ${raftOn() ? RAFT_T + 'mm' : '关'}`,
+    raiseText: `${rh}mm / ${params.autoPlateOn ? `底板 ${+(params.apHeight || 1.3).toFixed(2)}mm` : params.baseJoin ? `连接底板 ${+(state.joinLift || 0).toFixed(2)}mm` : '关'}`,
     islandCount: r.islands.length,
     totIslandArea,
     steepArea: sf.steepArea,
@@ -130,7 +130,7 @@ export function drawLayer(l) {
   const visited = new Uint8Array(W * H);
   const stack = new Int32Array(W * H);
   const islandMask = new Uint8Array(W * H);
-  const lMin = A.raiseH > 0 ? 1 : 2;   // 抬高时首层（滑块 1）悬空于筏层之上
+  const lMin = A.raiseH > 0 ? 1 : 2;   // 抬高时首层（滑块 1）悬空于平台（或底板）之上
   let islandCount = 0;
   for (let i = 0; i < W * H; i++) {
     if (!occ[i] || visited[i]) continue;

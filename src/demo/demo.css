@@ -176,6 +176,36 @@ body {
 .setRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 /* 子类分组：主开关下挂的子选项（连接底板的三个子开关）——缩进 + 左侧发丝线，与 Section 同一形态语言 */
 .subRows { display: flex; flex-direction: column; gap: 16px; padding-left: 12px; margin-left: 2px; border-left: 1px solid var(--border); }
+
+/* 高级设置：原生折叠区，默认收起（2026-10-14 简化设计——主参数在外、工程参数收这里） */
+.adv > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 0 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--leading-body);
+  color: var(--foreground);
+}
+.adv > summary::-webkit-details-marker { display: none; }
+.adv > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+  transition: transform .18s ease;
+}
+.adv[open] > summary::after { transform: rotate(-135deg); }
+.adv > .sec:first-of-type { border-top: 0; padding-top: 14px; }
 .setText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .setLabel { font-size: var(--text-sm); color: var(--foreground); }
 .setDesc { font-size: var(--text-xs); line-height: 1.5; color: var(--text-muted); }

@@ -1,6 +1,6 @@
 /* ================================================================
    模型载入：setGeometry / loadDemo（4 个内置 demo）/ loadSTLBuffer(s) / mergeGeoms /
-   updateRaft / 参数辅助（raiseH / raftOn / raftMargin）。
+   updateRaft / 参数辅助（raiseH）。
    多个模型文件（STL / OBJ / 3MF）进同一块板：每个零件保留自己的局部几何（底面 y=0、XZ 居中），
    摆放是 ox/oy/oz 加绕自身中心的四元数 q；显示与分析用的 state.mesh 是按这个变换拼起来的一份。
    与旧 main.js 的差异仅两类：参数读 params.*，DOM 赋值改发 bus 事件。
@@ -23,16 +23,13 @@ import { clearSupports, updateSupStats } from './support.js';
 import { buildBVH, raycast as bvhRaycast } from './collide.js';
 import { hideInspector } from './inspect.js';
 
-/* 打印工艺参数：世界系 = 打印系（平台顶面 y=0，模型底面抬高 raiseH，筏层厚 RAFT_T） */
-export const RAFT_T = 1.2;    // 筏层厚度（mm），固定
-let raftMesh = null;          // 筏层显示 Mesh
-// 模型抬高（mm）= 用户设的抬高（默认 4）+ 连接底板高（支撑塔开连接底板时，见 joinPlate.js）。
-// 连接底板那部分取「已提交」的值 state.joinLift：只在生成 / 重建支撑（或切换连接底板 / 结构 / 模板）时由 support.js 的 syncModelLift 更新，
+/* 打印工艺参数：世界系 = 打印系（平台顶面 y=0，模型底面抬高 raiseH） */
+let raftMesh = null;          // 自动底板显示 Mesh
+// 模型抬高（mm）= 用户设的抬高（默认 4）+ 连接底板高（支撑塔选连接底板时，见 joinPlate.js）。
+// 连接底板那部分取「已提交」的值 state.joinLift：只在生成 / 重建支撑（或切换底板类型 / 结构 / 模板）时由 support.js 的 syncModelLift 更新，
 // 改了菱形宽等参数但还没重建时，模型、分析与已有支撑仍在同一高度上，导出不会错位
 export const raiseH = () => Math.max(0, params.raiseH || 0) + (state.joinLift || 0);
 export const baseRaiseH = () => Math.max(0, params.raiseH || 0);   // 用户设的抬高（不含连接底板）
-export const raftOn = () => params.raftOn;
-export const raftMargin = () => params.raftMargin || 3;
 
 const ARRANGE_MARGIN = 3;   // 排版距板边（mm）
 
@@ -1178,68 +1175,26 @@ export function bakeActiveLayout() {
   commitPlate({ arrange: state.parts.length > 1, frame: 'active', quiet: true });
 }
 
-/** 合并网格包围盒中心。底板跟着模型走，模型被拖离原点后筏层仍垫在下面。 */
-const _anchor = new THREE.Vector3();
-export function raftAnchor() {
-  if (!state.mesh || !state.mesh.geometry.boundingBox) return { x: 0, z: 0 };
-  const bb = state.mesh.geometry.boundingBox;
-  _anchor.set((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
-  if (state.mesh.matrixAutoUpdate === false) _anchor.applyMatrix4(state.mesh.matrix);
-  return { x: _anchor.x, z: _anchor.z };
-}
-
-/* 筏层/网格底板显示：模型 XZ 外接圆半径 + 边距。实心筏层厚 RAFT_T；网格底板为 X/Z 交叉梁格（e-Stage 风格多孔板）。
-   支撑落点高度统一走 baseY()（网格板顶 / 筏层顶 / 平台 0）。 */
-export const baseY = () => (params.autoPlateOn ? (params.apHeight || 2) : params.gridRaftOn ? (params.gridT || 0.8) : (raftOn() ? RAFT_T : 0));
-
-/* 网格底板几何：外接圆内 X/Z 双向梁格，梁在圆边界处截弦（多孔排水，e-Stage 风格） */
-export function buildGridRaftGeom() {
-  const bb = state.mesh.geometry.boundingBox;
-  const R = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
-  const t = params.gridT || 0.8, bar = Math.max(0.2, params.gridBar || 0.8), step = Math.max(bar + 0.4, params.gridStep || 3);
-  const parts = [];
-  for (let z = -R + step / 2; z <= R - step / 4; z += step) {
-    const hx = Math.sqrt(Math.max(0.25, R * R - z * z));
-    parts.push({ g: new THREE.BoxGeometry(hx * 2, t, bar), x: 0, y: t / 2, z });
-  }
-  for (let x = -R + step / 2; x <= R - step / 4; x += step) {
-    const hz = Math.sqrt(Math.max(0.25, R * R - x * x));
-    parts.push({ g: new THREE.BoxGeometry(bar, t, hz * 2), x, y: t / 2, z: 0 });
-  }
-  return mergeGeoms(parts);
-}
+/* 自动底板（底板类型之一）显示：几何在后台线程按「支撑投影 + 参数」算（规格没变走缓存）。
+   支撑落点高度统一走 baseY()（自动底板顶 / 平台 0）。 */
+export const baseY = () => (params.autoPlateOn ? (params.apHeight || 1.3) : 0);
 
 export function updateRaft() {
   if (raftMesh) { scene.remove(raftMesh); raftMesh.geometry.dispose(); raftMesh = null; }
-  if (!state.mesh || (!raftOn() && !params.gridRaftOn && !params.autoPlateOn)) return;
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05, transparent: true, opacity: 0.85 });
-  const anchor = raftAnchor();
-  if (params.autoPlateOn) {
-    // 自动底板：几何在后台线程按「支撑投影 + 参数」算（规格没变走缓存）；序号防竞（期间又改参数 / 换模型）
-    const seq = ++autoPlateSeq;
-    ensureAutoPlateGeom().then(g => {
-      if (!g || seq !== autoPlateSeq || !state.mesh || !params.autoPlateOn) return;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(g.vert, 3));
-      geo.setIndex(new THREE.BufferAttribute(g.tri, 1));
-      geo.computeVertexNormals();
-      raftMesh = new THREE.Mesh(geo, mat);
-      raftMesh.raycast = () => {};
-      scene.add(raftMesh);
-    }).catch(() => { /* 被更新的请求取代：交给后一次 */ });
-    return;
-  }
-  if (params.gridRaftOn) {
-    raftMesh = new THREE.Mesh(buildGridRaftGeom(), mat);
-    raftMesh.position.set(anchor.x, 0, anchor.z);
-  } else {
-    const bb = state.mesh.geometry.boundingBox;
-    const r = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
-    raftMesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, RAFT_T, 64), mat);
-    raftMesh.position.set(anchor.x, RAFT_T / 2, anchor.z);
-  }
-  raftMesh.raycast = () => {};
-  scene.add(raftMesh);
+  if (!state.mesh || !params.autoPlateOn) return;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05 });
+  // 序号防竞（期间又改参数 / 换模型 / 切回连接底板）
+  const seq = ++autoPlateSeq;
+  ensureAutoPlateGeom().then(g => {
+    if (!g || seq !== autoPlateSeq || !state.mesh || !params.autoPlateOn) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(g.vert, 3));
+    geo.setIndex(new THREE.BufferAttribute(g.tri, 1));
+    geo.computeVertexNormals();
+    raftMesh = new THREE.Mesh(geo, mat);
+    raftMesh.raycast = () => {};
+    scene.add(raftMesh);
+  }).catch(() => { /* 被更新的请求取代：交给后一次 */ });
 }
 
 /* 自动底板几何缓存：规格指纹未变直接复用（显示与导出共用同一份）；同一规格的并发调用共享一个请求 */
@@ -1262,9 +1217,6 @@ export async function ensureAutoPlateGeom() {
   return p;
 }
 
-/* 参数变更副作用（复刻旧 main.js 的 change 监听；React 组件 onChange 调用） */
-export function handleRaftOnChange() { updateRaft(); toast('底板设置已变更，请重新生成支撑'); }
-export function handleRaftMarginChange() { updateRaft(); }
 /** 把模型挪到当前抬高 raiseH()（含已提交的连接底板高）。只挪位置，分析与支撑由调用方处理 */
 export function placeModelAtLift() {
   if (!state.mesh) return;

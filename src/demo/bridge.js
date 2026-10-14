@@ -23,7 +23,7 @@ export function useBusState(ev, initial = null) {
    这里在模块加载时（早于 core 的 initScene）就订阅这些事件并缓存最新 payload，组件随时挂载都能拿到。 */
 const latest = new Map();
 const latestSubs = new Map();
-['modelInfo', 'sliceStats', 'supStats', 'orientResults', 'heat', 'mode', 'progress', 'pointsOnly'].forEach(ev => {
+['modelInfo', 'sliceStats', 'supStats', 'orientResults', 'heat', 'mode', 'progress', 'supView'].forEach(ev => {
   latestSubs.set(ev, new Set());
   bus.on(ev, payload => {
     latest.set(ev, payload);

@@ -10,7 +10,7 @@
 ================================================================ */
 import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
-import { supportGroup, supMat, supMatAnchor, supMatBase } from './scene.js';
+import { supportGroup, supMat, supMatAnchor, supMatBase, supMatGlass, supMatAnchorGlass } from './scene.js';
 import { ldiGapAt } from './slicer.js';
 import { baseY, raiseH, placeModelAtLift, updateRaft } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
@@ -54,12 +54,34 @@ export function supportSelection() {
   return state.supportSel instanceof Set ? state.supportSel : (state.supportSel = new Set());
 }
 
-/* 只有「只显示支撑点」打开时才放小球。删支撑本身不额外把点画出来。 */
-export function syncPointMarkers() {
+/* 每个支撑 mesh 的材质按「模式 + 部件 + 顶点色状态」键控克隆——prepareSupportColors 会给材质开
+   vertexColors 写高亮，模式切换（半透明）时两边互不覆盖；键没变就不重复克隆。 */
+function applyViewMat(s, v) {
+  const m = s.mesh;
+  const hasVC = !!(m.geometry.attributes && m.geometry.attributes.color);
+  const isN = v === 'needle' && s.part === 'needle';
+  const kindKey = isN ? 'n' : (s.kind === 'anchor' ? 'a' : s.kind === 'base' ? 'b' : 'g');
+  const key = kindKey + (hasVC ? 'V' : '');
+  if (m.userData.matKey === key) return;
+  const base = isN ? (s.kind === 'anchor' ? supMatAnchorGlass : supMatGlass)
+    : (s.kind === 'anchor' ? supMatAnchor : s.kind === 'base' ? supMatBase : supMat);
+  const mat = base.clone();
+  if (hasVC) { mat.vertexColors = true; mat.color.setHex(0xffffff); }   // 顶点色自带语义色，材质置白
+  m.material = mat;
+  m.userData.matKey = key;
+}
+
+/* 支撑显示三模式（2026-10-14，对照黑格手动支撑栏「全部支撑 / 连接体 / 接触点」三视图）：
+   full = 全部支撑（格架塔 + 连接体针 + 兜底件）；needle = 仅连接体（针凸包 + 兜底件，隐藏格架塔；
+   针改用半透明材质，2026-10-14 用户定）；point = 仅接触点（结构全隐藏，放附着在模型上的小球）。 */
+export function syncSupportView() {
   clearPointMarkers();
-  const only = !!state.viewPointsOnly;
-  for (const s of state.supports) s.mesh.visible = !only;
-  if (!only) return;
+  const v = state.supView || 'full';
+  for (const s of state.supports) {
+    s.mesh.visible = v === 'full' ? true : (v === 'needle' ? s.part === 'needle' : false);
+    applyViewMat(s, v);
+  }
+  if (v !== 'point') return;
   const pts = state.supportPoints || [];
   if (!pts.length) return;
   const geo = new THREE.SphereGeometry(POINT_R, 10, 8);
@@ -176,7 +198,8 @@ export function prepareSupportColors() {
     if (geom.userData.triOfJob && geom.userData.ownerPts === pts.length) { jobs.push(geom.userData.triOfJob); continue; }
     const index = geom.index;
     const triCount = index ? index.count / 3 : pos.count / 3;
-    if (mesh.material === supMat || mesh.material === supMatAnchor || mesh.material === supMatBase) {
+    if (mesh.material === supMat || mesh.material === supMatAnchor || mesh.material === supMatBase
+      || mesh.material === supMatGlass || mesh.material === supMatAnchorGlass) {
       mesh.material = mesh.material.clone();
     }
     mesh.material.vertexColors = true;
@@ -258,22 +281,29 @@ export function setSupportSelection(indices) {
   const pts = state.supportPoints || [];
   for (const i of indices || []) if (i >= 0 && i < pts.length) sel.add(i);
   if (pointMesh && pointMesh.count === pts.length) paintPointMarkers(pts);
-  else if (state.viewPointsOnly) syncPointMarkers();
+  else if ((state.supView || 'full') === 'point') syncSupportView();
   paintSupportBodies();
 }
 
-export function setPointsOnly(on) {
-  state.viewPointsOnly = !!on;
-  syncPointMarkers();
-  bus.emit('pointsOnly', state.viewPointsOnly);
-  log(state.viewPointsOnly ? '已隐藏支撑结构，只显示附着在模型上的支撑点' : '已恢复支撑结构显示');
+/** 切换支撑显示：'full' 全部 / 'needle' 仅连接体 / 'point' 仅接触点（黑格三视图的按钮版） */
+export function setSupportView(v) {
+  state.supView = v === 'needle' || v === 'point' ? v : 'full';
+  syncSupportView();
+  bus.emit('supView', state.supView);
+  log(state.supView === 'full'
+    ? '已显示全部支撑（格架 + 连接体 + 接触点）'
+    : state.supView === 'needle' ? '仅显示支撑连接体（针 / 兜底件）' : '仅显示支撑接触点');
 }
+
+/** 兼容旧入口：只显示支撑点开 / 关 */
+export function setPointsOnly(on) { setSupportView(on ? 'point' : 'full'); }
 export function clearSupports(refresh = true) {
   buildSeq++;                                         // 正在后台算的重建作废
   clearMeshes();
   state.supportPoints = [];
   if (state.supportSel) state.supportSel.clear();
   state.supportStats = null;
+  updateRaft();                                       // 结构没了 → 自动底板随结构消失（无结构时不出板）
   if (refresh) { updateSupStats(); if (state.analysis) drawLayer(); }
 }
 export function updateSupStats() {
@@ -292,8 +322,8 @@ function paramSnapshot() {
     esCell: num(p.esCell, 3.5), esDiamAngle: num(p.esDiamAngle, 55), esMidBars: p.esMidBars !== false,
     esBarW: num(p.esBarW, 0.6), esBarT: num(p.esBarT, 0.6), esGap: num(p.esGap, 1.2),
     esColRatio: num(p.esColRatio, 7), esTowerMaxR: num(p.esTowerMaxR, 4), esHullRed: num(p.esHullRed, 0),
-    esConnW: num(p.esConnW, 0.6), esNeedleT: num(p.esNeedleT, 0.6), esTipW: num(p.esTipW, 0.3), esContactMargin: num(p.esContactMargin, 0), esTaper: num(p.esTaper, 1), esNeedleMax: num(p.esNeedleMax, 6),
-    esFoundH: num(p.esFoundH, 1), esNotchH: num(p.esNotchH, 0.5), baseJoin: !!p.baseJoin, baseChamfer: !!p.baseChamfer, baseFlush: !!p.baseFlush, baseHole: !!p.baseHole,
+    esConnW: num(p.esConnW, 0.6), esNeedleT: num(p.esNeedleT, 0.6), esTipW: num(p.esTipW, 0.3), esContactMargin: num(p.esContactMargin, 0), esTaper: num(p.esTaper, 1), esNeedleMax: num(p.esNeedleMax, 6), smallScale: num(p.smallScale, 0.8),
+    esFoundH: num(p.esFoundH, 1), esNotchH: num(p.esNotchH, 0.5), baseJoin: !!p.baseJoin, baseChamfer: !!p.baseChamfer, baseFlush: !!p.baseFlush, baseHole: !!p.baseHole, autoPlateOn: !!p.autoPlateOn,
   };
 }
 
@@ -931,21 +961,22 @@ export async function rebuildStructure() {
   if (seq !== buildSeq || state.analysis !== A0 || state.mesh !== M0) { disposeResult(res); return null; }
   // 算完再换：旧支撑在计算期间一直留在画面上，不会先消失一两秒
   clearMeshes();
-  const add = (g, mat, kind) => {
+  const add = (g, mat, kind, part) => {
     if (!g) return;
     const m = new THREE.Mesh(g, mat);
     m.userData.kind = kind;
     supportGroup.add(m);
-    state.supports.push({ mesh: m, kind });
+    state.supports.push({ mesh: m, kind, part });      // part：'tower' 格架塔 / 'needle' 连接体（针 / 兜底件）——显示模式分流用
   };
-  add(res.geomGround, supMat, 'ground');
-  add(res.geomGround2, supMat, 'ground');            // 兜底件（十字短杆 / 分叉主干）的落地部分（格架塔本身是 geomGround）
-  add(res.geomAnchor, supMatAnchor, 'anchor');
-  add(res.geomBase, supMatBase, 'base');
+  add(res.geomGround, supMat, 'ground', 'tower');
+  add(res.geomNeedle, supMat, 'ground', 'needle');   // 十字针 / 转接块凸包（从格架塔几何里拆出）
+  add(res.geomGround2, supMat, 'ground', 'needle');  // 兜底件（十字短杆 / 分叉主干）的落地部分
+  add(res.geomAnchor, supMatAnchor, 'anchor', 'needle');
+  add(res.geomBase, supMatBase, 'base', 'base');
   pts.forEach((p, k) => { p.state = res.pointState[k] || ''; });
   const ok = pts.filter(p => p.state === 'ground' || p.state === 'mesh' || p.state === 'micro').length;
   state.supportStats = { mode: 'tower', ...res.stats, ok, ms: Math.round(performance.now() - t0) };
-  syncPointMarkers();
+  syncSupportView();
   prepareSupportColors();
   setProgress(null);
   updateSupStats();
@@ -1024,7 +1055,7 @@ export async function deleteSupportIndices(indices) {
   for (const i of drop) pts.splice(i, 1);
   if (state.supportSel) state.supportSel.clear();
   if (state.analysis && state.mesh) await rebuildStructure();
-  else { syncPointMarkers(); updateSupStats(); }
+  else { syncSupportView(); updateSupStats(); }
   log(`已删除 ${drop.length} 个支撑点`, 'ok');
   return true;
 }

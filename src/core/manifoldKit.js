@@ -112,7 +112,9 @@ export function solidifySpec(MF, spec) {
       if (comps.some(c => c.area() < MIN_AREA)) cs = K(CrossSection.compose(comps.filter(c => c.area() >= MIN_AREA)));
       for (const c of comps) c.delete();
       if (cs.isEmpty()) continue;
-      parts.push(meshOut(place(K, K(cs.extrude(spec.t, 0, 0, [1, 1], true)), w.pl, w.c)));
+      const wp = meshOut(place(K, K(cs.extrude(spec.t, 0, 0, [1, 1], true)), w.pl, w.c));
+      wp.kind = 'wall';                      // 部件类型：墙面（格架塔）——视口「连接体」显示模式按它分流
+      parts.push(wp);
       nWall++;
     }
     /* ---- 2. 独立厚度的墙面板（连接底板立板） ---- */
@@ -123,14 +125,27 @@ export function solidifySpec(MF, spec) {
       const cs = K(new CrossSection(polys, 'Positive'));
       if (cs.isEmpty()) continue;
       slabIdx.push(parts.length);
-      parts.push(meshOut(place(K, K(cs.extrude(2 * s.half, 0, 0, [1, 1], true)), s.pl, s.c)));
+      const sp = meshOut(place(K, K(cs.extrude(2 * s.half, 0, 0, [1, 1], true)), s.pl, s.c));
+      sp.kind = 'slab';                      // 部件类型：立板（连接底板）
+      parts.push(sp);
     }
-    /* ---- 3. 十字针 / 转接块：凸包 ---- */
+    /* ---- 3. 十字针：凸包 ---- */
     for (const pts of spec.hulls) {
       if (pts.length < 4) continue;
       const h = K(Manifold.hull(pts));
       if (h.isEmpty()) continue;
-      parts.push(meshOut(h)); nHull++;
+      const hp = meshOut(h);
+      hp.kind = 'hull';                      // 部件类型：凸包（十字针）——「连接体」显示模式的亮出部分
+      parts.push(hp); nHull++;
+    }
+    /* ---- 3b. 格架节点件（跨墙转接块 / 柱顶针脚盖）：凸包；视口归格架组（2026-10-14：连接体视图只留针，不负节点件） ---- */
+    for (const pts of spec.knuckles || []) {
+      if (pts.length < 4) continue;
+      const h = K(Manifold.hull(pts));
+      if (h.isEmpty()) continue;
+      const kp = meshOut(h);
+      kp.kind = 'wall';
+      parts.push(kp);
     }
     /* ---- 4. 连接底板的孔：贯穿棱柱，从立板上布尔减（孔只落在立板高度内，只涉及几块立板，很快） ---- */
     const cuts = [];
@@ -143,7 +158,9 @@ export function solidifySpec(MF, spec) {
       const cutM = K(Manifold.union(cuts.map(m => K(new Manifold(new MF.Mesh({ vertProperties: m.vert, triVerts: m.tri }))))));
       for (const i of slabIdx) {
         const m = K(new Manifold(new MF.Mesh({ vertProperties: parts[i].vert, triVerts: parts[i].tri })));
-        parts[i] = meshOut(K(m.subtract(cutM)));
+        const np = meshOut(K(m.subtract(cutM)));
+        np.kind = 'slab';
+        parts[i] = np;
       }
     }
     if (!parts.length) return null;
@@ -176,7 +193,7 @@ export function solidifySpec(MF, spec) {
    ----------------------------------------------------------------
    构件边界来自生成侧：支撑塔给 solids（每份已是闭合流形，直接建 Manifold，不拆不焊）；
    兜底件给 runs（「一个构件 = 哪几段连续三角形」）。**不能**按顶点位置焊接去猜——
-   不同构件的接触面本来就重合，焊完会变成一坨非流形的大壳，manifold 直接拒收。没有 runs 的输入（底板、筏层）退回按连通分量切分。
+   不同构件的接触面本来就重合，焊完会变成一坨非流形的大壳，manifold 直接拒收。没有 runs 的输入退回按连通分量切分。
    精度：manifold 输出 float32，两个只差一个 ulp 的顶点在 STL 里会重合成退化三角形——
    runs 构件的输入先吸附到 1e-4 mm 网格，输出再 simplify(1e-5) 收掉亚微米短边。
 ================================================================ */
@@ -967,7 +984,7 @@ function insetPolygon(poly, w) {
 }
 
 /**
- * 自动底板实体：顶轮廓（可四角切角）打出蜂窝孔 → 挤出板厚 → 与「栅角棱台」求交
+ * 自动底板实体：顶轮廓（支撑投影轮廓，主线程算好）打出蜂窝孔 → 挤出板厚 → 与「栅角棱台」求交
  * （底面等距内缩 spec.chamferW，侧壁成斜面）。spec.outline / spec.holes 是相对底板中心的 XZ 点列，
  * spec.cx / cz 平移到位。返回 { vert: Float32Array, tri: Uint32Array }（世界系，y∈[0, t]）或 null。
  * 坐标约定：CrossSection 面内取 (x, −z)——挤出沿面内 +z、绕 X −90° 后 (x, y, w) → (x, w, −y)，(−z) 恰好还原 z。
@@ -986,7 +1003,8 @@ export function buildAutoPlate(MF, spec) {
     let board = K(K(cs.extrude(spec.t, 0, 0, [1, 1], false)).rotate([-90, 0, 0]));   // center: false——板从 y=0 挤到 y=t（墙用 true 居中）
     if (spec.chamferW > 1e-3) {
       // 栅角棱台：顶轮廓（y = t）与底内缩轮廓（y = 0）的凸包（凸轮廓 + 等距内缩，凸包即棱台；hull 输入为平铺点数组）
-      const botPts = insetPolygon(spec.outline, Math.min(spec.chamferW, Math.min(spec.w, spec.d) / 2 - 0.2));
+      // 内缩量的钳制（不超轮廓内切半径）已在主线程 basePlate.js 做
+      const botPts = insetPolygon(spec.outline, spec.chamferW);
       const pts = [];
       for (const [x, z] of spec.outline) pts.push([x, spec.t, z]);
       for (const [x, z] of botPts) pts.push([x, 0, z]);

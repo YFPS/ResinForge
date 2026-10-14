@@ -4,9 +4,8 @@
    大模型导出用 part.source（聚类前的原始顶点），显示和支撑用的是简化网格。
    params.unionExport 打开时，支撑先经 manifold-3d 布尔并成一张水密外壳（见 union.js）。
 ================================================================ */
-import * as THREE from 'three';
 import { state, params, log, toast, setProgress } from '../store.js';
-import { raftOn, raftMargin, RAFT_T, buildGridRaftGeom, raftAnchor, placeVertex, raiseH, ensureAutoPlateGeom } from './model.js';
+import { placeVertex, raiseH, ensureAutoPlateGeom } from './model.js';
 import { unionShells } from './union.js';
 
 /* 跑在 Tauri 桌面壳（打包后的 exe）里还是普通浏览器：写出方式不同（见 exportSTL 尾部） */
@@ -47,7 +46,8 @@ export async function exportSTL(includeModel, includeSupports, filename) {
   if (includeSupports) {
     const supParts = [];
     if (state.mesh && params.autoPlateOn) {
-      // 自动底板（按支撑投影，几何在后台线程）：单一水密实体走内核路径；规格变了这里先算好（与显示共用缓存）
+      // 自动底板（按支撑投影，几何在后台线程）：单一水密实体走内核路径；规格变了这里先算好（与显示共用缓存）。
+      // 没有支撑点时不生成（ensureAutoPlateGeom 返回 null），不推进 supParts
       const g = await ensureAutoPlateGeom();
       if (g) {
         const nf = new Float32Array(g.tri.length * 3);
@@ -57,16 +57,6 @@ export async function exportSTL(includeModel, includeSupports, filename) {
         }
         supParts.push({ arr: nf, dx: 0, dy: 0, dz: 0, solids: [{ vert: g.vert, tri: g.tri }] });
       }
-    } else if (state.mesh && params.gridRaftOn) {
-      const anchor = raftAnchor();
-      const g = buildGridRaftGeom();
-      supParts.push({ arr: g.attributes.position.array, dx: anchor.x, dy: 0, dz: anchor.z, runs: g.userData.runs });
-    } else if (state.mesh && raftOn()) {
-      const bb = state.mesh.geometry.boundingBox;
-      const anchor = raftAnchor();
-      const rr = Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2 + raftMargin();
-      const rg = new THREE.CylinderGeometry(rr, rr, RAFT_T, 48).toNonIndexed();
-      supParts.push({ arr: rg.attributes.position.array, dx: anchor.x, dy: RAFT_T / 2, dz: anchor.z });
     }
     for (const s of state.supports) {
       const g = s.mesh.geometry;

@@ -1,10 +1,10 @@
 /* 集中操作层：顶栏 / 侧栏 / 命令面板共用同一套动作，避免各写一遍。
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
 import { params, state, log, toast } from '../store.js';
-import { loadDemo, loadSTLBuffers, handleRaftOnChange, setActivePart, simplifySelection } from '../core/model.js';
+import { loadDemo, loadSTLBuffers, setActivePart, simplifySelection } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis } from '../core/inspect.js';
-import { runGenSup, rebuildStructure, clearSupports, setPointsOnly, syncModelLift } from '../core/support.js';
+import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
 import { SUPPORT_TEMPLATES, getSupportTemplate, templateParams } from '../core/supportTemplates.js';
 import { markOriented, markExported } from './ui.js';
@@ -52,8 +52,15 @@ export function doSimplify(opts) {
   return simplifySelection(opts);
 }
 
-export function doTogglePoints(on) {
-  setPointsOnly(on);
+/** 支撑显示三选一：'full' 全部 / 'needle' 仅连接体 / 'point' 仅接触点 */
+export function doSetSupView(mode) {
+  setSupportView(mode);
+}
+
+/** 循环切换支撑显示（全部 → 连接体 → 接触点 → 全部；快捷键 V / 命令面板） */
+export function doCycleSupView() {
+  const cur = state.supView || 'full';
+  setSupportView(cur === 'full' ? 'needle' : cur === 'needle' ? 'point' : 'full');
 }
 
 /** 当前生效的支撑模板 id：模板写入的全部键值都与 params 一致才算（数值容差 1e-6）；默认参数或手动改过任一项返回 null */
@@ -120,13 +127,6 @@ export async function doExport(includeModel) {
   if (ok) markExported();
 }
 
-/** 连接底板：支撑塔底部锯齿收成一条立板，模型同步抬高一个板高（joinPlate.js）。已有支撑时立刻重算；没有支撑也立刻挪模型 */
-export function setBaseJoin(v, setParam) {
-  setParam('baseJoin', !!v);
-  if (hasSupports()) return rebuildStructure();
-  return syncModelLift();
-}
-
 /** 底板开孔：连接条上打菱形孔。已有支撑时立刻重算。 */
 export function setBaseHole(v, setParam) {
   setParam('baseHole', !!v);
@@ -148,12 +148,14 @@ export function setBaseChamfer(v, setParam) {
   return Promise.resolve();
 }
 
-/** 底板三态（互斥）；变更后提示重新生成支撑 */
+/** 底板类型二选一：连接底板（支撑塔底部锯齿收成一条立板，模型随板抬高一个板高）/ 自动底板（按支撑投影的蜂窝板）。
+    两种切换都影响支撑结构（模型抬高 / 落点高度）——已有支撑时立刻重算，没有支撑时只同步模型抬高。 */
 export function setBaseType(v, setParam) {
-  setParam('raftOn', v === 'raft');
-  setParam('gridRaftOn', v === 'grid');
-  setParam('autoPlateOn', v === 'auto');
-  handleRaftOnChange();
+  const join = v === 'join';
+  setParam('baseJoin', join);
+  setParam('autoPlateOn', !join);
+  if (hasSupports()) return rebuildStructure();
+  return syncModelLift();
 }
 
-export const currentBaseType = () => (params.autoPlateOn ? 'auto' : params.gridRaftOn ? 'grid' : params.raftOn ? 'raft' : 'none');
+export const currentBaseType = () => (params.autoPlateOn ? 'auto' : 'join');

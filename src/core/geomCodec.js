@@ -39,6 +39,7 @@ export function encodeSpec(spec) {
     walls: spec.walls.map(w => ({ pl: w.pl, c: w.c, col: encList(w.col, 2, transfer), web: encList(w.web, 2, transfer), clip: encList(w.clip, 2, transfer), sub: encList(w.sub || [], 2, transfer) })),
     slabs: (spec.slabs || []).map(s => ({ pl: s.pl, c: s.c, half: s.half, polys: encList(s.polys, 2, transfer) })),
     hulls: encList(spec.hulls, 3, transfer),
+    knuckles: encList(spec.knuckles || [], 3, transfer),
     cuts: spec.cuts || [],
   };
   return { data, transfer };
@@ -51,6 +52,7 @@ export function decodeSpec(data) {
     walls: data.walls.map(w => ({ pl: w.pl, c: w.c, col: decList(w.col), web: decList(w.web), clip: decList(w.clip), sub: w.sub ? decList(w.sub) : [] })),
     slabs: data.slabs.map(s => ({ pl: s.pl, c: s.c, half: s.half, polys: decList(s.polys) })),
     hulls: decList(data.hulls),
+    knuckles: decList(data.knuckles || []),
     cuts: data.cuts,
   };
 }

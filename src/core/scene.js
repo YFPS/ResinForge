@@ -11,7 +11,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
 import { loadDemo, loadSTLBuffers, partAtWorld, focusPartFromHit, localFaceOf, raiseH, plateAxisOrigin, meshPick } from './model.js';
 import { modelKind } from './meshio.js';
-import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors } from './support.js';
+import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
 import { initManipulate, tickManipulate } from './manipulate.js';
 
 export const scene = new THREE.Scene();
@@ -153,6 +153,9 @@ export const modelMat = new THREE.MeshStandardMaterial({
 export const supMat = new THREE.MeshStandardMaterial({ color: 0x38d996, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
 export const supMatAnchor = new THREE.MeshStandardMaterial({ color: 0xffb020, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
 export const supMatBase = new THREE.MeshStandardMaterial({ color: 0x7d8aa0, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.4 });   // 格架底座整板
+/* 「连接体」显示模式下针的半透明材质（玻璃感：能看穿、留轮廓；2026-10-14 用户定） */
+export const supMatGlass = new THREE.MeshStandardMaterial({ color: 0x38d996, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
+export const supMatAnchorGlass = new THREE.MeshStandardMaterial({ color: 0xffb020, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
 
 /* 预览渲染器（朝向候选缩略图；preserveDrawingBuffer 供 toDataURL 出图，React 渲染 <img>） */
 export const prevRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -378,6 +381,14 @@ function onSupportKey(e) {
   if (document.querySelector('dialog[open], [role="dialog"][data-state="open"]')) return;
   const hot = supportHotkeys || state.mode === 'add' || state.mode === 'del';
   const k = (e.key || '').toLowerCase();
+  // V：循环切换支撑显示（全部 → 仅连接体 → 仅接触点，黑格同款快捷键）
+  if (!e.shiftKey && (k === 'v' || e.code === 'KeyV')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const cur = state.supView || 'full';
+    setSupportView(cur === 'full' ? 'needle' : cur === 'needle' ? 'point' : 'full');
+    return;
+  }
   if (hot && !e.shiftKey && (k === 'a' || e.code === 'KeyA')) {
     e.preventDefault();
     e.stopImmediatePropagation();

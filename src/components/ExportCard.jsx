@@ -1,49 +1,37 @@
 import React from 'react';
-import { Button, Checkbox, InputNumber, Select } from '@arco-design/web-react';
+import { Button, Checkbox, Select } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { state } from '../store.js';
-import { handleRaftOnChange, handleRaftMarginChange, updateRaft } from '../core/model.js';
-import { rebuildStructure } from '../core/support.js';
+import { rebuildStructure, syncModelLift } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
 
-/* 导出：底板类型（无 / 实心筏层 / 网格底板[e-Stage 风格]，变更即提示重新生成支撑）+ 边距/网格参数 + 两个导出按钮 */
+/* 导出：底板类型二选一（连接底板 / 自动底板；自动底板的尺寸参数在新界面里调）+ 两个导出按钮 */
 export default function ExportCard() {
   const [params, setParam] = useParams();
-  const baseType = params.autoPlateOn ? 'auto' : params.gridRaftOn ? 'grid' : (params.raftOn ? 'raft' : 'none');
+  const baseType = params.autoPlateOn ? 'auto' : 'join';
   const setBaseType = v => {
-    setParam('raftOn', v === 'raft');
-    setParam('gridRaftOn', v === 'grid');
-    setParam('autoPlateOn', v === 'auto');
-    handleRaftOnChange();
+    const join = v === 'join';
+    setParam('baseJoin', join);
+    setParam('autoPlateOn', !join);
+    if ((state.supportPoints || []).length) rebuildStructure();
+    else syncModelLift();
   };
-  const gridParam = (k) => (v) => { setParam(k, v); if (params.gridRaftOn) updateRaft(); };
   return (
     <Card step={6} title="导出">
       <div className="row" style={{ alignItems: 'center' }}>
         <label className="f" style={{ flex: 1, marginBottom: 0 }}><span>底板类型</span>
           <Select value={baseType} onChange={setBaseType} style={{ width: '100%' }}>
-            <Select.Option value="none">无底板（落平台）</Select.Option>
-            <Select.Option value="raft">实心筏层（厚 1.2mm）</Select.Option>
-            <Select.Option value="grid">网格底板（多孔排水）</Select.Option>
+            <Select.Option value="join">连接底板（塔底连接条，模型随板抬高）</Select.Option>
             <Select.Option value="auto">自动底板（按支撑投影：栅角 + 蜂窝孔）</Select.Option>
           </Select>
         </label>
-        <label className="f" style={{ flex: 1, marginBottom: 0 }}><span>边距</span><InputNumber value={params.raftMargin} min={1} max={10} step={0.5} onChange={v => { setParam('raftMargin', v); handleRaftMarginChange(); }} />mm</label>
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={!!params.baseJoin} onChange={v => { setParam('baseJoin', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>连接底板（底部锯齿收成一条立板）</Checkbox>
         <Checkbox checked={!!params.baseChamfer} disabled={!params.baseJoin} onChange={v => { setParam('baseChamfer', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>栅角（底角斜切一小截）</Checkbox>
         <Checkbox checked={!!params.baseFlush} disabled={!params.baseJoin} onChange={v => { setParam('baseFlush', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>去掉外伸（外沿收齐）</Checkbox>
         <Checkbox checked={!!params.baseHole} disabled={!params.baseJoin} onChange={v => { setParam('baseHole', v); if ((state.supportPoints || []).length) rebuildStructure(); }}>底板开孔（菱形孔省料）</Checkbox>
       </div>
-      {params.gridRaftOn && (
-        <div className="row">
-          <label className="f"><span>板厚</span><InputNumber value={params.gridT} min={0.4} max={2} step={0.1} onChange={gridParam('gridT')} />mm</label>
-          <label className="f"><span>梁宽</span><InputNumber value={params.gridBar} min={0.3} max={2} step={0.1} onChange={gridParam('gridBar')} />mm</label>
-          <label className="f"><span>孔距</span><InputNumber value={params.gridStep} min={1.5} max={8} step={0.5} onChange={gridParam('gridStep')} />mm</label>
-        </div>
-      )}
       <div className="row" style={{ marginTop: 6 }}>
         <Checkbox checked={!!params.unionExport} onChange={v => setParam('unionExport', v)}>
           熔合成单一实体（导出前布尔并成一张水密外壳，可能要几秒）

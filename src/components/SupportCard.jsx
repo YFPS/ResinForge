@@ -42,7 +42,7 @@ export default function SupportCard() {
       <div className="row">
         {num('esCell', '格宽', 1.5, 8, 0.5, 'mm', '墙距（原 Diamond width）：格架最小孔格宽')}
         {num('esDiamAngle', '斜边角', 25, 80, 5, '°', '斜边仰角（不低于自支撑临界角）')}
-        {num('esGap', '离模净距', 0, 3, 0.1, 'mm', 'Margin to part：格架（节点 / 板条）与模型保持的最小净距，支撑头与连接杆不受此限')}
+        {num('esGap', '与模型最小间距', 0, 3, 0.1, 'mm', 'Margin to part：格架（节点 / 板条）与模型保持的最小净距，支撑头与连接杆不受此限')}
       </div>
       <div className="row">
         {num('esBarW', '边宽', 0.15, 2, 0.05, 'mm', 'Edge width：斜边在墙面内的宽度')}
@@ -57,12 +57,12 @@ export default function SupportCard() {
       <div className="row">
         {num('esConnW', '连接宽', 0.1, 1.5, 0.05, 'mm', 'Connection width：十字针针身板宽（默认同边宽）')}
         {num('esNeedleT', '针板厚', 0.1, 1, 0.05, 'mm', '十字针「+」截面的板厚（默认同连接宽，针身截面为方形）')}
-        {num('esTipW', '接触宽', 0.05, 1, 0.05, 'mm', 'Contact width：针尖接触模型处的宽度')}
+        {num('esTipW', '接触直径', 0.05, 1, 0.05, 'mm', 'Contact width：针尖接触模型处的宽度')}
       </div>
       <div className="row">
-        {num('esContactMargin', '接触边距', 0, 2, 0.1, 'mm', 'Contact margin：贴模型前保持接触宽的细直段长')}
-        {num('esTaper', '过渡段长', 0.2, 3, 0.1, 'mm', '连接宽 → 接触宽 的渐缩长度')}
-        {num('pen', '渗透长度', 0, 1, 0.05, 'mm', 'Penetration length：针尖沿针轴扎入模型的深度')}
+        {num('esContactMargin', '接触边距', 0, 2, 0.1, 'mm', 'Contact margin：贴模型前保持接触直径的细直段长')}
+        {num('esTaper', '过渡段长', 0.2, 3, 0.1, 'mm', '连接宽 → 接触直径 的渐缩长度')}
+        {num('pen', '接触深度', 0, 1, 0.05, 'mm', 'Penetration length：针尖沿针轴扎入模型的深度')}
       </div>
       <div className="row">
         {num('esFoundH', '基础带高', 0, 3, 0.1, 'mm', 'Foundation maximum height：塔底墙下沿实心带高')}

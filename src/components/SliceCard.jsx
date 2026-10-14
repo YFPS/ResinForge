@@ -34,7 +34,7 @@ export default function SliceCard() {
         <label className="f"><span>孤岛最小面积</span><InputNumber value={params.minIslArea} min={0.05} max={20} step={0.05} onChange={v => setParam('minIslArea', v)} />mm²</label>
         <label className="f"><span>最小附着面积</span><InputNumber value={params.minAttach} min={0.05} max={20} step={0.05} onChange={v => setParam('minAttach', v)} />mm²</label>
       </div>
-      <div className="hint" style={{ marginBottom: 8 }}>模型按「抬高」悬于筏层上方，最底层作为孤岛参与检测；与下层接触面积不足「最小附着面积」的连通域同样视为孤岛。</div>
+      <div className="hint" style={{ marginBottom: 8 }}>模型按「抬高」悬于平台（或底板）上方，最底层作为孤岛参与检测；与下层接触面积不足「最小附着面积」的连通域同样视为孤岛。</div>
       <div className="row">
         <Button type="primary" long loading={loading} onClick={start}>运行逐层分析</Button>
       </div>
@@ -50,7 +50,7 @@ export default function SliceCard() {
       {stats && (
         <div className="kvbox" style={{ marginTop: 6 }}>
           <div className="kv"><span>总层数</span><b>{stats.layers.toLocaleString()}</b></div>
-          <div className="kv"><span>抬高 / 筏层</span><b>{stats.raiseText}</b></div>
+          <div className="kv"><span>抬高 / 底板</span><b>{stats.raiseText}</b></div>
           <div className="kv"><span>孤岛数量</span><b className={stats.islandCount ? 'warn' : 'good'}>{stats.islandCount} 处</b></div>
           <div className="kv"><span>孤岛总面积</span><b>{stats.totIslandArea.toFixed(1)} mm²</b></div>
           <div className="kv"><span>陡峭悬空面积</span><b>{stats.steepArea.toFixed(1)} mm²</b></div>

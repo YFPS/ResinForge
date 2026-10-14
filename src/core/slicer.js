@@ -138,7 +138,7 @@ export function analyze(pos, q, opts) {
   // 面积阈值物理化（mm² → 像素数）：与网格分辨率无关
   const minIslPx = Math.max(1, Math.ceil((opts.minIslArea ?? 0.5) / cellArea));
   const attachPx = Math.max(1, Math.ceil((opts.minAttachArea ?? 1) / cellArea));
-  const lMin = raiseHv > 0 ? 0 : 1;   // 抬高时首层悬空于筏层之上，需参与孤岛判定
+  const lMin = raiseHv > 0 ? 0 : 1;   // 抬高时首层悬空于平台（或底板）之上，需参与孤岛判定
   // detail 模式启用 LDI：位图改由区间表采样，悬空 gap 精确到区间边界（可用 useLDI:false 回退位图路径）
   let ld = null, ldCursor = null, ldMatch = null, ldAct = null;
   if (detail && opts.useLDI !== false) {

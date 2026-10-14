@@ -5,7 +5,7 @@
    - bus：迷你 pub/sub，core 的 UI 副作用全部经此发事件，React 组件订阅渲染
 ================================================================ */
 
-/* 打印工艺参数（世界系 = 打印系：平台顶面 y=0，模型底面抬高 raiseH，筏层厚 RAFT_T=1.2） */
+/* 打印工艺参数（世界系 = 打印系：平台顶面 y=0，模型底面抬高 raiseH） */
 export const params = {
   /* 机器配置 */
   plateX: 150,        // 板面 X（mm）
@@ -38,41 +38,32 @@ export const params = {
   esBarW: 0.6,        // 边宽（Edge width：斜边在墙面内的宽度）
   esBarT: 0.6,        // 边厚（Edge thickness：墙厚；默认与边宽相等，杆件截面为方形，不做扁板条）
   esMidBars: true,    // 墙内竖杆（墙上每半格一根竖杆）
-  esGap: 1.2,         // 离模净距（Margin to part：格架与模型保持的最小净距，针不受此限）
+  esGap: 1.2,         // 与模型最小间距（原「离模净距」；Margin to part：格架与模型保持的最小净距，针不受此限）
+  smallScale: 0.8,    // 小支撑缩放比例（管短小支撑——十字短杆 / 分叉 / 贴面短连接的中段宽度 = 主干直径 × 该比例，方截面，端部仍收到接触宽；源自黑格表 bracketSupportScalingRatio 0.8。主支撑的针身不受它影响）
   esColRatio: 2,      // 柱高宽比（Column height to width ratio：展宽前柱内格数；手册推荐 7，但支撑只有十几毫米高，7 时第一级在 30 mm 以上，整座塔看不到分级，默认改为 2）
   esTowerMaxR: 4,     // 最大展宽（每侧格数：每下降一个柱高向四周展宽一格，最多展宽这么多格）
   esHullRed: 0,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个格允许格宽翻倍；0=底部全密，与「细」模板一致；中粗 / 粗模板为 1，底部稀）
-  esConnW: 0.6,       // 连接宽（Connection width：十字针针身板宽；默认同边宽，竖直针即格架竖杆的延伸）
-  esNeedleT: 0.6,     // 针板厚（十字针「+」截面板厚；默认与连接宽相等，针身截面为方形）
+  esConnW: 0.6,       // 连接宽（Connection width：十字针针身板宽 = 主干直径；界面由主干直径联动写入）
+  esNeedleT: 0.6,     // 针板厚（十字针「+」截面板厚；与连接宽相等，针身截面为方形）
   esTipW: 0.3,        // 接触宽（Contact width：针尖接触模型处的宽度）
   esContactMargin: 0, // 接触边距（Contact margin：贴模型前保持接触宽的细直段长；0 = 针头为纯梯形，过渡段直接到接触点）
   esTaper: 1.5,       // 过渡段长（连接宽 → 接触宽 的渐缩长度；与黑格连接体长度一致，PAP10 / PAU10 / PARP10 / PAWR10 全部为 1.5 mm）
   esNeedleMax: 6,     // 针最大长度（格架节点到接触点）
   esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
   esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）
-  baseJoin: true,     // 连接底板：支撑塔底部的锯齿收成一条实心立板（默认开）
+  baseJoin: true,     // 连接底板（底板类型二选一）：支撑塔底部的锯齿收成一条实心立板；选中时模型随板抬高（默认）
   baseChamfer: false, // 栅角：连接条贴台面的底角斜切一小截（高 0.6mm）
   baseFlush: true,    // 去掉外伸：交叉墙的底板收到外墙齐平，不再往外吐出（默认开）
   baseHole: true,     // 底板开孔：连接条上按格架打菱形孔，少用材料（默认开）
-  /* 筏层 */
-  raftOn: false,      // 实心筏层开关（厚 1.2mm，默认关闭）
-  raftMargin: 3,      // 筏层边距（mm）
-  /* 网格底板（e-Stage 风格多孔底板：X/Z 交叉梁格，树脂从孔中排出） */
-  gridRaftOn: false,  // 网格底板开关（与实心筏层互斥）
-  gridT: 0.8,         // 网格板厚度（mm）
-  gridBar: 0.8,       // 网格梁宽（mm）
-  gridStep: 3,        // 网格梁间距（mm，孔 = 间距 − 梁宽）
-  /* 自动底板（按支撑投影自动定尺寸：栅角 + 蜂窝孔 + 四角切角；算法对照 3DPrintProject/3d 的底板生成器） */
-  autoPlateOn: false, // 自动底板开关（底板类型第四档；与实心筏层 / 网格底板互斥）
-  apOffset: 5,        // 外扩距离（mm）：底板超出支撑投影外接矩形的距离
-  apHeight: 2,        // 板厚（mm）
+  /* 自动底板（底板类型二选一：形状跟随支撑投影的轮廓凸包、向外扩 apOffset；栅角 + 蜂窝孔；算法对照 3DPrintProject/3d 的底板生成器） */
+  autoPlateOn: false, // 自动底板（与连接底板互斥；没有落板结构时不生成）
+  apOffset: 2,        // 外扩距离（mm）：板轮廓超出支撑投影凸包的距离（圆角）
+  apHeight: 1.3,      // 板厚（mm）
   apBorder: 2.5,      // 边框宽（mm）：孔区外圈的实心边
   apHoleR: 4,         // 蜂窝孔外接圆半径（mm；参考默认 8.66 是给 100mm 级大板配的，我们的板 30~60mm，调到 4）
   apWall: 1.5,        // 孔壁厚（mm）
   apChamfer: true,    // 栅角：底面向内收缩，侧壁成斜面
   apChamferAngle: 15, // 栅角角度（°）
-  apCorner: true,     // 四角切角
-  apCornerLen: 5,     // 切角长度（mm）
   /* 导出 */
   unionExport: true,  // 导出前用 manifold-3d 把支撑各构件布尔并成一张水密外壳（消共面重复面与非流形边；仅导出时算，不进实时回路）
 };
@@ -85,7 +76,8 @@ export const state = {
   transformTool: null,      // 单个模型右键：'move' 沿坐标轴移动 / 'rotate' 拖圆环旋转 / 'scale' 放大缩小 / null 不显示手柄
   activePartId: null,       // 朝向优化 / 当前操作的零件
   focusId: null,            // 摄影机对准的零件（多模型时画选框）
-  viewPointsOnly: false,    // 隐藏支撑结构，只显示附着在模型上的球形支撑点
+  // 支撑显示：'full' 全部支撑（格架 + 连接体 + 接触点）/ 'needle' 仅连接体（针与兜底件）/ 'point' 仅接触点（小球）
+  supView: 'full',          // 快捷键 V 循环（黑格同款三视图）
   protectedFaces: new Set(),
   supports: [],             // 结构网格 {mesh, kind: 'ground'|'anchor'|'base'}
   supportPoints: [],        // 支撑点（可编辑数据）{x,y,z,n,island,manual,state}

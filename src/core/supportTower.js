@@ -233,7 +233,7 @@ export async function buildEStageTowers(ctx, points, P) {
   const maxWid = Math.max(0, Math.round(P.esTowerMaxR));                // 最大展宽（每侧格数）
   const hullRed = Math.max(0, Math.min(3, Math.round(P.esHullRed || 0)));   // 壳层缩减级数（0 = 关闭）
   const mid = P.esMidBars !== false;
-  const st = { points: points.length, needles: 0, nodes: 0, bars: 0, towers: 0, foundRuns: 0, fallback: 0, ground: 0, anchors: 0, shortAnchors: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, unconnected: 0, capped: false };
+  const st = { points: points.length, needles: 0, nodes: 0, bars: 0, towers: 0, foundRuns: 0, fallback: 0, ground: 0, anchors: 0, shortAnchors: 0, micro: 0, plates: 0, noHead: 0, unroutable: 0, unconnected: 0, diagFall: 0, diagPatch: 0, capped: false };
   const pointState = new Array(points.length).fill('');
   if (join) { st.bandH = +plateH.toFixed(2); st.stripH = +bandH.toFixed(2); }   // 连接底板高（= 模型额外抬高）/ 连接条总高（日志 / 验收）
   const pos = (a, bb, n) => [a * ws, baseTop + n * hs, bb * ws];
@@ -537,6 +537,11 @@ export async function buildEStageTowers(ctx, points, P) {
       const wid = Math.min(maxWid, Math.floor(d / Dcol));
       let [aLo, aHi] = span(pa, p.x), [bLo, bHi] = span(pb, p.z);
       aLo -= 2 * wid; aHi += 2 * wid; bLo -= 2 * wid; bHi += 2 * wid;
+      // 区域最小宽度（半格）：比 4 半格还窄的路径条（单根柱化落柱/细支腿）两侧长不出格架，
+      // 那一段就成了「独立主干」（用户 2026-10-14 截图）。对称扩到至少 4 半格，让邻列自然长出、
+      // 斜边链可接；宽区域不受影响。
+      while (aHi - aLo < 3) { aLo--; aHi++; }
+      while (bHi - bLo < 3) { bLo--; bHi++; }
       const m = regL[pn] || (regL[pn] = new Map());
       for (let a = aLo; a <= aHi; a++) for (let bb = bLo; bb <= bHi; bb++) {
         if ((a & 1) && (bb & 1)) continue;          // 两向都是奇数 = 格子内部，不在任何墙上
@@ -553,6 +558,8 @@ export async function buildEStageTowers(ctx, points, P) {
     }
   }
   const regGet = (a, bb, n) => { const m = regL[n]; return m ? m.get(k2(a, bb)) : undefined; };
+  // 调试：区域表底部前几层 dump（[a, b, 最浅深度]），供「独立主干」分析（只挂 window，不进 stats）
+  if (typeof window !== 'undefined') window.__regDump = regL.slice(0, 5).map(m => m ? [...m].map(([kk, d]) => { const a = Math.floor(kk / SPAN) - OFF, bb = kk - (a + OFF) * SPAN - OFF; return [a, bb, d]; }) : []);
   const regHas = (a, bb, n) => regGet(a, bb, n) !== undefined;
   /* 节点所在级的格周期 q（半格）：壳层缩减每下降一个柱高翻倍一次——只放大内部结构（手册 Inner hull），
      区域边界上的外墙保持最小孔格（外壳缩减 0 级），塔块轮廓不随粗格跳变 */
@@ -582,11 +589,17 @@ export async function buildEStageTowers(ctx, points, P) {
     // 主干上长段没有斜边接点（用户 2026-10-14 截图：中粗 / 粗档的一根竖杆整段无加强，晃动隐患）。
     // 最小保持细格的 2 半格（q=2 行为不变）；q≥4 时取 q/2，链的密度与细格一致，孔仍随折返周期放大。
     const qs = Math.max(2, q >> 1);
+    // 主方向在前、反向备选在后（消费端「主向被区域拒收时才用备选」——链在区域边界折返）；
+    // 没有备选时，q 混合区的边界列（qAt 退回 2 的细格列）整列没有斜边，从底板起就是一根独立主干。
     if (wz) {
-      if (fwd ? md(a - n, qs) === 0 : md(a + n, qs) === 0) out.push([a + (fwd ? 1 : -1), bb, 'x']);
+      const d = fwd ? 1 : -1;
+      if (md(a - d * n, qs) === 0) out.push([a + d, bb, 'x']);
+      if (md(a + d * n, qs) === 0) out.push([a - d, bb, 'x']);
     }
     if (wx) {
-      if (fwd ? md(bb - n, qs) === 0 : md(bb + n, qs) === 0) out.push([a, bb + (fwd ? 1 : -1), 'z']);
+      const d = fwd ? 1 : -1;
+      if (md(bb - d * n, qs) === 0) out.push([a, bb + d, 'z']);
+      if (md(bb + d * n, qs) === 0) out.push([a, bb - d, 'z']);
     }
     return out;
   };
@@ -608,14 +621,32 @@ export async function buildEStageTowers(ctx, points, P) {
     if (tick) await tick();
     const next = new Map();
     const take = (a, bb, a2, b2, kind, vx, vz) => {
-      if (regGet(a2, b2, n) === undefined || !edgeOK(a, bb, n - 1, a2, b2, n)) return;
+      // 目标格不在区域时，允许「紧邻区域半格」的目标：区域按路径节点的墙格逐层构造，边界可能漏半格宽的空带——
+      // 斜边链跨到空带的第一步被拒，整列主干就没了加强（2026-10-14 独立主干修复）；放宽半步让链贴到区域边上，
+      // 净空仍由 edgeOK 严格把关。放宽目标只影响斜边：竖杆目标与源同格、直接命中区域。
+      if (regGet(a2, b2, n) === undefined
+        && regGet(a2 + 1, b2, n) === undefined && regGet(a2 - 1, b2, n) === undefined
+        && regGet(a2, b2 + 1, n) === undefined && regGet(a2, b2 - 1, n) === undefined) {
+        st.rejReg = (st.rejReg || 0) + 1; return false;
+      }
+      if (!edgeOK(a, bb, n - 1, a2, b2, n)) { st.rejOK = (st.rejOK || 0) + 1; return false; }
       edges.push({ a1: a, b1: bb, n1: n - 1, a2, b2, n2: n, kind, vx, vz });
       const k = k2(a2, b2);
       if (!next.has(k)) { next.set(k, [a2, b2]); G.add(k3(a2, b2, n)); }
+      return true;
     };
     for (const [a, bb] of cur) {
       const ups = upEdges(a, bb, n - 1);
-      for (const [a2, b2, kind, vx, vz] of ups) take(a, bb, a2, b2, kind, vx, vz);
+      const diagDone = { x: false, z: false };
+      for (const [a2, b2, kind, vx, vz] of ups) {
+        if (kind === 'v') { take(a, bb, a2, b2, kind, vx, vz); continue; }
+        // 朝每个方向（x 向 / z 向）每层至多一根斜边：主方向在前；被区域拒收时用反向后备折返
+        //（否则 q 混合区的边界列整列无斜边）。「+」柱节点两向各一根，互不占位。
+        if (diagDone[kind]) continue;
+        const ok = take(a, bb, a2, b2, kind, vx, vz);
+        if (!ok) st.diagFall = (st.diagFall || 0) + 1;   // 主向被拒（触发折返尝试）
+        diagDone[kind] = ok;
+      }
       const fz = forced.get(k3(a, bb, n - 1));
       if (fz) for (const [a2, b2] of fz) {
         if (ups.some(e => e[0] === a2 && e[1] === b2)) continue;
@@ -703,7 +734,45 @@ export async function buildEStageTowers(ctx, points, P) {
   for (const nd of needles) { const k = k3(nd.a, nd.b, nd.n); if (!keep.has(k)) { keep.add(k); stack.push(k); } }
   while (stack.length) { const k = stack.pop(); for (const k1 of down.get(k) || []) if (!keep.has(k1)) { keep.add(k1); stack.push(k1); } }
   const used = edges.filter(e => keep.has(k3(e.a1, e.b1, e.n1)) && keep.has(k3(e.a2, e.b2, e.n2)));
+  /* 兜底加强（2026-10-14，用户截图：中粗 / 粗档有的主干整段无加强、晃动隐患）：
+     q 混合区 / 区域边界的斜边链可能在跨区处断裂，留下「独立竖杆」段。这里对最终杆件做实扫：
+     ≥3 个竖直半格没有斜边相接的竖杆段，每 3 半格补一根同规格斜杆（±1 水平 + 1 竖直，连到邻近
+     已保留节点、胶囊体净空通过才补）——细档本就没有断链，此步不产生新杆。 */
+  {
+    const nodeSet = new Set();
+    const diag = new Set();                              // 有斜边相接的节点
+    const vAdj = new Map();                              // 竖杆链：k2(a,b) → Map<下层 n, 上层 n+1>
+    for (const e of used) {
+      nodeSet.add(k3(e.a1, e.b1, e.n1)); nodeSet.add(k3(e.a2, e.b2, e.n2));
+      if (e.kind !== 'v') { diag.add(k3(e.a1, e.b1, e.n1)); diag.add(k3(e.a2, e.b2, e.n2)); }
+      else {
+        const ck = k2(e.a1, e.b1);
+        let m = vAdj.get(ck); if (!m) vAdj.set(ck, m = new Map());
+        m.set(Math.min(e.n1, e.n2), Math.max(e.n1, e.n2));
+      }
+    }
+    const extra = [];
+    for (const [ck, m] of vAdj) {
+      const a = Math.floor(ck / SPAN) - OFF, bb = ck - (a + OFF) * SPAN - OFF;
+      let since = 0;
+      for (const n of [...m.keys()].sort((x, y) => x - y)) {
+        if (diag.has(k3(a, bb, n)) || diag.has(k3(a, bb, n + 1))) { since = 0; continue; }
+        since++;
+        if (since < 3) continue;
+        for (const [da, dbb] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const t = k3(a + da, bb + dbb, n + 1);
+          if (!nodeSet.has(t) || !edgeOK(a, bb, n, a + da, bb + dbb, n + 1)) continue;
+          extra.push({ a1: a, b1: bb, n1: n, a2: a + da, b2: bb + dbb, n2: n + 1, kind: da !== 0 ? 'x' : 'z', vx: false, vz: false });
+          diag.add(k3(a, bb, n)); diag.add(t);
+          since = 0;
+          break;
+        }
+      }
+    }
+    if (extra.length) { used.push(...extra); st.diagPatch = extra.length; }
+  }
   st.nodes = keep.size; st.bars = used.length;
+  st.edgeList = used.map(e => [e.a1, e.b1, e.n1, e.a2, e.b2, e.n2, e.kind]);   // 诊断：保留杆件 [a1,b1,n1,a2,b2,n2,kind]，供「独立主干」（无斜边相接的竖杆段）分析
   // 自检：n>0 的保留节点都必须有下行杆（否则就是打印时的孤岛起点）
   { const hasDown = new Set(used.map(e => k3(e.a2, e.b2, e.n2))); st.minima = 0; for (const k of keep) if (k >= LAYER && !hasDown.has(k)) st.minima++; }
 

@@ -9,6 +9,9 @@ import { state, params, log, toast, setProgress } from '../store.js';
 import { raftOn, raftMargin, RAFT_T, buildGridRaftGeom, raftAnchor, placeVertex, raiseH } from './model.js';
 import { unionShells } from './union.js';
 
+/* 跑在 Tauri 桌面壳（打包后的 exe）里还是普通浏览器：写出方式不同（见 exportSTL 尾部） */
+const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
 /** 把 mesh 的位移烘进顶点副本——布尔并要的是真实世界坐标，烘过之后写出的位移就归零 */
 function bakeOffset({ arr, dx, dy, dz }) {
   if (!dx && !dy && !dz) return arr;
@@ -83,7 +86,7 @@ export async function exportSTL(includeModel, includeSupports, filename) {
   let count = 0;
   for (const m of modelParts) count += m.pos.length / 9;
   for (const a of arrays) count += a.arr.length / 9;
-  if (!count) return toast('没有可导出的内容');
+  if (!count) { toast('没有可导出的内容'); return false; }
   const buf = new ArrayBuffer(84 + count * 50);
   const dv = new DataView(buf);
   const header = 'ResinForge v0.1 auto supports';
@@ -112,10 +115,34 @@ export async function exportSTL(includeModel, includeSupports, filename) {
       off = writeFace(dv, off, ax, ay, az, bx, by, bz, cx, cy, cz);
     }
   }
+  /* 写出：桌面版（Tauri）用系统保存对话框 + 写文件——WebView2 里 a[download] 不会保存文件；
+     浏览器版照旧触发下载。dialog 的 save() 会把选中的路径自动加进 fs scope（插件内置行为），
+     所以 writeFile 只需要 fs:allow-write-file 权限（capabilities/default.json）。
+     两个插件动态 import：浏览器版不打进主包，也不在非 Tauri 环境执行。 */
+  const name = filename || 'export.stl';
+  if (IS_TAURI) {
+    try {
+      const [{ save }, { writeFile }] = await Promise.all([
+        import('@tauri-apps/plugin-dialog'),
+        import('@tauri-apps/plugin-fs'),
+      ]);
+      const path = await save({ title: '导出 STL', defaultPath: name, filters: [{ name: 'STL 模型', extensions: ['stl'] }] });
+      if (!path) { log('导出已取消：没有选择保存位置'); return false; }
+      await writeFile(path, new Uint8Array(buf));
+      log(`已导出 ${name}（${count.toLocaleString()} 三角形，已回转换 Z-up）→ ${path}`, 'ok');
+      return true;
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      toast(`导出失败：${msg}`);
+      log(`导出失败：${msg}`, 'warn');
+      return false;
+    }
+  }
   const blob = new Blob([buf], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const el = document.createElement('a');
-  el.href = url; el.download = filename; el.click();
+  el.href = url; el.download = name; el.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  log(`已导出 ${filename}（${count.toLocaleString()} 三角形，已回转换 Z-up）`, 'ok');
+  log(`已导出 ${name}（${count.toLocaleString()} 三角形，已回转换 Z-up）`, 'ok');
+  return true;
 }

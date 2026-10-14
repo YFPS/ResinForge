@@ -119,7 +119,9 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
 - 标题栏只在 Tauri 环境渲染（`'__TAURI_INTERNALS__' in window`，即 `TitleBar.jsx` 导出的 `IN_TAURI`）——浏览器版零回归；桌面版顶栏的品牌字标与斜分隔收起（`.app--desktop .topbar .brand`），避免与标题栏重复。
 - 拖动：`data-tauri-drag-region` 只对**直接标记的元素**生效——`.titlebar` 与品牌区标记，纯视觉子元素 `pointer-events: none`，按钮区天然可点；双击最大化 / 还原由 Tauri 内置；窗口按钮走 `@tauri-apps/api/window` 的 `minimize` / `toggleMaximize` / `close`，权限在 `src-tauri/capabilities/default.json`（`core:window:allow-*`），最大化状态的图标切换靠 `onResized` + `isMaximized`。
 - `vite.config.js` 的 `server.strictPort: true`：devUrl 固定 8123，端口漂移会连不上。
-- 实测（2026-10-13，桌面窗口截图逐项对照 + 模拟输入）：无系统标题栏；标题栏品牌与三按钮显示正确；拖动位移与输入精确一致；双击最大化（1936×1048）/ 还原；最小化按钮（IsIconic=true）；最大化按钮（JS → IPC）；最大化时按钮图标切换为双层还原框。浏览器版无标题栏、布局零回归。
+- 导出文件：桌面版 WebView2 里 `<a download>` 不会保存文件——`core/stl.js` 的 `exportSTL` 按 `IS_TAURI`（`__TAURI_INTERNALS__` 检测）分支：桌面版走 `@tauri-apps/plugin-dialog` 的 `save()`（系统保存对话框，默认文件名 + STL 过滤）→ `@tauri-apps/plugin-fs` 的 `writeFile()`；对话框选中的路径由 dialog 插件**自动加进 fs scope**（插件内置行为，见其 commands.rs），capabilities 里只额外需要 `fs:allow-write-file`（与 `dialog:default` 并列；`fs:default` 本身只有 App 目录读权限）。两个插件动态 import，浏览器版不进主包。`exportSTL` 返回是否真的写出（取消对话框 / 无内容 → false），侧栏导出步骤只在写出时打完成标记；浏览器版照旧 blob 下载。
+- 实测（2026-10-13，桌面窗口截图逐项对照 + 模拟输入）：无系统标题栏；标题栏品牌与三按钮显示正确；拖动位移与输入精确一致；双击最大化（1936×1048）/ 还原；最小化按钮（IsIconic=true）；最大化按钮（JS → IPC）；最大化时按钮图标切换为双层还原框。浏览器版无标题栏、布局零回归。桌面导出（2026-10-14）：保存对话框 → 5.1MB STL 落盘，文件大小 = 84 + 面数 × 50 一致、有符号体积为正、zmin=0、无 NaN；取消对话框返回 false、不标记导出。
+- 桌面端调试：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 启动 desktop:dev 后，可经 `.ref/cdp-attach.mjs <cmds.jsonl>` 像浏览器一样 eval 页面（`.ref` 已 gitignore）。
 
 ### 网络盘（UNC 路径）注意事项
 
@@ -346,6 +348,7 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
   - **网格底板**（e-Stage 风格多孔板，`buildGridRaftGeom`）：外接圆内 X/Z 双向梁格（厚 `gridT` 0.8、梁宽 `gridBar` 0.8、孔距 `gridStep` 3），梁在圆边界截弦，树脂从孔中排出；支撑落到网格板顶 `gridT`。
 - 支撑落点高度统一由 `baseY()` 给出（网格板顶 / 筏层顶 / 平台 0），树状底座、格架底座、热力图共用同一口径。
 - 写出前统一做 Y-up → Z-up 逆变换 `(x,y,z) → (x,-z,y)`，与载入的 `rotateX(-90°)` 互逆。
+- 写出：浏览器版触发 `<a download>` 下载；桌面版（Tauri，WebView2 不会处理 a[download]）走系统保存对话框 + 写文件（见「桌面版（Tauri）」小节）。`exportSTL` 返回布尔：真的写出 / 浏览器版触发下载为 true，取消对话框或没有内容为 false。
 
 ---
 

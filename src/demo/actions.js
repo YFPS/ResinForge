@@ -141,10 +141,9 @@ export function doClearSupports() {
 }
 
 export async function doExport(includeModel) {
-  // 没有可导出的内容时 core 会自己提示；这里只在真的写出了文件时才把导出这一步记为完成
-  const empty = !state.mesh || (!includeModel && !hasSupports() && currentBaseType() === 'none');
-  await exportSTL(includeModel, true, includeModel ? 'model_with_supports.stl' : 'supports_only.stl');
-  if (!empty) markExported();
+  // core 返回是否真的写出了文件（桌面版取消保存对话框、没有内容都算没导出）；只在写出时把这一步记为完成
+  const ok = await exportSTL(includeModel, true, includeModel ? 'model_with_supports.stl' : 'supports_only.stl');
+  if (ok) markExported();
 }
 
 /** 连接底板：支撑塔底部锯齿收成一条立板，模型同步抬高一个板高（joinPlate.js）。已有支撑时立刻重算；没有支撑也立刻挪模型 */

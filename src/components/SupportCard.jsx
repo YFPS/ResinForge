@@ -5,7 +5,7 @@ import { useParams } from './useParams.js';
 import { bus, state } from '../store.js';
 import { runGenSup, clearSupports, rebuildStructure, setPointsOnly } from '../core/support.js';
 
-/* 支撑生成：支撑塔（e-Stage 菱形格架）+ 支撑点参数 + 结构参数 +
+/* 支撑生成：支撑塔（格架塔）+ 支撑点参数 + 结构参数 +
    自动支撑（清空重建）/ 自动孤岛支撑（增量补点）/ 按当前参数重建结构（复用已有支撑点）+ supStats */
 export default function SupportCard() {
   const [params, setParam] = useParams();
@@ -40,18 +40,18 @@ export default function SupportCard() {
         {num('tipTilt', '接触最大倾角', 0, 75, 5, '°', '接触端与竖直方向的夹角上限（沿法线时钳制、固定角度时直接采用）；针身 / 分支仍受自支撑角约束')}
       </div>
       <div className="row">
-        {num('esCell', '菱形宽', 1.5, 8, 0.5, 'mm', 'Diamond width：格架最小菱形宽 = 墙距')}
-        {num('esDiamAngle', '菱形角', 25, 80, 5, '°', 'Diamond angle：菱形斜边仰角（不低于自支撑临界角）')}
+        {num('esCell', '格宽', 1.5, 8, 0.5, 'mm', '墙距（原 Diamond width）：格架最小孔格宽')}
+        {num('esDiamAngle', '斜边角', 25, 80, 5, '°', '斜边仰角（不低于自支撑临界角）')}
         {num('esGap', '离模净距', 0, 3, 0.1, 'mm', 'Margin to part：格架（节点 / 板条）与模型保持的最小净距，支撑头与连接杆不受此限')}
       </div>
       <div className="row">
-        {num('esBarW', '边宽', 0.15, 2, 0.05, 'mm', 'Edge width：菱形边在墙面内的宽度')}
+        {num('esBarW', '边宽', 0.15, 2, 0.05, 'mm', 'Edge width：斜边在墙面内的宽度')}
         {num('esBarT', '边厚', 0.15, 1.5, 0.05, 'mm', 'Edge thickness：墙厚（默认同边宽，杆件截面为方形）')}
-        {num('esColRatio', '柱高宽比', 2, 20, 1, '', 'Column height to width ratio：展宽前柱内菱形数（手册推荐 7）')}
+        {num('esColRatio', '柱高宽比', 2, 20, 1, '', 'Column height to width ratio：展宽前柱内格数（手册推荐 7）')}
       </div>
       <div className="row">
-        {num('esHullRed', '壳层缩减', 0, 3, 1, '级', 'Hull reduction：每下降一个柱高，菱形宽翻倍一次（孔洞放大省料、利于排液），最多翻倍这么多级（0=底部全密，细支撑用；套用模板时自动设定）')}
-        {num('esTowerMaxR', '最大展宽', 0, 10, 1, '格', '每下降一个柱高（柱高宽比 × 菱形宽）向四周展宽一格，每侧最多展宽的格数')}
+        {num('esHullRed', '壳层缩减', 0, 3, 1, '级', 'Hull reduction：每下降一个柱高，格宽翻倍一次（孔洞放大省料、利于排液），最多翻倍这么多级（0=底部全密，细支撑用；套用模板时自动设定）')}
+        {num('esTowerMaxR', '最大展宽', 0, 10, 1, '格', '每下降一个柱高（柱高宽比 × 格宽）向四周展宽一格，每侧最多展宽的格数')}
         {num('esNeedleMax', '针最大长', 1, 12, 0.5, 'mm', '格架节点到接触点的十字针最大长度')}
       </div>
       <div className="row">
@@ -69,9 +69,9 @@ export default function SupportCard() {
         {num('esNotchH', '缺口高', 0, 2, 0.1, 'mm', 'Foundation maximum notch height：基础带底边三角缺口高')}
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
-        <Checkbox checked={params.esMidBars} onChange={v => setParam('esMidBars', v)}>菱形竖直对角线（墙上每半格一根竖杆）</Checkbox>
+        <Checkbox checked={params.esMidBars} onChange={v => setParam('esMidBars', v)}>墙内竖杆（墙上每半格一根）</Checkbox>
       </div>
-      <div className="hint">Materialise e-Stage 支撑塔（依据专利 US8903533B2 与 e-Stage 7.0 手册）：正交竖直墙上两组斜边交叉成闭合菱形，减去外扩净距的模型；每个支撑点沿竖杆 / 菱形斜边找到落地路径（被模型挡住时绕行），路径所在格随深度展宽，相邻支撑点的格并成连续塔块；自平台逐层向上只保留有支撑的节点（无打印孤岛），接入点下为尖顶、往下铺满；杆件在节点处经节点板圆滑相接；孔洞按壳层缩减逐级放大；塔底为带三角缺口的基础带。十字针自格架节点直通接触点（十字板对齐格架墙向）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 扎入渗透长度（手册 Top connection）；接不上格架的点依次改走就近接格架 / 分叉 / 十字短杆，仍接不上的标红。</div>
+      <div className="hint">光固化支撑塔：正交墙上的斜边在竖杆处折返（孔为三角形），减去外扩净距的模型；每个支撑点沿竖杆 / 斜边找到落地路径（被模型挡住时绕行），路径所在格随深度展宽，相邻支撑点的格并成连续塔块；自平台逐层向上只保留有支撑的节点（无打印孤岛），接入点下为尖顶、往下铺满；杆件在节点处经节点板圆滑相接；孔洞按壳层缩减逐级放大；塔底为带三角缺口的基础带。十字针自格架节点直通接触点（十字板对齐格架墙向）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 扎入渗透长度；接不上格架的点依次改走就近接格架 / 分叉 / 十字短杆，仍接不上的标红。</div>
       <div className="row">
         <Button type="primary" style={{ flex: 1 }} loading={busy === 'auto'} onClick={() => run('auto', () => runGenSup())}>自动支撑</Button>
         <Tooltip content="只为孤岛位置补支撑点（不清空现有支撑点），然后重建结构">

@@ -31,17 +31,17 @@ export const params = {
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
   tipMode: 'normal',  // 接触朝向：'normal' 沿法线（钳制到接触最大倾角）/ 'vertical' 竖直 / 'fixed' 固定倾角（沿法线方位）
   tipTilt: 45,        // 接触最大倾角（°，接触端与竖直方向夹角；针身 / 分支仍受自支撑角约束）
-  /* 支撑塔（Materialise e-Stage 菱形格架；参数名对齐 e-Stage 7.0 手册 Grid / Top connection / Foundation） */
+  /* 支撑塔（格架塔；参数名原对齐 e-Stage 7.0 手册 Grid / Top connection / Foundation） */
   pen: 0.2,           // 渗透长度（Penetration length）：针尖沿针轴扎入模型的深度
-  esCell: 3.5,        // 菱形宽（Diamond width：格架最小菱形宽 = 墙距）
-  esDiamAngle: 55,    // 菱形角（Diamond angle：菱形斜边仰角，不低于自支撑临界角）
-  esBarW: 0.6,        // 边宽（Edge width：菱形边在墙面内的宽度）
+  esCell: 3.5,        // 格宽（墙距；原无孔式格架的手册 Diamond width）
+  esDiamAngle: 55,    // 斜边角（斜边仰角，不低于自支撑临界角；原手册 Diamond angle）
+  esBarW: 0.6,        // 边宽（Edge width：斜边在墙面内的宽度）
   esBarT: 0.6,        // 边厚（Edge thickness：墙厚；默认与边宽相等，杆件截面为方形，不做扁板条）
-  esMidBars: true,    // 菱形竖直对角线（墙上每半格一根竖杆，专利「vertical diagonal」）
+  esMidBars: true,    // 墙内竖杆（墙上每半格一根竖杆）
   esGap: 1.2,         // 离模净距（Margin to part：格架与模型保持的最小净距，针不受此限）
-  esColRatio: 2,      // 柱高宽比（Column height to width ratio：展宽前柱内菱形数；手册推荐 7，但支撑只有十几毫米高，7 时第一级在 30 mm 以上，整座塔看不到分级，默认改为 2）
+  esColRatio: 2,      // 柱高宽比（Column height to width ratio：展宽前柱内格数；手册推荐 7，但支撑只有十几毫米高，7 时第一级在 30 mm 以上，整座塔看不到分级，默认改为 2）
   esTowerMaxR: 4,     // 最大展宽（每侧格数：每下降一个柱高向四周展宽一格，最多展宽这么多格）
-  esHullRed: 0,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个菱形允许菱形宽翻倍；0=底部全密，与「细」模板一致；中粗 / 粗模板为 1，底部稀）
+  esHullRed: 0,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个格允许格宽翻倍；0=底部全密，与「细」模板一致；中粗 / 粗模板为 1，底部稀）
   esConnW: 0.6,       // 连接宽（Connection width：十字针针身板宽；默认同边宽，竖直针即格架竖杆的延伸）
   esNeedleT: 0.6,     // 针板厚（十字针「+」截面板厚；默认与连接宽相等，针身截面为方形）
   esTipW: 0.3,        // 接触宽（Contact width：针尖接触模型处的宽度）

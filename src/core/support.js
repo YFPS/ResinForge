@@ -4,7 +4,7 @@
    - 支撑点：LDI 栅格悬空点 + 陡峭面（大三角形细分采样）+ 孤岛关键点，经区域面积过滤 /
      六角均匀布点（目标为设定间距，最近可收到约 0.68×，空洞补到覆盖半径 0.85× 以内；
      覆盖锥仅同一悬空区域，水平半径封顶 1.25×）/ 贴面·已托住·保护面过滤；每点带被托面外法线 n
-   - 结构：支撑塔（Materialise e-Stage 菱形格架，supportTower.js）
+   - 结构：支撑塔（格架塔，supportTower.js）
    手动增删的是支撑点，结构由点集整体重建——格架的杆件互相连接，不能逐根增删
    避让：一律基于模型 BVH 的胶囊体净空判定（collide.js），取代旧实现的单条竖直射线
 ================================================================ */
@@ -288,7 +288,7 @@ function paramSnapshot() {
     selfAngle: num(p.selfAngle, 45), shortSup: !!p.shortSup, spacing: num(p.spacing, 2.5),
     tipMode: p.tipMode || 'normal', tipTilt: num(p.tipTilt, 45),   // 接触朝向 / 接触最大倾角
     pen: num(p.pen, 0.2),                                          // 渗透长度（针尖扎入模型）
-    // 支撑塔（e-Stage 菱形格架）
+    // 支撑塔（格架塔）
     esCell: num(p.esCell, 3.5), esDiamAngle: num(p.esDiamAngle, 55), esMidBars: p.esMidBars !== false,
     esBarW: num(p.esBarW, 0.6), esBarT: num(p.esBarT, 0.6), esGap: num(p.esGap, 1.2),
     esColRatio: num(p.esColRatio, 7), esTowerMaxR: num(p.esTowerMaxR, 4), esHullRed: num(p.esHullRed, 0),
@@ -988,7 +988,7 @@ export async function runGenSup(opts = {}) {
   const plateOn = !!params.shortSup;   // 十字短杆（贴面短连接）
   const fb = !s.fallback ? '全部连上格架'
     : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
-  log(`e-Stage 支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
+  log(`支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
   if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   const bad = (s.noHead || 0) + (s.unroutable || 0);
   if (bad) log(`⚠ 支撑塔结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');

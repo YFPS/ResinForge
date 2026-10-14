@@ -75,7 +75,7 @@ export function applySupportTemplate(id, setParam) {
   for (const [k, v] of Object.entries(templateParams(tpl))) setParam(k, v);
   log(`已套用「${tpl.name}」支撑模板（支撑杆直径 ${tpl.diameter} mm，支撑间距 ${tpl.spacing} mm，${tpl.source}；切片层厚请在分析步骤设置）`, 'ok');
   toast(`已套用「${tpl.name}」模板`);
-  if (!hasSupports()) return syncModelLift();      // 板高随菱形宽 / 基础带高变：开着连接底板时模型跟着挪
+  if (!hasSupports()) return syncModelLift();      // 板高随格宽 / 基础带高变：开着连接底板时模型跟着挪
   return doGenSupports({ keepManual: true });
 }
 

@@ -1,31 +1,34 @@
 /* ================================================================
-   支撑塔（e-Stage 模式）—— Materialise e-Stage 菱形格架支撑塔的复刻
-   依据：e-Stage 核心专利 US8903533B2（Materialise，Eggers & Renap，2007 优先权；同族 US10343389B2 / US11104119B2）
-        + e-Stage 7.0 官方用户手册（Grid / Top connection / Foundation 参数语义）
-        + Materialise 官方 e-Stage for Resin 产品说明与透明树脂实拍
-   格架拓扑（专利 FIG.7 / FIG.12）：
-   - 初始网格 = 正交竖直墙（俯视正方形网格，墙距 = 菱形宽 w）；每面墙 = 两组斜边交叉成的菱形（宽 w、高 w·tan(菱形角)）
-     + 菱形竖直对角线（竖杆）；两向墙在交线处各出一片竖板 →「+」截面柱
-   - 半格序号 a/b（水平，步长 w/2）、n（竖向，步长 h/2）；周期 q 半格：墙在 a≡0 / b≡0 (mod q)，
-     上行斜边 a−n≡0、a+n≡0 (mod q) 两组分开判定；壳层缩减 = q 逐级翻倍（2→4→8→16），粗格是细格的子集
-   - 支撑网格 = 初始网格 − 外扩「离模净距」的模型（节点点距 / 杆件胶囊体，BVH 判定）
+   支撑塔（格架塔）
+   参考：e-Stage 7.0 官方用户手册（Grid / Top connection / Foundation 参数语义）
+        + 公开产品资料与透明树脂实拍（2026-10-04 起按此复刻）
+   格架拓扑（2026-10-14 规避改造后为「三角格」）：
+   - 正交竖直墙（俯视正方形网格，墙距 = 格宽 w）；每面墙 = 竖杆 + 单向斜边在竖杆处折返（之字，
+     每 q 个竖直半格换向）——孔为三角形。改造前是两组斜边交叉的菱形孔；改三角格是为与
+     Materialise 的菱形格架专利（US8903533B2 / EP2198405B1 权 11 的 rhombus pattern）在结构图案上
+     拉开距离，墙 / 竖杆 / 尺寸 / 斜边仰角 / 生成流程不变；两向墙在交线处各出一片竖板 →「+」截面柱
+   - 半格序号 a/b（水平，步长 w/2）、n（竖向，步长 hs = h/2，h = w·tan(斜边角)）；周期 q 半格：
+     墙在 a≡0 / b≡0 (mod q)；上行斜边记 fwd = (n mod 2q) < q——
+       fwd（右行）：a−n ≡ 0 (mod q) 出 (a+1, n+1)；否则（左行）：a+n ≡ 0 (mod q) 出 (a−1, n+1)
+     （x 固定墙换 b 同理；细格 q=2 的路径搜索版本见 downs2，与 upEdges 互为逆）；
+     壳层缩减 = q 逐级翻倍（2→4→8→16），粗格是细格的子集
+   - 支撑网格 = 格架 − 外扩「离模净距」的模型（节点点距 / 杆件胶囊体，BVH 判定）
    - 节点平滑过渡（几何实体化见 manifoldKit.js，在后台线程里算：manifold-3d / Clipper2）：每面墙在面内二维坐标里把杆件条带 + 节点圆盘并成一个区域，
      再做闭运算——凹角自动成半径 r 的圆角、凸侧是半径 边宽/2 的圆形接头，整面墙是一张连续穿孔板；只有一根杆的端头不放圆盘（端面平直）。
      旧版手写节点板轮廓、逐根修剪杆端，接缝靠凑：「<」顶点出锯齿缺口、针脚露台阶（用户截图），已整体废弃
    结构生成：
-   1. 柱化路径（专利 FIG.10）：每个支撑点取针最省（针长 + 水平偏移罚）、可落地的接入节点，
-      沿竖杆 / 菱形斜边搜索到平台的路径（竖直优先，被模型挡住时沿斜边绕行）
-   2. 支撑区域：路径节点所在的那一格（墙到墙），每下降一个柱高（柱高宽比 × 菱形宽）向四周展宽一格
-      ——相邻支撑点的区域并成连续塔块（官方实拍：模型下方是一整块格架，不是一丛独立柱）
+   1. 柱化路径：每个支撑点取针最省（针长 + 水平偏移罚）、可落地的接入节点，
+      沿竖杆 / 斜边搜索到平台的路径（竖直优先，被模型挡住时沿斜边绕行）
+   2. 支撑区域：路径节点所在的那一格（墙到墙），每下降一个柱高（柱高宽比 × 格宽）向四周展宽一格
+      ——相邻支撑点的区域并成连续塔块（实拍：模型下方是一整块格架，不是一丛独立柱）
    3. 自平台逐层向上：节点只有在至少一根下行杆连到已保留节点时才保留（无打印孤岛），两端都保留的杆件全部收录
-      （菱形闭合）；规划路径上的杆件强制收录，保证每个接入节点都连到平台
+      （孔格闭合）；规划路径上的杆件强制收录，保证每个接入节点都连到平台
    4. 接入节点后，只保留自各接入节点沿下行杆的闭包——顶部收成尖顶、往下铺满成块，多余格架不生成
-   接触（专利 FIG.13/14 + 手册 Top connection）：十字截面直针自格架节点到接触点——连接宽 → 过渡段渐缩 → 接触宽
+   接触（手册 Top connection）：十字截面直针自格架节点到接触点——连接宽 → 过渡段渐缩 → 接触宽
    （接触边距段）→ 沿针轴扎入渗透长度；针身胶囊体 + 过渡段锥台做净空判定。
-   - 格架同向针（优先，专利「connection is made along one of the directions of the mesh edges」/ FIG.13b）：
-     针轴竖直（与「+」柱同轴）或落在节点所在墙面内，与格架杆件同宽同厚，针根足迹并入墙面区域、与相邻杆之间同样出圆角；
-     接触点重定义为针轴延长线与模型的首个交点（偏移受限）
-   - 自由直针（兜底，FIG.13a 斜向连接）：接触点不动；错切十字柱，针脚截面与「+」柱顶一致（FIG.13c 截面 A-A′）
+   - 格架同向针（优先）：针轴竖直（与「+」柱同轴）或落在节点所在墙面内，与格架杆件同宽同厚，
+     针根足迹并入墙面区域、与相邻杆之间同样出圆角；接触点重定义为针轴延长线与模型的首个交点（偏移受限）
+   - 自由直针（兜底）：接触点不动；错切十字柱，针脚截面与「+」柱顶一致
    基础带（手册 Foundation）：底层节点按墙线连成段，墙下沿实心带，相邻竖杆之间的底边开三角缺口
    连不上格架的支撑点：就近接格架 → 分叉（一主干两头）→ 十字短杆（接到下方表面或平台）；
    仍接不上的标红、不生成结构（由用户加点 / 删点处理）。
@@ -198,10 +201,10 @@ export async function buildEStageTowers(ctx, points, P) {
   // 长循环里定期让出主线程（ctx.yieldUI 由调用方给：每 ~24ms 让一次，界面照常响应）；几何实体化放在后台线程
   const tick = ctx.yieldUI || null;
   const { bvh, ld, groundY } = ctx;
-  const w = Math.max(1, P.esCell);                                      // 菱形宽 = 墙距（俯视正方形网格边长）
+  const w = Math.max(1, P.esCell);                                      // 格宽 = 墙距（俯视正方形网格边长）
   const crit = Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
-  const ang = Math.max(crit, Math.max(20, Math.min(85, P.esDiamAngle)) * Math.PI / 180);   // 菱形角（不低于临界角，斜边自支撑）
-  const h = w * Math.tan(ang);                                          // 菱形高
+  const ang = Math.max(crit, Math.max(20, Math.min(85, P.esDiamAngle)) * Math.PI / 180);   // 斜边角（不低于临界角，斜边自支撑）
+  const h = w * Math.tan(ang);                                          // 孔格竖高（由斜边角定）
   const ws = w / 2, hs = h / 2;                                         // 节点间距：水平半格 / 竖直半格
   const b = Math.max(0.15, P.esBarW), t = Math.max(0.15, P.esBarT);     // 边宽（板条面内宽）/ 边厚（墙厚）
   const gap = Math.max(0, P.esGap);
@@ -226,7 +229,7 @@ export async function buildEStageTowers(ctx, points, P) {
   const pen = Math.max(0, P.pen);                                       // 渗透长度
   const rCross = Math.hypot(connW / 2, needleT / 2);                    // 十字截面外接圆半径（净空判定）
   const Lmax = Math.max(1, P.esNeedleMax);                              // 针最大长（格架节点 → 接触点）
-  const Dcol = Math.max(1, P.esColRatio) * w;                           // 柱高 = 柱高宽比 × 菱形宽（展宽 / 壳层缩减的深度步长）
+  const Dcol = Math.max(1, P.esColRatio) * w;                           // 柱高 = 柱高宽比 × 格宽（展宽 / 壳层缩减的深度步长）
   const maxWid = Math.max(0, Math.round(P.esTowerMaxR));                // 最大展宽（每侧格数）
   const hullRed = Math.max(0, Math.min(3, Math.round(P.esHullRed || 0)));   // 壳层缩减级数（0 = 关闭）
   const mid = P.esMidBars !== false;
@@ -271,12 +274,13 @@ export async function buildEStageTowers(ctx, points, P) {
   const vert2 = (a, bb) => (mid ? ((a & 1) === 0 || (bb & 1) === 0) : ((a & 1) === 0 && (bb & 1) === 0));
   const exists2 = (a, bb, n) => n >= 0 && ((a & 1) === 0 || (bb & 1) === 0)
     && (vert2(a, bb) || ((bb & 1) === 0 && ((a + n) & 1) === 0) || ((a & 1) === 0 && ((bb + n) & 1) === 0));
-  const downs2 = (a, bb, n) => {                   // 下行杆：竖杆 + 墙内菱形斜边
+  const downs2 = (a, bb, n) => {                   // 下行杆：竖杆 + 墙内斜边（三角格：单向，与 upEdges 互为逆）
     const out = [];
     if (n <= 0) return out;
     if (vert2(a, bb)) out.push([a, bb, n - 1, false]);
-    if ((bb & 1) === 0 && ((a + n) & 1) === 0) out.push([a + 1, bb, n - 1, true], [a - 1, bb, n - 1, true]);
-    if ((a & 1) === 0 && ((bb + n) & 1) === 0) out.push([a, bb + 1, n - 1, true], [a, bb - 1, n - 1, true]);
+    const m = n - 1, fwdM = md(m, 4) < 2, d = fwdM ? -1 : 1;   // 上行向右（fwd）⇔ 下行向左
+    if ((bb & 1) === 0 && md(fwdM ? a - 1 - m : a + 1 + m, 2) === 0) out.push([a + d, bb, n - 1, true]);
+    if ((a & 1) === 0 && md(fwdM ? bb - 1 - m : bb + 1 + m, 2) === 0) out.push([a, bb + d, n - 1, true]);
     return out;
   };
   // 竖直下行到底是否通畅：每个平面点缓存「自底向上连续净空的最高层」（胶囊体二分）
@@ -298,7 +302,7 @@ export async function buildEStageTowers(ctx, points, P) {
     colTop.set(k, v);
     return v;
   };
-  /* 柱化路径（专利 FIG.10）：逐层束搜索，竖直优先，被挡住时沿菱形斜边绕行；返回自起点到底层的节点序列或 null */
+  /* 柱化路径（专利 FIG.10）：逐层束搜索，竖直优先，被挡住时沿斜边绕行；返回自起点到底层的节点序列或 null */
   const lenV = hs, lenD = Math.hypot(ws, hs);
   const findPath = (a0, b0, n0) => {
     if (n0 <= clearTop(a0, b0)) { const path = []; for (let n = n0; n >= 0; n--) path.push([a0, b0, n]); return path; }
@@ -342,7 +346,7 @@ export async function buildEStageTowers(ctx, points, P) {
      十字截面与格架对齐（专利 FIG.13c 截面 A-A′）：一片板就在墙面内、与墙内杆件同宽同厚，经节点圆角板无缝相接；另一片板垂直墙面。
      接触点按专利做法重定义：针轴延长线与模型的首个交点（「structure 125 is virtually prolonged until it intersects with the object」），
      偏移 ≤ 接触宽（至少 0.15 mm）；孤岛种子不得上移 > 0.1——最低点先打印。
-     偏移原先允许到 min(1.2, 0.4·菱形宽)：支撑点挪到接触点后被吸到格架墙线附近，边缘环 / 内部六角格的均匀分布被打乱
+     偏移原先允许到 min(1.2, 0.4·格宽)：支撑点挪到接触点后被吸到格架墙线附近，边缘环 / 内部六角格的均匀分布被打乱
      （用户 2026-10-12 截图指出；环面结 206 点里 143 点被挪动，中位 0.53、最大 1.2 mm）。现在接不进这个范围的点改用自由直针，直接接到支撑点本身。
      旧实现让直针朝法线任意方位斜出：十字板离开墙面、针脚水平切口外露，节点处出现小方块 / 台阶（用户截图红框指出）。 */
   const thMax = Math.min(tc.tilt, tiltMax);              // 墙面内斜针最大倾角
@@ -550,8 +554,8 @@ export async function buildEStageTowers(ctx, points, P) {
   }
   const regGet = (a, bb, n) => { const m = regL[n]; return m ? m.get(k2(a, bb)) : undefined; };
   const regHas = (a, bb, n) => regGet(a, bb, n) !== undefined;
-  /* 节点所在级的菱形周期 q（半格）：壳层缩减每下降一个柱高翻倍一次——只放大内部结构（手册 Inner hull），
-     区域边界上的外墙保持最小菱形（外壳缩减 0 级），塔块轮廓不随粗格跳变 */
+  /* 节点所在级的格周期 q（半格）：壳层缩减每下降一个柱高翻倍一次——只放大内部结构（手册 Inner hull），
+     区域边界上的外墙保持最小孔格（外壳缩减 0 级），塔块轮廓不随粗格跳变 */
   const qAt = (a, bb, n) => {
     const d = regGet(a, bb, n);
     if (d === undefined) return 0;
@@ -561,7 +565,9 @@ export async function buildEStageTowers(ctx, points, P) {
     if ((bb & 1) === 0 && !(regHas(a, bb - 2, n) && regHas(a, bb + 2, n))) return 2;
     return 2 << k;
   };
-  /* 上行杆（自下层节点 (a,b,n)，存在性取下层节点所在级的周期 q）：[a2, b2, 类型, 在 x 固定墙, 在 z 固定墙] */
+  /* 上行杆（自下层节点 (a,b,n)，存在性取下层节点所在级的周期 q）：[a2, b2, 类型, 在 x 固定墙, 在 z 固定墙]
+     三角格（2026-10-14 规避改造）：两组斜边不再同时向上（那是菱形孔），改为按竖直位置每 q 个半格折返、只出一根——
+     孔从菱形变三角形；墙、竖杆（vx / vz）、尺寸、自支撑角全部不变。 */
   const upEdges = (a, bb, n) => {
     const q = qAt(a, bb, n);
     if (!q) return [];
@@ -571,12 +577,17 @@ export async function buildEStageTowers(ctx, points, P) {
     const vs = mid ? q >> 1 : q;
     const vx = wx && md(bb, vs) === 0, vz = wz && md(a, vs) === 0;
     if (vx || vz) out.push([a, bb, 'v', vx, vz]);
-    if (wz) { if (md(a - n, q) === 0) out.push([a + 1, bb, 'x']); if (md(a + n, q) === 0) out.push([a - 1, bb, 'x']); }
-    if (wx) { if (md(bb - n, q) === 0) out.push([a, bb + 1, 'z']); if (md(bb + n, q) === 0) out.push([a, bb - 1, 'z']); }
+    const fwd = md(n, 2 * q) < q;                      // 本周期前半段斜边朝 + 一侧，后半段反向（在竖杆处折返）
+    if (wz) {
+      if (fwd ? md(a - n, q) === 0 : md(a + n, q) === 0) out.push([a + (fwd ? 1 : -1), bb, 'x']);
+    }
+    if (wx) {
+      if (fwd ? md(bb - n, q) === 0 : md(bb + n, q) === 0) out.push([a, bb + (fwd ? 1 : -1), 'z']);
+    }
     return out;
   };
 
-  /* ---------- 3. 自平台逐层向上：有下行杆连到已保留节点才保留（无孤岛）；两端都保留的杆件全部收录（菱形闭合） ---------- */
+  /* ---------- 3. 自平台逐层向上：有下行杆连到已保留节点才保留（无孤岛）；两端都保留的杆件全部收录（孔格闭合） ---------- */
   const G = new Set();
   const edges = [];                                  // { a1,b1,n1, a2,b2,n2, kind, vx, vz }
   let cur = [];
@@ -730,7 +741,7 @@ export async function buildEStageTowers(ctx, points, P) {
       if ((nd.a & 1) === 0) addNeedleInc(kN, 1, 0, 1, nd.L);
     }
   }
-  // 凹角圆角半径：取边宽一半，并按最小孔（菱形被竖直对角线分成的三角孔，或整个菱形）的内切圆限制——
+  // 凹角圆角半径：取边宽一半，并按最小孔（折返斜边与竖杆围成的三角孔）的内切圆限制——
   // 闭运算半径大于孔的内切圆会把孔填死
   const holeIn = mid ? ws * hs / (hs + Math.hypot(ws, hs)) : ws * hs / Math.hypot(ws, hs);
   const rFil = Math.max(0, Math.min(b / 2, 0.6 * (holeIn - b / 2)));
@@ -740,9 +751,9 @@ export async function buildEStageTowers(ctx, points, P) {
   // 该侧的柱（竖杆 + 节点圆盘）切齐到另一面墙的墙面（s = sg·t/2）。否则边宽（0.45）比墙厚（0.35）宽：外墙上整根「+」柱凸出 0.05 成一条棱、
   // 节点圆形接头凸出 0.05 成小盖子（用户截图：「立柱是共用一根还是多根重复」「节点合并不够完美」）。两面墙都不延伸 = 独立「+」柱，不切
   const armDir = (k, pl, sg, ys) => (incid.get(k * 2 + pl) || []).some(d => d[0] * sg > 0.1 && (!ys || d[1] * ys > 0.1));
-  // 「墙面 pl 在柱子 sg 一侧有菱形格」：本节点有朝 sg 的杆，或下方 q/2 个节点内有朝 sg 上行的斜边、上方 q/2 内有朝 sg 下行的斜边
-  // （柱即菱形竖直对角线，斜边只每隔 q/2 个节点才接到柱上，中间节点只有竖杆直通；按方向判定——塔块下宽上窄，
-  //  下方菱形格朝 sg 下行的斜边不代表上面这段旁边也有格）
+  // 「墙面 pl 在柱子 sg 一侧有孔格」：本节点有朝 sg 的杆，或下方 q/2 个节点内有朝 sg 上行的斜边、上方 q/2 内有朝 sg 下行的斜边
+  // （柱即墙内竖杆，斜边只每隔 q/2 个节点才接到柱上，中间节点只有竖杆直通；按方向判定——塔块下宽上窄，
+  //  下方孔格朝 sg 下行的斜边不代表上面这段旁边也有格）
   const sideWall = (k, pl, sg) => {
     if (armDir(k, pl, sg, 0)) return true;
     const [a, bb, n] = unk(k), h = Math.max(1, (qAt(a, bb, n) || 2) >> 1);
@@ -791,7 +802,7 @@ export async function buildEStageTowers(ctx, points, P) {
       flush();
     }
   }
-  // 连接底板：同一条墙上相距约两个菱形宽以内、中间没有模型的段并成一条，避免底边断开或留下单独的小块
+  // 连接底板：同一条墙上相距约两个格宽以内、中间没有模型的段并成一条，避免底边断开或留下单独的小块
   if (join && wallRuns.length > 1) {
     wallRuns.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : a.line - b.line || a.s0 - b.s0));
     // 这条模型上断开的底板，空档大约 10～25mm。中间没有模型就补上
@@ -1205,7 +1216,7 @@ export async function buildEStageTowers(ctx, points, P) {
     const hb = Math.max(b, t) / 2;                   // 普通基础带两端外伸：盖住底层节点的圆形接头（半径 边宽/2）
     for (const r of wallRuns) {
       const pl = r.dir === 'x' ? 0 : 1;
-      // 轮廓（墙面坐标 s 向右、y 向上）。栅角：只在贴台面的底角斜切一小截，斜度与菱形格一致，上面仍是直边
+      // 轮廓（墙面坐标 s 向右、y 向上）。栅角：只在贴台面的底角斜切一小截，斜度与斜边一致，上面仍是直边
       // 立板两端收进 EPS：「去掉外伸」后端面恰与交叉立板的板面齐平，几乎共面会切出碎片；普通基础带外伸多 EPS 同理
       const x0 = r.s0 * ws - (join ? half - EPS : hb + EPS), x1 = r.s1 * ws + (join ? half - EPS : hb + EPS);
       const chH = 0.6;

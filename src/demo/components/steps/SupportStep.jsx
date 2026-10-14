@@ -48,7 +48,7 @@ function TemplatePicker() {
       />
       <p className="hint">
         {tpl
-          ? `当前生效：支撑杆直径 ${tpl.diameter} mm · 接触宽 ${tpl.tipW} mm · 支撑间距 ${tpl.spacing} mm · 菱形宽 ${tpl.cell} mm · ${tpl.source}（切片层厚在分析步骤设置）`
+          ? `当前生效：支撑杆直径 ${tpl.diameter} mm · 接触宽 ${tpl.tipW} mm · 支撑间距 ${tpl.spacing} mm · 格宽 ${tpl.cell} mm · ${tpl.source}（切片层厚在分析步骤设置）`
           : '当前参数不属于任何模板（默认值，或套用后手动改过某项）。点选一档即按该模板写入参数。'}
       </p>
     </Section>
@@ -59,21 +59,21 @@ function TowerParams() {
   const [params, setParam] = useParams();
   return (
     <>
-      <Section title="格架" desc="正交墙上两组斜边交叉成闭合菱形。">
+      <Section title="格架" desc="正交墙上的斜边在竖杆处折返，孔为三角形。">
         <Grid>
-          <Num k="esCell" label="菱形宽" min={1.5} max={8} step={0.5} unit="mm" />
-          <Num k="esDiamAngle" label="菱形角" min={25} max={80} step={5} unit="°" />
+          <Num k="esCell" label="格宽" min={1.5} max={8} step={0.5} unit="mm" />
+          <Num k="esDiamAngle" label="斜边角" min={25} max={80} step={5} unit="°" />
           <Num k="esBarW" label="边宽" min={0.15} max={2} step={0.05} unit="mm" />
           <Num k="esBarT" label="边厚" min={0.15} max={1.5} step={0.05} unit="mm" />
         </Grid>
         <SwitchRow
-          label="菱形竖直对角线"
+          label="墙内竖杆"
           desc="墙上每半格加一根竖杆，更结实"
           checked={params.esMidBars}
           onChange={v => setParam('esMidBars', v)}
         />
       </Section>
-      <Section title="柱与展宽" desc="每下降一个柱高向外展宽一格。壳层缩减决定底部菱形疏密：0 = 底部全密（细支撑），1 = 底部每柱高放大一倍（粗支撑）；套用模板时自动设定。">
+      <Section title="柱与展宽" desc="每下降一个柱高向外展宽一格。壳层缩减决定底部孔格疏密：0 = 底部全密（细支撑），1 = 底部每柱高放大一倍（粗支撑）；套用模板时自动设定。">
         <Grid>
           <Num k="esGap" label="离模净距" min={0} max={3} step={0.1} unit="mm" />
           <Num k="esColRatio" label="柱高宽比" min={2} max={20} step={1} />
@@ -139,7 +139,7 @@ export default function SupportStep() {
       <Section
         title="结构"
         aside={points ? <span className="secMeta tnum">{points.toLocaleString('zh-CN')} 个支撑点</span> : null}
-        desc="支撑塔：菱形格架从平台升起，十字针从节点接到接触点。"
+        desc="支撑塔：格架从平台升起，十字针从节点接到接触点。"
       >
         <p className="hint">连不上格架的支撑点依次改走：就近接格架 → 分叉（一主干两头）→ 十字短杆；仍接不上的标红、不生成结构。</p>
       </Section>

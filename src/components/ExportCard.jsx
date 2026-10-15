@@ -41,7 +41,7 @@ export default function ExportCard() {
         <Button type="primary" style={{ flex: 1 }} onClick={() => exportSTL(true, true, 'model_with_supports.stl')}>导出 模型+支撑 STL</Button>
         <Button onClick={() => exportSTL(false, true, 'supports_only.stl')}>仅支撑 STL</Button>
       </div>
-      <div className="hint" style={{ marginTop: 6 }}>导出后导入 CHITUBOX / Lychee 排版切片即可打印（已按 STL 惯例回转换为 Z-up）。绿色=落板支撑（落在底板顶面），琥珀色=锚定模型表面的短小支撑。</div>
+      <div className="hint" style={{ marginTop: 6 }}>导出后导入 CHITUBOX / Lychee 排版切片即可打印（已按 STL 惯例回转换为 Z-up）。黑灰=落板支撑（落在底板顶面），红色=锚定模型表面的短小支撑。</div>
     </Card>
   );
 }

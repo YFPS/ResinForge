@@ -9,6 +9,7 @@ import { loadDemo, loadSTLBuffer, loadSTLBuffers, setActivePart, setSelection, p
 import { setPointsOnly } from './core/support.js';
 import { rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings } from './core/slicer.js';
 import { camera, getControls, framePart, setMode } from './core/scene.js';
+import './demo/actions.js';
 
 document.body.setAttribute('arco-theme', 'dark');
 

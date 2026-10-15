@@ -1363,9 +1363,9 @@ function waitWorker(w, onProgress) {
   });
 }
 
-function workerJob(buffer, ratio) {
+function workerJob(buffer, ratio, onProgress) {
   const w = openSimplifyWorker();
-  const done = waitWorker(w, (p) => setProgress(0.15 + p * 0.7, '简化大模型…'));
+  const done = waitWorker(w, onProgress);
   w.postMessage({ buffer, ratio }, [buffer]);
   return done;
 }
@@ -1488,10 +1488,13 @@ async function ingestSTL(items, { append = false } = {}) {
     for (let i = 0; i < list.length; i++) {
       const it = list[i];
       const ratio = agree ? blueprintRatio(it.buf.byteLength) : 1;
-      setProgress(0.08 + 0.84 * (i / list.length), ratio < 1 ? `简化 ${it.name}…` : `读取 ${it.name}…`);
+      const text = `${ratio < 1 ? '简化' : '解析'} ${i + 1}/${list.length} · ${it.name}`;
+      const report = p => setProgress(0.08 + 0.84 * ((i + p) / list.length), text);
+      report(0);
+      await new Promise(resolve => setTimeout(resolve, 0));
       try {
         const parsed = it.kind === 'stl' && isBinarySTL(it.buf)
-          ? await workerJob(it.buf, ratio)
+          ? await workerJob(it.buf, ratio, report)
           : finishPositions(positionsFor(it), ratio);
         const part = adoptParsed(parsed, it.name, ratio);
         if (part) state.parts.push(part);
@@ -1500,20 +1503,49 @@ async function ingestSTL(items, { append = false } = {}) {
         log(`解析失败（${it.name}）：${e.message || e}`, 'warn');
       }
     }
+    if (!state.parts.length) {
+      toast('没有载入成功的模型');
+      if (state.mesh) { modelGroup.remove(state.mesh); state.mesh.geometry.dispose(); state.mesh = null; }
+      state.faces = null;
+      emitModelInfo();
+      return;
+    }
+    setProgress(0.96, '整理模型与排版…');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (!state.parts.some(p => p.id === state.activePartId)) state.activePartId = state.parts[0].id;
+    syncPreview(activePart());
+    commitPlate({ arrange: state.parts.length > 1, frame: 'all' });
+    setProgress(1, '导入完成');
+    log('已将 Z-up 转为 Y-up，如需调整可运行朝向优化');
   } finally {
     setProgress(null);
   }
-  if (!state.parts.length) {
-    toast('没有载入成功的模型');
-    if (state.mesh) { modelGroup.remove(state.mesh); state.mesh.geometry.dispose(); state.mesh = null; }
-    state.faces = null;
-    emitModelInfo();
-    return;
+}
+
+export function loadModelFiles(files, opts) {
+  const list = files.filter(file => modelKind(file.name));
+  if (!list.length) {
+    if (files.length) toast('请选择 .stl、.obj 或 .3mf 文件');
+    return Promise.resolve();
   }
-  if (!state.parts.some(p => p.id === state.activePartId)) state.activePartId = state.parts[0].id;
-  syncPreview(activePart());
-  commitPlate({ arrange: state.parts.length > 1, frame: 'all' });
-  log('已将 Z-up 转为 Y-up，如需调整可运行朝向优化');
+  const run = loadChain.then(async () => {
+    const items = [];
+    try {
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i];
+        setProgress(0.05 * i / list.length, `读取 ${i + 1}/${list.length} · ${file.name}`);
+        items.push({ buf: await file.arrayBuffer(), name: file.name });
+      }
+    } catch (e) {
+      setProgress(null);
+      log(`读取模型失败：${e.message || e}`, 'warn');
+      toast('无法读取模型文件，请重新选择');
+      return;
+    }
+    await ingestSTL(items, opts);
+  });
+  loadChain = run.catch(() => {});
+  return run;
 }
 
 export function loadSTLBuffer(buf, name) {

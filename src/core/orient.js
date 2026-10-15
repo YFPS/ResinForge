@@ -49,7 +49,7 @@ export async function runOrient() {
   const t0 = performance.now();
   for (let i = 0; i < total; i++) {
     const q = cands[i];
-    const r = analyze(pos, q, { gridRes: 128, layerH: coarseH, gapThresh: Math.max(0.5, coarseH * 2.5), raiseH: raiseH() });
+    const r = await analyze(pos, q, { gridRes: 128, layerH: coarseH, gapThresh: Math.max(0.5, coarseH * 2.5), raiseH: raiseH() });
     const sf = steepFaces(facesF, q, selfAngle, part.protected, protW, false);
     results.push({
       q, supportVol: r.metrics.supportVol, islandArea: r.metrics.islandArea,

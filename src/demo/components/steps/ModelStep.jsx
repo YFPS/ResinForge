@@ -1,17 +1,16 @@
 /* 第 1 步 · 模型：当前模型概况（面数、尺寸、能否放进当前打印机）+ 简化 + 演示模型。
    拖放由 core 在整个窗口上处理，这里只给「打开文件」按钮和提示。 */
-import { useState } from 'react';
 import { CircleCheck, Crosshair, FolderOpen, FolderPlus, TriangleAlert } from 'lucide-react';
 import Badge from '@/components/arc/badge/badge';
 import Button from '@/components/arc/button/button';
 import { RadioCards } from '@/components/arc/radio-cards/radio-cards';
-import { Slider } from '@/components/arc/slider/slider';
 import { state, params } from '../../../store.js';
 import { useBusLatest, useBusValue } from '../../bridge.js';
-import { DEMOS, doLoadDemo, doSimplify, focusModel, pickSTL, splitModelName } from '../../actions.js';
+import { DEMOS, doLoadDemo, focusModel, pickSTL, splitModelName } from '../../actions.js';
 import { currentMachine, useMachine } from '../../machines.js';
 import { STEPS, runTask, useDone, useUI } from '../../ui.js';
-import { Choice, Section } from '../fields.jsx';
+import { Section } from '../fields.jsx';
+import Simplifier from '../Simplifier.jsx';
 import { NextButton, StepPanel } from '../StepPanel.jsx';
 
 const STEP = STEPS[0];
@@ -24,7 +23,7 @@ function readSize() {
   return [bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z].map(fmt).join('|');
 }
 
-export default function ModelStep() {
+export default function ModelStep({ hideCurrentModel = false, hideSimplify = false }) {
   const info = useBusLatest('modelInfo', null);
   const sizeKey = useBusValue(['modelInfo', 'orientResults'], readSize);
   const machine = useMachine();
@@ -36,16 +35,6 @@ export default function ModelStep() {
   const fitsX = sx <= machine.plateX + 0.6, fitsZ = sz <= machine.plateZ + 0.6;
   const fitsY = sy + (params.raiseH || 0) <= (machine.plateY || 175) + 0.6;
   const many = info && info.parts && info.parts.length > 1;
-  const [simpMode, setSimpMode] = useState('fidelity');
-  const [fidelity, setFidelity] = useState(5);
-  const [ratioPct, setRatioPct] = useState(50);
-  const simpIds = info
-    ? ((info.selectedIds && info.selectedIds.length) ? info.selectedIds : (info.activeId ? [info.activeId] : []))
-    : [];
-  const beforeNf = info && info.parts
-    ? info.parts.filter(p => simpIds.includes(p.id)).reduce((s, p) => s + (p.nf || 0), 0)
-    : 0;
-  const afterNf = Math.round(beforeNf * ratioPct / 100);
   const m = currentMachine(machine);
   const plateName = m ? (m.name || m.model) : '当前机型';
 
@@ -62,131 +51,75 @@ export default function ModelStep() {
         </>
       )}
     >
-      <Section title="当前模型">
-        {info ? (
-          <div className="modelCard">
-            <div className="mcTop">
-              <span className="mcName" title={name}>{name}</span>
-              {demo ? <Badge size="sm">演示</Badge> : null}
+      {!hideCurrentModel ? (
+        <Section title="当前模型">
+          {info ? (
+            <div className="modelCard">
+              <div className="mcTop">
+                <span className="mcName" title={name}>{name}</span>
+                {demo ? <Badge size="sm">演示</Badge> : null}
+              </div>
+              <div className="mcMeta tnum">
+                {Math.round(info.nf).toLocaleString('zh-CN')} 个三角面
+                {info.nfFull > info.nf ? `（原 ${Math.round(info.nfFull).toLocaleString('zh-CN')}）` : ''}
+                {' '}· {fmt(sx)} × {fmt(sz)} × {fmt(sy)} mm
+              </div>
+              <div className={'mcFit' + (fitsX && fitsZ && fitsY ? '' : ' warn')}>
+                {fitsX && fitsZ && fitsY ? (
+                  <>
+                    <CircleCheck size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span className="mcFitText">放得进 {plateName}</span>
+                    <span className="mcFitDim tnum">{fmt(machine.plateX)} × {fmt(machine.plateZ)} × {fmt(machine.plateY)}</span>
+                  </>
+                ) : (
+                  <>
+                    <TriangleAlert size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span className="mcFitText">
+                      超出 {plateName}：
+                      {!fitsX ? `X 多 ${fmt(sx - machine.plateX)} mm` : ''}
+                      {!fitsX && !fitsZ ? '，' : ''}
+                      {!fitsZ ? `Y 多 ${fmt(sz - machine.plateZ)} mm` : ''}
+                      {(!fitsX || !fitsZ) && !fitsY ? '，' : ''}
+                      {!fitsY ? `Z 多 ${fmt(sy + (params.raiseH || 0) - machine.plateY)} mm` : ''}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="mcMeta tnum">
-              {Math.round(info.nf).toLocaleString('zh-CN')} 个三角面
-              {info.nfFull > info.nf ? `（原 ${Math.round(info.nfFull).toLocaleString('zh-CN')}）` : ''}
-              {' '}· {fmt(sx)} × {fmt(sz)} × {fmt(sy)} mm
+          ) : (
+            <p className="secDesc">还没有模型。</p>
+          )}
+          {many ? (
+            <div className="partList" role="list" aria-label="已载入的模型">
+              {info.parts.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="listitem"
+                  className={'partRow' + ((info.selectedIds && info.selectedIds.length ? info.selectedIds.includes(p.id) : info.activeId === p.id) ? ' active' : '')}
+                  onClick={() => focusModel(p.id)}
+                >
+                  <Crosshair size={15} strokeWidth={1.75} aria-hidden="true" />
+                  <span className="partName" title={p.name}>{splitModelName(p.name).name}</span>
+                  <span className="partMeta tnum">{fmt(p.sx)} × {fmt(p.sz)}</span>
+                </button>
+              ))}
             </div>
-            <div className={'mcFit' + (fitsX && fitsZ && fitsY ? '' : ' warn')}>
-              {fitsX && fitsZ && fitsY ? (
-                <>
-                  <CircleCheck size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span className="mcFitText">放得进 {plateName}</span>
-                  <span className="mcFitDim tnum">{fmt(machine.plateX)} × {fmt(machine.plateZ)} × {fmt(machine.plateY)}</span>
-                </>
-              ) : (
-                <>
-                  <TriangleAlert size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span className="mcFitText">
-                    超出 {plateName}：
-                    {!fitsX ? `X 多 ${fmt(sx - machine.plateX)} mm` : ''}
-                    {!fitsX && !fitsZ ? '，' : ''}
-                    {!fitsZ ? `Y 多 ${fmt(sz - machine.plateZ)} mm` : ''}
-                    {(!fitsX || !fitsZ) && !fitsY ? '，' : ''}
-                    {!fitsY ? `Z 多 ${fmt(sy + (params.raiseH || 0) - machine.plateY)} mm` : ''}
-                  </span>
-                </>
-              )}
-            </div>
+          ) : null}
+          <div className="rowStart">
+            <Button variant="secondary" size="sm" onClick={() => pickSTL(true)}>
+              <FolderPlus size={15} strokeWidth={1.75} aria-hidden="true" />
+              追加模型
+            </Button>
           </div>
-        ) : (
-          <p className="secDesc">还没有模型。</p>
-        )}
-        {many ? (
-          <div className="partList" role="list" aria-label="已载入的模型">
-            {info.parts.map(p => (
-              <button
-                key={p.id}
-                type="button"
-                role="listitem"
-                className={'partRow' + ((info.selectedIds && info.selectedIds.length ? info.selectedIds.includes(p.id) : info.activeId === p.id) ? ' active' : '')}
-                onClick={() => focusModel(p.id)}
-              >
-                <Crosshair size={15} strokeWidth={1.75} aria-hidden="true" />
-                <span className="partName" title={p.name}>{splitModelName(p.name).name}</span>
-                <span className="partMeta tnum">{fmt(p.sx)} × {fmt(p.sz)}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <div className="rowStart">
-          <Button variant="secondary" size="sm" onClick={() => pickSTL(true)}>
-            <FolderPlus size={15} strokeWidth={1.75} aria-hidden="true" />
-            追加模型
-          </Button>
-        </div>
-      </Section>
+        </Section>
+      ) : null}
 
-      <Section title="简化" desc="去掉多余的三角面，文件更小，转动和移动也更顺。细节可能会少一些。">
-        {info ? (
-          <p className="simpStat tnum">
-            简化前面数：{Math.round(beforeNf).toLocaleString('zh-CN')}
-            {simpIds.length > 1 ? ` · ${simpIds.length} 个模型` : ''}
-          </p>
-        ) : (
-          <p className="secDesc">载入模型后可以简化。</p>
-        )}
-        <Choice
-          ariaLabel="简化方式"
-          value={simpMode}
-          onChange={setSimpMode}
-          options={[
-            { value: 'fidelity', label: '按保真度' },
-            { value: 'ratio', label: '按面数比' },
-          ]}
-        />
-        {simpMode === 'fidelity' ? (
-          <>
-            <div className="simpEnds"><span>简化多</span><span>简化少</span></div>
-            <Slider
-              label="保真度"
-              min={1}
-              max={10}
-              step={0.01}
-              value={fidelity}
-              format={v => v.toFixed(2)}
-              onValueChange={setFidelity}
-            />
-          </>
-        ) : (
-          <>
-            <div className="simpEnds"><span>简化多</span><span>简化少</span></div>
-            <Slider
-              label="保留比例"
-              min={1}
-              max={99.99}
-              step={0.01}
-              value={ratioPct}
-              format={v => `${v.toFixed(2)}%`}
-              onValueChange={setRatioPct}
-            />
-            <p className="simpStat tnum">简化后面数：约 {afterNf.toLocaleString('zh-CN')}</p>
-          </>
-        )}
-        <p className="hint">数值越高，减得越少，表面越接近原来的样子。简化的是当前选中的模型；没有多选时，简化正在使用的这一件。简化后需要重新分析和生成支撑。</p>
-        <div className="rowStart">
-          <Button
-            variant="primary"
-            size="sm"
-            loading={busy === 'simplify'}
-            disabled={!info || beforeNf < 8 || (!!busy && busy !== 'simplify')}
-            onClick={() => runTask('simplify', () => doSimplify(
-              simpMode === 'fidelity'
-                ? { mode: 'fidelity', fidelity }
-                : { mode: 'ratio', ratio: ratioPct / 100 },
-            ))}
-          >
-            简化
-          </Button>
-        </div>
-      </Section>
+      {!hideSimplify ? (
+        <Section title="简化" desc="去掉多余的三角面，文件更小，转动和移动也更顺。细节可能会少一些。">
+          <Simplifier />
+        </Section>
+      ) : null}
 
       <Section title="演示模型" desc="各自代表一类典型的支撑难点。">
         <RadioCards

@@ -1,13 +1,14 @@
 /* 集中操作层：顶栏 / 侧栏 / 命令面板共用同一套动作，避免各写一遍。
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
-import { params, state, log, toast } from '../store.js';
-import { loadDemo, loadSTLBuffers, setActivePart, simplifySelection } from '../core/model.js';
+import { params, state, bus, log, toast } from '../store.js';
+import { isHeatOn, setHeat } from '../core/heat.js';
+import { loadDemo, loadModelFiles, setActivePart, simplifySelection } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis } from '../core/inspect.js';
 import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
 import { SUPPORT_TEMPLATES, getSupportTemplate, templateParams } from '../core/supportTemplates.js';
-import { markOriented, markExported } from './ui.js';
+import { getUI, markOriented, markExported, runTask } from './ui.js';
 
 export const hasSupports = () => (state.supportPoints || []).length > 0;
 
@@ -34,11 +35,10 @@ export function pickSTL(append = false) {
   input.type = 'file';
   input.accept = '.stl,.obj,.3mf';
   input.multiple = true;
-  input.onchange = async () => {
+  input.onchange = () => {
     const files = [...(input.files || [])];
     if (!files.length) return;
-    const items = await Promise.all(files.map(async f => ({ buf: await f.arrayBuffer(), name: f.name })));
-    loadSTLBuffers(items, { append: append === true });
+    loadModelFiles(files, { append: append === true });
   };
   input.click();
 }
@@ -104,6 +104,16 @@ async function ensureAnalysis() {
   if (!state.analysis) await runSliceAnalysis();
   return !!state.analysis;
 }
+
+/** 进入支撑步骤，或切入加支撑 / 删支撑：热力图直接打开；还没做逐层分析就自动跑完。
+    已经有分析结果就不再算。没有模型时只记下热力图开关，不弹「请先载入模型」。 */
+export function enterSupport() {
+  if (!isHeatOn()) setHeat(true);
+  if (!state.mesh || state.analysis || getUI().busy) return;
+  return runTask('analyze', () => runSliceAnalysis());
+}
+
+bus.on('enterSupport', () => { enterSupport(); });
 
 export async function doGenSupports(opts = {}) {
   await syncModelLift();                           // 先按连接底板挪好模型：没分析过时，下面的分析直接在新高度上做（不白算一遍）

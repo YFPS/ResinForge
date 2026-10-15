@@ -90,7 +90,7 @@ export function computeFaceData(pos) {
 /* 朝向分析主函数：pos 原始顶点（模型局部，底面 y=0）, q 旋转, opts
    opts.raiseH：模型抬高（mm）。顶点旋转换到打印世界系（平台 y=0、模型底面 y=raiseH），
    使模型最底层自然成为孤岛、支撑体积包含底面到平台的抬高量 */
-export function analyze(pos, q, opts) {
+export async function analyze(pos, q, opts) {
   const detail = !!opts.detail;
   const gridRes = opts.gridRes || 160;
   const layerH = opts.layerH, gapThresh = opts.gapThresh;
@@ -162,6 +162,9 @@ export function analyze(pos, q, opts) {
   // 起点太小被当噪点，往上每层都搭在下层上（实测锥尖朝下、抬高 4mm：0 个支撑点，整件悬空）。墙上的小凸点几层内就并进墙里，不会误报
   const chain = detail ? [] : null;            // 每节点 { open, root }
   const rootPix = detail ? new Map() : null;   // 浮空链起点 → 像素表
+  const compBuf = detail ? new Int32Array(N) : null;
+  let ovT = new Int32Array(64), ovW = new Int32Array(64);
+  let yieldMark = performance.now();
 
   for (let l = 0; l < layers; l++) {
     const z = minY + (l + 0.5) * layerH + 1e-5;
@@ -170,8 +173,13 @@ export function analyze(pos, q, opts) {
     const cnt = setList.n;
     if (cnt > maxFill) maxFill = cnt;
 
-    for (let k = 0; k < cnt; k++) {
-      const id = setList.arr[k];
+    // 上一层同一格有材料时，5×5 含中心，斜面判定必真，悬空体积不会加上。
+    // 材料区间往往连着很多层，这类格子占绝大多数；只测「这一层新出现」的格子。
+    // 新出现的列就是本层从堆里唤醒的列（woke），顺序仍是首次激活序，悬空点顺序不变。
+    const births = ld ? ldAct.woke : null;
+    const nScan = ld ? births.length : cnt;
+    for (let k = 0; k < nScan; k++) {
+      const id = ld ? births[k] : setList.arr[k];
       let gap, surfY;
       if (ld) {
         const m = ldMatch[id];
@@ -182,6 +190,7 @@ export function analyze(pos, q, opts) {
       } else {
         gap = z - lastMat[id]; surfY = z - layerH / 2;
         lastMat[id] = z;
+        if (prevOcc[id]) continue;
       }
       if (gap > gapThresh) {
         const i0c = id % W, j0c = (id / W) | 0;
@@ -217,16 +226,35 @@ export function analyze(pos, q, opts) {
     }
 
     if (detail) {
-      visited.fill(0);
+      // visited 只在本层置位像素上为 1，上一层结束时已清回 0，不必整张栅格 fill
       for (let k = 0; k < cnt; k++) {
         const id = setList.arr[k];
         if (visited[id]) continue;
         let head = 0, tl = 0;
         stack[tl++] = id; visited[id] = 1;
-        const comp = [];
+        let compN = 0;
+        // 图节点登记（所有连通域）；边权按下层节点归集。重叠和质心在泛洪时一起算，少扫一整遍像素。
+        const nid = graph.nodes.length;
+        let nOv = 0;
+        let si = 0, sj = 0;
+        const labels = graph.labels, prevLabels = graph.prevLabels;
         while (head < tl) {
           const c = stack[head++];
-          comp.push(c);
+          compBuf[compN++] = c;
+          labels[c] = nid;
+          si += c % W; sj += (c / W) | 0;
+          const t = prevLabels[c];
+          if (prevOcc[c] && t >= 0) {
+            let j = 0;
+            for (; j < nOv; j++) if (ovT[j] === t) { ovW[j]++; break; }
+            if (j === nOv) {
+              if (nOv === ovT.length) {
+                const nt = new Int32Array(nOv * 2), nw = new Int32Array(nOv * 2);
+                nt.set(ovT); nw.set(ovW); ovT = nt; ovW = nw;
+              }
+              ovT[nOv] = t; ovW[nOv++] = 1;
+            }
+          }
           const ci = c % W, cj = (c / W) | 0;
           if (ci + 1 < W && curOcc[c + 1] && !visited[c + 1]) { visited[c + 1] = 1; stack[tl++] = c + 1; }
           if (ci - 1 >= 0 && curOcc[c - 1] && !visited[c - 1]) { visited[c - 1] = 1; stack[tl++] = c - 1; }
@@ -234,30 +262,20 @@ export function analyze(pos, q, opts) {
           if (cj - 1 >= 0 && curOcc[c - W] && !visited[c - W]) { visited[c - W] = 1; stack[tl++] = c - W; }
         }
         {
-          // 图节点登记（所有连通域）；边权按下层节点归集
-          const nid = graph.nodes.length;
-          const ovBy = new Map();
-          let si = 0, sj = 0;
-          for (let c = 0; c < comp.length; c++) {
-            const cc = comp[c];
-            graph.labels[cc] = nid;
-            si += cc % W; sj += (cc / W) | 0;
-            const t = graph.prevLabels[cc];
-            if (prevOcc[cc] && t >= 0) ovBy.set(t, (ovBy.get(t) || 0) + 1);
-          }
           let outW = 0;
-          const edges = [];
-          for (const [t, w] of ovBy) { edges.push({ t, w }); outW += w; }
+          const edges = new Array(nOv);
+          for (let j = 0; j < nOv; j++) { edges[j] = { t: ovT[j], w: ovW[j] }; outW += ovW[j]; }
           // 与下层的接触面积不足阈值 → 视为孤岛（单像素搭接强度不够，剥离会撕裂）。
           // 阈值取「最小附着面积」与「自身面积一半」的较小者：小截面（尖顶/球顶/细柱顶 < 1mm²）完全落在下层材料上时
           // 重叠必然 < 1mm²，只用前者会被一律误判为孤岛（实测悬臂雕像球顶 76/76 像素全重叠仍判孤岛）
-          const isIsl = l >= lMin && comp.length >= minIslPx && outW < Math.min(attachPx, Math.ceil(comp.length * 0.5));
+          const isIsl = l >= lMin && compN >= minIslPx && outW < Math.min(attachPx, Math.ceil(compN * 0.5));
+          const pix = (isIsl || (!isIsl && l >= lMin && nOv === 0)) ? compBuf.slice(0, compN) : null;
           graph.nodes.push({
-            id: nid, layer: l, y: z, px: comp.length, area: comp.length * cellArea,
-            cx: g.x0 + (si / comp.length + 0.5) * sx,
-            cz: g.z0 + (sj / comp.length + 0.5) * sz,
+            id: nid, layer: l, y: z, px: compN, area: compN * cellArea,
+            cx: g.x0 + (si / compN + 0.5) * sx,
+            cz: g.z0 + (sj / compN + 0.5) * sz,
             island: isIsl,
-            pixels: isIsl ? Int32Array.from(comp) : null   // 孤岛保留像素表，供关键点提取（M4）
+            pixels: isIsl ? pix : null   // 孤岛保留像素表，供关键点提取（M4）
           });
           graph.adj.push(edges);
           if (isIsl) {
@@ -266,13 +284,17 @@ export function analyze(pos, q, opts) {
           }
           let open = false, root = -1;
           if (!isIsl && l >= lMin) {
-            if (!edges.length) { open = true; root = nid; rootPix.set(nid, Int32Array.from(comp)); }
+            if (!nOv) { open = true; root = nid; rootPix.set(nid, pix); }
             else {
               open = true;
               let bestW = -1;
-              for (const { t, w } of edges) { const c = chain[t]; if (!c.open) { open = false; break; } if (w > bestW) { bestW = w; root = c.root; } }
+              for (let j = 0; j < nOv; j++) {
+                const c = chain[ovT[j]];
+                if (!c.open) { open = false; break; }
+                if (ovW[j] > bestW) { bestW = ovW[j]; root = c.root; }
+              }
             }
-            if (open && comp.length >= minIslPx) {
+            if (open && compN >= minIslPx) {
               const rn = graph.nodes[root];
               if (!rn.island) {
                 rn.island = true; rn.pixels = rootPix.get(root); rn.chainTip = true;
@@ -284,9 +306,22 @@ export function analyze(pos, q, opts) {
           chain.push({ open, root });
         }
       }
+      for (let k = 0; k < cnt; k++) visited[setList.arr[k]] = 0;
+      // 只把本层写过的格子交到上一层标签。读者只在 prevOcc 为 1 的格子上读，不必整张拷贝再整张清空。
+      {
+        const labels = graph.labels, prevLabels = graph.prevLabels;
+        for (let k = 0; k < cnt; k++) {
+          const id = setList.arr[k];
+          prevLabels[id] = labels[id];
+        }
+      }
     }
-    if (detail) { graph.prevLabels.set(graph.labels); graph.labels.fill(-1); }
     prevOcc.set(curOcc);
+    // 详细分析让出主线程：一整段算完会卡半秒以上，切片过程中画面还能刷新
+    if (detail && performance.now() - yieldMark > 12) {
+      await yieldSlice();
+      yieldMark = performance.now();
+    }
   }
   return {
     metrics: { supportVol, islandArea, maxFill: maxFill * cellArea, height: spanY, layers },
@@ -443,6 +478,49 @@ export function buildLDI(p, tris, g) {
   return { W, H, sx, sz, x0, z0, nInt, offs, ys, dangling, nonEmpty: Int32Array.from(ne) };
 }
 
+/* 列唤醒堆：按下一处区间入口的高度。空档里的列不逐层扫描，到入口再醒。 */
+function heapPush(h, y, c) {
+  h.push({ y, c });
+  let i = h.length - 1;
+  while (i > 0) {
+    const p = (i - 1) >> 1;
+    if (h[p].y <= h[i].y) break;
+    const tmp = h[p]; h[p] = h[i]; h[i] = tmp;
+    i = p;
+  }
+}
+function heapPop(h) {
+  const top = h[0];
+  const last = h.pop();
+  if (!h.length || last === top) return top;
+  h[0] = last;
+  let i = 0;
+  const n = h.length;
+  for (;;) {
+    const l = i * 2 + 1;
+    if (l >= n) break;
+    const r = l + 1;
+    let m = (r < n && h[r].y < h[l].y) ? r : l;
+    if (h[i].y <= h[m].y) break;
+    const tmp = h[i]; h[i] = h[m]; h[m] = tmp;
+    i = m;
+  }
+  return top;
+}
+/* 详细分析每十几毫秒让出一次主线程，界面还能动。用宏任务，不跟屏幕刷新绑在一起。 */
+let sliceChan = null;
+const sliceWaiters = [];
+function yieldSlice() {
+  return new Promise(resolve => {
+    if (!sliceChan) {
+      sliceChan = new MessageChannel();
+      sliceChan.port1.onmessage = () => { const f = sliceWaiters.shift(); if (f) f(); };
+    }
+    sliceWaiters.push(resolve);
+    sliceChan.port2.postMessage(0);
+  });
+}
+
 /* 层采样：y 处位图 ⇔ 该列某区间覆盖 y。输出与 rasterizeSection 相同的 Uint8Array。
    两种模式：
    - 随机访问（层检查器滑条）：不传 cursor/match/act，全列扫描
@@ -455,28 +533,67 @@ export function sampleLDILayer(ld, y, occ, setList, cursor, match, act) {
     setList.n = 0;
   } else occ.fill(0);
   if (act) {
-    // 激活：nonEmpty 已按首区间入口排序
-    while (act.next < ld.nonEmpty.length) {
-      const c = ld.nonEmpty[act.next];
-      if (ld.ys[ld.offs[c] * 2] > y) break;
-      act.active.push(c); act.next++;
-    }
-    let w = 0;
-    for (let i = 0; i < act.active.length; i++) {
-      const c = act.active[i];
-      const b = ld.offs[c], e = b + ld.nInt[c];
-      let k = cursor[c]; if (k < b) k = b;
-      while (k < e && ld.ys[2 * k + 1] < y) k++;
-      cursor[c] = k;
-      if (k >= e) continue;                    // 列区间用尽 → 失活
-      act.active[w++] = c;
-      if (y >= ld.ys[2 * k]) {
-        occ[c] = 1;
-        if (setList) setList.arr[setList.n++] = c;
-        if (match) match[c] = k;   // 仅覆盖列记录（悬空测量只读本层置位像素）
+    // 热列 = 当前高度正处在某个材料区间里的列，按首次激活的顺序排，置位顺序与旧的活动表一致。
+    // 空档里的列放进堆，到下一处入口再醒，不必每一层都扫过。
+    const ys = ld.ys, offs = ld.offs, nInt = ld.nInt, nonEmpty = ld.nonEmpty;
+    if (!act.ready) {
+      act.ready = true;
+      act.hot = [];
+      act.heap = [];
+      act.rank = new Int32Array(ld.W * ld.H);
+      act.woke = [];
+      act.scratch = [];
+      for (let i = 0; i < nonEmpty.length; i++) {
+        const c = nonEmpty[i];
+        act.rank[c] = i;
+        heapPush(act.heap, ys[offs[c] * 2], c);
       }
     }
-    act.active.length = w;
+    const heap = act.heap, rank = act.rank, woke = act.woke;
+    woke.length = 0;
+    while (heap.length && heap[0].y <= y) {
+      const c = heapPop(heap).c;
+      const b = offs[c], e = b + nInt[c];
+      let k = cursor[c]; if (k < b) k = b;
+      while (k < e && ys[2 * k + 1] < y) k++;
+      cursor[c] = k;
+      if (k >= e) continue;
+      if (ys[2 * k] > y) heapPush(heap, ys[2 * k], c);
+      else woke.push(c);
+    }
+    let hot = act.hot;
+    if (woke.length) {
+      woke.sort((a, b) => rank[a] - rank[b]);
+      const scratch = act.scratch;
+      scratch.length = 0;
+      let i = 0, j = 0;
+      while (i < hot.length && j < woke.length) {
+        if (rank[hot[i]] <= rank[woke[j]]) scratch.push(hot[i++]);
+        else scratch.push(woke[j++]);
+      }
+      while (i < hot.length) scratch.push(hot[i++]);
+      while (j < woke.length) scratch.push(woke[j++]);
+      act.scratch = hot;
+      act.hot = scratch;
+      hot = scratch;
+    }
+    let w = 0;
+    for (let i = 0; i < hot.length; i++) {
+      const c = hot[i];
+      const b = offs[c], e = b + nInt[c];
+      let k = cursor[c];
+      if (ys[2 * k + 1] < y) {
+        while (k < e && ys[2 * k + 1] < y) k++;
+        cursor[c] = k;
+        if (k >= e) continue;
+        if (ys[2 * k] > y) { heapPush(heap, ys[2 * k], c); continue; }
+      }
+      hot[w++] = c;
+      occ[c] = 1;
+      if (setList) setList.arr[setList.n++] = c;
+      if (match) match[c] = cursor[c];
+    }
+    hot.length = w;
     return occ;
   }
   const N = ld.W * ld.H;
@@ -513,11 +630,11 @@ export function ldiGapAt(ld, c, z, floorY) {
 
 /* 对照验证（M1 验收）：同一栅格下逐层比较 LDI 采样位图与 rasterizeSection 位图。
    coreDiff = 差异像素中「3×3 邻域内无边界」的内核差异——边界口径差可接受，内核差异不可接受。 */
-export function compareLDI(gridRes = 288, layerH = 0.1) {
+export async function compareLDI(gridRes = 288, layerH = 0.1) {
   if (!state.mesh) return null;
   const pos = state.mesh.geometry.attributes.position.array;
   const idQ = new THREE.Quaternion();
-  const A = analyze(pos, idQ, { gridRes, layerH, gapThresh: 0.35, detail: false, raiseH: 0 });
+  const A = await analyze(pos, idQ, { gridRes, layerH, gapThresh: 0.35, detail: false, raiseH: 0 });
   const g = A.grid, N = g.W * g.H;
   const all = new Int32Array(p2triCount(A.p)); for (let i = 0; i < all.length; i++) all[i] = i;
   const ld = buildLDI(A.p, all, g);

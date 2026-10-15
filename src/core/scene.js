@@ -9,10 +9,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
-import { loadDemo, loadSTLBuffers, partAtWorld, focusPartFromHit, localFaceOf, raiseH, plateAxisOrigin, meshPick } from './model.js';
+import { loadDemo, loadModelFiles, partAtWorld, focusPartFromHit, localFaceOf, raiseH, plateAxisOrigin, meshPick } from './model.js';
 import { modelKind } from './meshio.js';
 import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
 import { initManipulate, tickManipulate } from './manipulate.js';
+import { initViewCube, tickViewCube } from './viewCube.js';
 
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d1117);
@@ -20,20 +21,35 @@ scene.fog = new THREE.Fog(0x0d1117, 300, 900);
 export const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
 camera.position.set(95, 75, 95);
 
-/* 光照 = 方向光塑形 + 环境光（IBL）兜底：RoomEnvironment 经 PMREM 预滤波后作 scene.environment，
-   等效简单全局光照。支撑检查要求任意角度不死黑：
-   - 半球光地面色用中灰蓝（非近黑）——底面/侧下面的基础补光
-   - 底部反向填充光（dl3，从下往上打）——抬亮正下方视角
-   envMapIntensity 按材质微调。 */
-scene.add(new THREE.HemisphereLight(0xcdd9e5, 0x55677e, 0.55));
-const dl = new THREE.DirectionalLight(0xffffff, 1.1);
+/* 光照：用户转到任意角度都不能出现纯黑面。
+   世界光从四周围过来（上 / 对侧 / 下 / 斜前），环境光再抬一层底；
+   头灯挂在相机上，跟着视线走——正在看的那一面始终迎光。
+   RoomEnvironment 的 IBL 在 initScene 里接上，envMapIntensity 把各方向的环境光补够。 */
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+scene.add(new THREE.HemisphereLight(0xf4f7fb, 0xd0d7e0, 0.9));
+const dl = new THREE.DirectionalLight(0xffffff, 0.7);
 dl.position.set(60, 120, 40); scene.add(dl);
-const dl2 = new THREE.DirectionalLight(0x8899aa, 0.35);
-dl2.position.set(-80, 40, -60); scene.add(dl2);
-const dl3 = new THREE.DirectionalLight(0xaabbcc, 0.5);   // 底部填充：正下视角不死黑
+const dl2 = new THREE.DirectionalLight(0xe4ebf3, 0.55);
+dl2.position.set(-80, 50, -60); scene.add(dl2);
+const dl3 = new THREE.DirectionalLight(0xe4ebf3, 0.6);   // 从下往上，底面不黑
 dl3.position.set(-20, -100, 30); scene.add(dl3);
-/* 机器打印体积。网格在板面上，范围是当前机型的可打印尺寸。
-   角上的轴按切片软件标注：X / Y 在板面（世界 +X / +Z），Z 向上（世界 +Y）。 */
+const dl4 = new THREE.DirectionalLight(0xe4ebf3, 0.5);   // 补上原先三盏都打不到的斜向
+dl4.position.set(80, 15, -70); scene.add(dl4);
+
+/* 头灯：光源在相机后方偏上，目标在相机原点，光沿着视线打出去。
+   相机必须进场景图，子节点才会参与光照。 */
+function attachHeadlight(cam, intensity) {
+  const head = new THREE.DirectionalLight(0xffffff, intensity);
+  head.position.set(0.15, 0.4, 1);
+  const target = new THREE.Object3D();
+  cam.add(head);
+  cam.add(target);
+  head.target = target;
+}
+scene.add(camera);
+attachHeadlight(camera, 0.8);
+/* 机器板面。网格和边框都贴在 y=0，范围是当前机型的可打印板面。
+   不画打印高度的立框。角上的轴按切片软件标注：X / Y 在板面（世界 +X / +Z），Z 向上（世界 +Y）。 */
 const buildVolume = { group: null, mats: [] };
 
 function axisLabel(text, color) {
@@ -76,8 +92,8 @@ function lineSegments(pairs, color, role) {
 export function setBuildVolumeTheme(resolved) {
   const dark = resolved !== 'light';
   const colors = dark
-    ? { grid: 0x3c4c60, edge: 0x93a6bd, cage: 0x2c3a4c, x: 0xe25b5b, y: 0x3dbe74, z: 0x4c8dff }
-    : { grid: 0xb4bec9, edge: 0x5c6b7c, cage: 0xc5ced6, x: 0xd64545, y: 0x1f9d55, z: 0x2f6fe0 };
+    ? { grid: 0x3c4c60, edge: 0x93a6bd, x: 0xe25b5b, y: 0x3dbe74, z: 0x4c8dff }
+    : { grid: 0xb4bec9, edge: 0x5c6b7c, x: 0xd64545, y: 0x1f9d55, z: 0x2f6fe0 };
   for (const m of buildVolume.mats) {
     const hex = colors[m.userData.role];
     if (hex != null && m.color) m.color.setHex(hex);
@@ -98,7 +114,6 @@ export function updateBuildVolume() {
   const frame = plateAxisOrigin();
   const px = frame.px;
   const pz = frame.pz;
-  const py = Math.max(20, params.plateY || 175);
   const hx = px / 2, hz = pz / 2;
   const dark = document.documentElement.getAttribute('data-theme') !== 'light';
   const grid = [], edge = [];
@@ -110,17 +125,10 @@ export function updateBuildVolume() {
     hx, 0.06, hz, -hx, 0.06, hz,
     -hx, 0.06, hz, -hx, 0.06, -hz,
   );
-  const cage = [
-    -hx, 0, -hz, -hx, py, -hz, hx, 0, -hz, hx, py, -hz,
-    hx, 0, hz, hx, py, hz, -hx, 0, hz, -hx, py, hz,
-    -hx, py, -hz, hx, py, -hz, hx, py, -hz, hx, py, hz,
-    hx, py, hz, -hx, py, hz, -hx, py, hz, -hx, py, -hz,
-  ];
   const group = new THREE.Group();
   group.name = 'buildVolume';
   group.add(lineSegments(grid, dark ? 0x3c4c60 : 0xb4bec9, 'grid'));
   group.add(lineSegments(edge, dark ? 0x93a6bd : 0x5c6b7c, 'edge'));
-  group.add(lineSegments(cage, dark ? 0x2c3a4c : 0xc5ced6, 'cage'));
 
   const origin = new THREE.Vector3(frame.x, 0.08, frame.z);
   const axisLen = Math.min(22, Math.max(12, Math.min(px, pz) * 0.16));
@@ -148,23 +156,32 @@ export const modelGroup = new THREE.Group(); scene.add(modelGroup);
 export const supportGroup = new THREE.Group(); scene.add(supportGroup);
 
 export const modelMat = new THREE.MeshStandardMaterial({
-  color: 0xb9c2cf, roughness: 0.55, metalness: 0.15, vertexColors: true, envMapIntensity: 0.45
+  color: 0xb9c2cf, roughness: 0.55, metalness: 0.15, vertexColors: true, envMapIntensity: 0.95
 });
-export const supMat = new THREE.MeshStandardMaterial({ color: 0x38d996, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
-export const supMatAnchor = new THREE.MeshStandardMaterial({ color: 0xffb020, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4 });
-export const supMatBase = new THREE.MeshStandardMaterial({ color: 0x7d8aa0, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.4 });   // 格架底座整板
-/* 「连接体」显示模式下针的半透明材质（玻璃感：能看穿、留轮廓；2026-10-14 用户定） */
-export const supMatGlass = new THREE.MeshStandardMaterial({ color: 0x38d996, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
-export const supMatAnchorGlass = new THREE.MeshStandardMaterial({ color: 0xffb020, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.4, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
+/** 落板支撑（格架塔、落到平台的短杆与底板）：#312F32 */
+export const SUP_COLOR = 0x312f32;
+/** 短小支撑（锚在模型表面上的十字短杆 / 分叉头）：红 */
+export const SUP_ANCHOR_COLOR = 0xe0242c;
+export const supMat = new THREE.MeshStandardMaterial({ color: SUP_COLOR, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.95 });
+export const supMatAnchor = new THREE.MeshStandardMaterial({ color: SUP_ANCHOR_COLOR, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.95 });
+export const supMatBase = new THREE.MeshStandardMaterial({ color: SUP_COLOR, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.95 });   // 格架底座整板，与落板支撑同色
+/* 「连接体」显示模式下针的半透明材质（玻璃感：能看穿、留轮廓；2026-10-14 用户定）。
+   这里用同色相的亮一档：顶点色是实心 #312F32，再乘 0.5 透明度会融进深色视口。 */
+export const supMatGlass = new THREE.MeshStandardMaterial({ color: 0xb0b1b1, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.7, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+export const supMatAnchorGlass = new THREE.MeshStandardMaterial({ color: 0xff4d55, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.7, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
 
 /* 预览渲染器（朝向候选缩略图；preserveDrawingBuffer 供 toDataURL 出图，React 渲染 <img>） */
 export const prevRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 prevRenderer.setSize(112, 112);
 export const prevScene = new THREE.Scene();
 prevScene.background = new THREE.Color(0x0d1117);
-prevScene.add(new THREE.HemisphereLight(0xcdd9e5, 0x0d1117, 1.3));
-const pdl = new THREE.DirectionalLight(0xffffff, 1.6); pdl.position.set(60, 120, 40); prevScene.add(pdl);
+prevScene.add(new THREE.AmbientLight(0xffffff, 0.45));
+prevScene.add(new THREE.HemisphereLight(0xf4f7fb, 0xd0d7e0, 0.85));
+const pdl = new THREE.DirectionalLight(0xffffff, 0.7); pdl.position.set(60, 120, 40); prevScene.add(pdl);
+const pdl2 = new THREE.DirectionalLight(0xe4ebf3, 0.45); pdl2.position.set(-50, -40, -30); prevScene.add(pdl2);
 export const prevCam = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
+prevScene.add(prevCam);
+attachHeadlight(prevCam, 0.7);
 export const prev = { mesh: null };   // 预览模型 Mesh（model.js setGeometry 重建，orient.js 渲染缩略图）
 
 /* 需 canvas 的句柄（initScene 后可用） */
@@ -252,6 +269,7 @@ let supportHotkeys = false;
 export function setSupportHotkeys(on) { supportHotkeys = !!on; }
 
 export function setMode(m) {
+  const prev = state.mode;
   state.mode = m;
   // 右键旋转、中键平移，各模式都一样。左键不转视角：旋转模式用来点选和框选，
   // 其余模式留给涂画 / 加支撑 / 删支撑。
@@ -264,6 +282,8 @@ export function setMode(m) {
   else setSupportSelection([]);
   cancelSupBox();
   bus.emit('mode', m);
+  // 切入加支撑 / 删支撑时，界面层补上逐层分析和热力图（见 demo/actions.js）
+  if ((m === 'add' || m === 'del') && prev !== m) bus.emit('enterSupport');
 }
 
 /* 删支撑：单击点选一个点，拖出框线框选。选中的点变成洋红。 */
@@ -417,6 +437,32 @@ function onSupportKey(e) {
 let camTween = null;
 let focusRing = null;
 
+const _aimQ = new THREE.Quaternion();
+const _aimOff = new THREE.Vector3();
+
+/* 保持离目标的距离，沿球面转到 dir 那一侧。上 / 下带一点前向偏移，避免和世界上方向重合。 */
+export function aimView(dir) {
+  if (!controls || !dir) return;
+  const target = controls.target.clone();
+  const from = camera.position.clone().sub(target);
+  if (from.lengthSq() < 1e-4) from.set(1, 1, 1);
+  const toDir = dir.clone().normalize();
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) {
+    camera.position.copy(target).addScaledVector(toDir, from.length());
+    camTween = null;
+    return;
+  }
+  camTween = {
+    kind: 'aim',
+    from,
+    turn: new THREE.Quaternion().setFromUnitVectors(from.clone().normalize(), toDir),
+    target,
+    start: performance.now(),
+    dur: 340,
+  };
+}
+
 function startTween(to, target, dur) {
   if (!controls) return;
   if (dur <= 0) {
@@ -514,6 +560,14 @@ function stepCamera(now) {
   if (!camTween) return;
   const u = Math.min(1, (now - camTween.start) / camTween.dur);
   const k = 1 - (1 - u) ** 3;
+  if (camTween.kind === 'aim') {
+    _aimQ.identity().slerp(camTween.turn, k);
+    _aimOff.copy(camTween.from).applyQuaternion(_aimQ);
+    camera.position.copy(camTween.target).add(_aimOff);
+    controls.target.copy(camTween.target);
+    if (u >= 1) camTween = null;
+    return;
+  }
   camera.position.lerpVectors(camTween.from, camTween.to, k);
   controls.target.lerpVectors(camTween.t0, camTween.target, k);
   if (u >= 1) camTween = null;
@@ -522,6 +576,33 @@ function stepCamera(now) {
 /* ================================================================
    初始化：renderer / controls / 事件 / 动画循环 / 启动流程
 ================================================================ */
+/* 视口性能读数。每约半秒结算一次：
+   FPS = 这段时间的帧数；
+   CPU = 渲染循环占主线程的时间比例（封顶 100，不含后台线程）；
+   mem = Chrome 的 JS 堆已用量，其它浏览器为 0。 */
+const perfSample = { fps: 0, cpu: 0, mem: 0, ready: false };
+const perfAcc = { frames: 0, work: 0, t0: 0 };
+
+function samplePerf(tWork) {
+  const now = performance.now();
+  if (!perfAcc.t0) perfAcc.t0 = tWork;
+  perfAcc.frames += 1;
+  perfAcc.work += now - tWork;
+  const wall = now - perfAcc.t0;
+  if (wall < 500) return;
+  perfSample.fps = Math.round(perfAcc.frames * 1000 / wall);
+  perfSample.cpu = Math.min(100, Math.round(perfAcc.work / wall * 100));
+  perfSample.mem = performance.memory ? performance.memory.usedJSHeapSize : 0;
+  perfSample.ready = true;
+  perfAcc.frames = 0;
+  perfAcc.work = 0;
+  perfAcc.t0 = now;
+}
+
+export function readPerf() {
+  return perfSample;
+}
+
 export function initScene(canvasEl) {
   canvas = canvasEl;
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -603,18 +684,21 @@ export function initScene(canvasEl) {
     if (!files.length) { if (e.dataTransfer.files.length) toast('请拖入 .stl、.obj 或 .3mf 文件'); return; }
     // 板上已有真实模型时追加，只有演示模型时换成拖进来的这一批
     const append = state.parts.some(p => !p.demo);
-    Promise.all(files.map(async f => ({ buf: await f.arrayBuffer(), name: f.name })))
-      .then(items => loadSTLBuffers(items, { append }));
+    loadModelFiles(files, { append });
   });
 
   initManipulate(canvas);
+  initViewCube(canvas);
 
   (function animate() {
     requestAnimationFrame(animate);
+    const tWork = performance.now();
     controls.update();
-    stepCamera(performance.now());
+    stepCamera(tWork);
     tickManipulate();
     renderer.render(scene, camera);
+    tickViewCube();
+    samplePerf(tWork);
   })();
 
   /* 启动 */

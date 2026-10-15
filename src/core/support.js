@@ -40,12 +40,12 @@ function clearMeshes() {
   clearPointMarkers();
 }
 
-const SEL_COLOR = 0xff3df2;   // 框选 / 点选中的支撑点：洋红，和落地绿、锚定琥珀、失败红都分开
+const SEL_COLOR = 0xff3df2;   // 框选 / 点选中的支撑点：洋红，和落板黑灰、短小支撑红、失败亮红都分开
 
 function pointColor(p, selected) {
   if (selected) return SEL_COLOR;
-  if (p.state === 'ground') return 0x3ee0a2;
-  if (p.state === 'mesh' || p.state === 'micro') return 0xffb020;
+  if (p.state === 'ground') return supMat.color.getHex();
+  if (p.state === 'mesh' || p.state === 'micro') return supMatAnchor.color.getHex();
   if (p.state === 'nohead' || p.state === 'unroutable') return 0xff4d4d;
   return 0x8ec8ff;
 }
@@ -66,7 +66,8 @@ function applyViewMat(s, v) {
   const base = isN ? (s.kind === 'anchor' ? supMatAnchorGlass : supMatGlass)
     : (s.kind === 'anchor' ? supMatAnchor : s.kind === 'base' ? supMatBase : supMat);
   const mat = base.clone();
-  if (hasVC) { mat.vertexColors = true; mat.color.setHex(0xffffff); }   // 顶点色自带语义色，材质置白
+  // 实心视图用顶点色（黑灰 / 红）。连接体半透明视图不用顶点色，否则黑灰乘上透明度后融进背景
+  if (hasVC && !isN) { mat.vertexColors = true; mat.color.setHex(0xffffff); }
   m.material = mat;
   m.userData.matKey = key;
 }
@@ -124,8 +125,11 @@ export function supportIndexNearHit(x, y, z) {
   return best;
 }
 
-const BODY_GROUND = [0x38 / 255, 0xd9 / 255, 0x96 / 255];
-const BODY_ANCHOR = [0xff / 255, 0xb0 / 255, 0x20 / 255];
+/** 顶点色底色，与场景材质同一来源（落板黑灰 / 短小支撑红） */
+function bodyRgb(mat) {
+  const c = mat.color;
+  return [c.r, c.g, c.b];
+}
 const BODY_SEL = [0xff / 255, 0x3d / 255, 0xf2 / 255];
 let pointGrid = null;
 
@@ -204,7 +208,7 @@ export function prepareSupportColors() {
     }
     mesh.material.vertexColors = true;
     mesh.material.color.setHex(0xffffff);
-    const base = s.kind === 'anchor' ? BODY_ANCHOR : BODY_GROUND;
+    const base = bodyRgb(s.kind === 'anchor' ? supMatAnchor : supMat);
     const col = new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3);
     const arr = col.array;
     for (let i = 0; i < arr.length; i += 3) {
@@ -247,7 +251,7 @@ export function prepareSupportColors() {
 /** 只改刚选中或刚取消的那几根支撑的颜色。 */
 function paintSupportBodies() {
   const sel = supportSelection();
-  const baseOf = (kind) => (kind === 'anchor' ? BODY_ANCHOR : BODY_GROUND);
+  const baseOf = (kind) => bodyRgb(kind === 'anchor' ? supMatAnchor : supMat);
   for (const s of state.supports) {
     if (s.kind !== 'ground' && s.kind !== 'anchor') continue;
     const geom = s.mesh.geometry;

@@ -27,6 +27,7 @@ const ITEMS = [
   'switch',
   'checkbox',
   'slider',
+  'elastic-slider',
   'select',
   'radio-cards',
   'tabs',
@@ -50,6 +51,7 @@ const ITEMS = [
   'split-button',
   'theme-switch',
   'command-palette',
+  'icon-morph',
 ];
 
 /** 已就地打补丁的组件（React 18 兼容等），改动需在 fetch 后手动重放 */
@@ -68,6 +70,8 @@ const PATCHED = {
     'scrub 的指针事件同时绑在数值区域上（不只是标签），拖完一次后抑制紧接着的点击，避免把输入框重新选中。',
   'command-palette/command-palette.tsx':
     '界面文案本地化：默认分组 Actions → 操作、空结果提示与清除 / 关闭按钮的中文名；右侧快捷键徽标按平台显示 ⌘ K 或 Ctrl K。',
+  'elastic-slider/elastic-slider.tsx':
+    '两端图标的橡皮筋位移封顶 ICON_NUDGE（10px）。轨道仍可拉出 STRETCH，图标再远就会画出对话框。',
 };
 
 const args = process.argv.slice(2);

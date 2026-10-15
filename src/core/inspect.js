@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { analyze, steepFaces, sampleLDILayer, rasterizeSection } from './slicer.js';
 import { raiseH, ensureBakedDisplay } from './model.js';
+import { supMat, supMatAnchor } from './scene.js';
 
 let layerCanvas = null;   // React 层检查器的 canvas（256×256）
 let curLayer = 1;         // 当前滑块层（1-based；旧代码读 $('layerSlider').value）
@@ -31,7 +32,7 @@ export async function runSliceAnalysis() {
   const t0 = performance.now();
   const idQ = new THREE.Quaternion();
   const rh = raiseH();
-  const r = analyze(pos, idQ, {
+  const r = await analyze(pos, idQ, {
     gridRes: 288, layerH, gapThresh, detail: true, raiseH: rh,
     minIslArea: params.minIslArea, minAttachArea: params.minAttach
   });
@@ -172,9 +173,15 @@ export function drawLayer(l) {
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.drawImage(tmp, 0, 0, cv.width, cv.height);
-    // 支撑点叠加：绿 = 已生成结构，琥珀 = 锚定模型/微型短柱，红 = 头部无法放置/无法路由
+    // 支撑点叠加：浅灰 = 已生成的落板支撑（实心是黑灰，画在近黑底上提亮才看得见），红 = 短小支撑，亮红 = 无法放置/无法路由
     const spanX = W * sx, spanZ = H * szg;
-    const col = { ground: 'rgba(56,217,150,.95)', mesh: 'rgba(255,176,32,.95)', micro: 'rgba(255,176,32,.95)' };
+    const lift = (mat, t) => {
+      const c = mat.color;
+      const ch = v => Math.round(v * 255 * (1 - t) + 255 * t);
+      return `rgba(${ch(c.r)},${ch(c.g)},${ch(c.b)},.95)`;
+    };
+    const anchorDot = lift(supMatAnchor, 0.15);
+    const col = { ground: lift(supMat, 0.62), mesh: anchorDot, micro: anchorDot };
     for (const s of state.supportPoints || []) {
       ctx.fillStyle = col[s.state] || 'rgba(255,72,72,.95)';
       const px = (s.x - x0) / spanX * cv.width, pz = (s.z - z0) / spanZ * cv.height;

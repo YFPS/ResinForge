@@ -31,12 +31,14 @@ const AXIS = {
   y: new THREE.Vector3(0, 0, 1),
   z: new THREE.Vector3(0, 1, 0),
 };
-const AXIS_COLOR = { x: 0xe25b5b, y: 0x3dbe74, z: 0x4c8dff };
+const AXIS_COLOR = { x: 0xe55353, y: 0x10b890, z: 0x3760ea };
+const EYE_COLOR = 0x9aa3b2;
 
 let canvas = null;
 let gizmo = null;
 let moveRoot = null;
 let rotRoot = null;
+let eyeRoot = null;
 let scaleRoot = null;
 let scaleCage = null;
 let selGroup = null;
@@ -57,6 +59,9 @@ const _hit = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _tmp2 = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
+const _inv = new THREE.Matrix4();
+const _local = new THREE.Vector3();
+const _axisZ = new THREE.Vector3(0, 0, 1);
 
 function ghostMat() {
   return new THREE.MeshBasicMaterial({
@@ -64,8 +69,12 @@ function ghostMat() {
   });
 }
 
+/* 手柄画在模型上面。只关深度测试还留在不透明队列里，后画的模型表面仍会盖住它。 */
 function solidMat(hex) {
-  return new THREE.MeshBasicMaterial({ color: hex, depthTest: false, fog: false, toneMapped: false });
+  return new THREE.MeshBasicMaterial({
+    color: hex, depthTest: false, depthWrite: false, transparent: true, opacity: 1,
+    fog: false, toneMapped: false,
+  });
 }
 
 function tag(obj, tool, axis, mat) {
@@ -73,7 +82,7 @@ function tag(obj, tool, axis, mat) {
   obj.userData.axis = axis;
   obj.userData.mat = mat;
   obj.userData.base = mat.color.getHex();
-  obj.traverse(o => { o.renderOrder = 20; });
+  obj.traverse(o => { o.renderOrder = 30; });
   return obj;
 }
 
@@ -95,44 +104,84 @@ function makeArrow(axis) {
   return tag(g, 'move', axis, mat);
 }
 
-/* 圆环在该轴的垂直面里。局部圆环默认躺在 XY（法线 +Z）。 */
+/* 整圆躺在局部 XY（法线 +Z），三根轴都画全，避免半圆看起来被切掉。 */
 function makeRing(axis) {
   const color = AXIS_COLOR[axis];
   const mat = solidMat(color);
   const g = new THREE.Group();
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(16, 0.62, 8, 48), mat);
-  const pick = new THREE.Mesh(new THREE.TorusGeometry(16, 1.7, 6, 32), ghostMat());
-  if (axis === 'x') { ring.rotation.y = Math.PI / 2; pick.rotation.y = Math.PI / 2; }
-  else if (axis === 'z') { ring.rotation.x = Math.PI / 2; pick.rotation.x = Math.PI / 2; }   // 绕高度（世界 Y）
-  const len = 18;
-  const ends = axis === 'x' ? [-len, 0, 0, len, 0, 0] : axis === 'y' ? [0, 0, -len, 0, 0, len] : [0, -len, 0, 0, len, 0];
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(ends, 3));
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, depthTest: false, fog: false, toneMapped: false }));
-  line.raycast = () => {};
-  line.renderOrder = 19;
-  g.add(ring, pick, line);
+  const spin = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(16, 0.55, 8, 72), mat);
+  // 拾取管不要伸到外面那圈灰环上，否则点灰环会先碰到彩圈
+  const pick = new THREE.Mesh(new THREE.TorusGeometry(16, 1.05, 6, 32), ghostMat());
+  spin.add(ring, pick);
+  g.add(spin);
+  if (axis === 'x') g.rotation.y = Math.PI / 2;            // 法线 → 世界 +X，切片 X
+  else if (axis === 'z') g.rotation.x = -Math.PI / 2;      // 法线 → 世界 +Y，切片 Z（高度）
+  g.userData.spin = spin;
   return tag(g, 'rotate', axis, mat);
 }
 
-/* 方块沿组的局部 +Y，再转到切片轴上，与箭头同一套旋转。线段从枢轴连到方块。 */
-function makeScaleHandle(axis) {
-  const color = AXIS_COLOR[axis];
-  const mat = solidMat(color);
+/* 屏幕上的整圈，拖它绕视线转。局部圆环法线 +Z，摆放时对向相机。 */
+function makeEyeRing() {
+  const mat = solidMat(EYE_COLOR);
   const g = new THREE.Group();
-  const box = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 2.4), mat);
-  const pick = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.4, 4.4), ghostMat());
-  box.position.y = 16;
-  pick.position.y = 16;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 16, 0], 3));
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, depthTest: false, fog: false, toneMapped: false }));
-  line.raycast = () => {};
-  line.renderOrder = 19;
-  g.add(line, box, pick);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(18.2, 0.38, 8, 80), mat);
+  const pick = new THREE.Mesh(new THREE.TorusGeometry(18.2, 0.7, 6, 40), ghostMat());
+  g.add(ring, pick);
+  eyeRoot = tag(g, 'rotate', 'e', mat);
+  ring.renderOrder = 32;
+  return eyeRoot;
+}
+
+function aimRotateRings() {
+  if (!rotRoot) return;
+  for (const g of rotRoot.children) {
+    const spin = g.userData.spin;
+    if (!spin) continue;
+    g.updateWorldMatrix(true, false);
+    _inv.copy(g.matrixWorld).invert();
+    _local.copy(camera.position).applyMatrix4(_inv);
+    if (_local.x * _local.x + _local.y * _local.y < 1e-8) continue;
+    spin.rotation.z = Math.atan2(-_local.x, _local.y);
+  }
+  if (!eyeRoot) return;
+  _local.copy(camera.position).sub(gizmo.position);
+  if (_local.lengthSq() < 1e-8) return;
+  _quat.setFromUnitVectors(_axisZ, _local.normalize());
+  eyeRoot.quaternion.copy(gizmo.quaternion).invert().multiply(_quat);
+}
+
+/* 方块在轴的两端。局部 +Y 再转到切片轴上，与移动箭头同一套旋转。 */
+function orientAxisGroup(g, axis) {
   if (axis === 'x') g.rotation.z = -Math.PI / 2;       // 局部 +Y → 世界 +X，切片 X
   else if (axis === 'y') g.rotation.x = Math.PI / 2;  // 局部 +Y → 世界 +Z，切片 Y
-  return tag(g, 'scale', axis, mat);
+}
+
+function makeScaleStem(axis, color) {
+  const g = new THREE.Group();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([0, -16, 0, 0, 16, 0], 3));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+    color, depthTest: false, depthWrite: false, transparent: true, opacity: 1, fog: false, toneMapped: false,
+  }));
+  line.raycast = () => {};
+  line.renderOrder = 29;
+  g.add(line);
+  orientAxisGroup(g, axis);
+  return g;
+}
+
+function makeScaleEnd(axis, sign, mat) {
+  const g = new THREE.Group();
+  const box = new THREE.Mesh(new THREE.BoxGeometry(2.05, 2.05, 2.05), mat);
+  const pick = new THREE.Mesh(new THREE.BoxGeometry(4.2, 4.2, 4.2), ghostMat());
+  box.position.y = 16 * sign;
+  pick.position.y = 16 * sign;
+  g.add(box, pick);
+  orientAxisGroup(g, axis);
+  const tagged = tag(g, 'scale', axis, mat);
+  tagged.userData.sign = sign;
+  return tagged;
 }
 
 function scalingTool() {
@@ -151,8 +200,12 @@ function buildGizmo() {
   for (const axis of ['x', 'y', 'z']) {
     moveRoot.add(makeArrow(axis));
     rotRoot.add(makeRing(axis));
-    scaleRoot.add(makeScaleHandle(axis));
+    const mat = solidMat(AXIS_COLOR[axis]);
+    scaleRoot.add(makeScaleStem(axis, AXIS_COLOR[axis]));
+    scaleRoot.add(makeScaleEnd(axis, 1, mat));
+    scaleRoot.add(makeScaleEnd(axis, -1, mat));
   }
+  rotRoot.add(makeEyeRing());
   gizmo.add(moveRoot, rotRoot, scaleRoot);
   scene.add(gizmo);
 
@@ -188,6 +241,36 @@ function pxScale(at) {
   return 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist / h;
 }
 
+/* 枢轴到包围盒最远角的距离。缩放轴用它，跟模型保持同一比例。 */
+function gizmoModelRadius(part) {
+  const b = partBounds(part);
+  const lift = raiseH();
+  const px = part.ox;
+  const py = lift + (part.oy || 0) + part.base.y / 2;
+  const pz = part.oz;
+  let r = 0;
+  for (const x of [b.min.x, b.max.x]) {
+    for (const y of [b.min.y + lift, b.max.y + lift]) {
+      for (const z of [b.min.z, b.max.z]) {
+        const d = Math.hypot(x - px, y - py, z - pz);
+        if (d > r) r = d;
+      }
+    }
+  }
+  return Math.max(r, 0.5);
+}
+
+/* 旋转圈的世界半径。直径约为模型最长边的 0.62。
+   默认取景时整圈落在顶栏和底栏之间，不会被挡住；拉远视角时和模型一起变小。
+   用面对角或三维最远角会比模型大一截，圈伸出窗口。 */
+function gizmoRotateRadius(part) {
+  const b = partBounds(part);
+  const hx = (b.max.x - b.min.x) / 2;
+  const hy = (b.max.y - b.min.y) / 2;
+  const hz = (b.max.z - b.min.z) / 2;
+  return Math.max(Math.max(hx, hy, hz) * 0.62, 0.5);
+}
+
 function placeGizmo() {
   if (!gizmo) return;
   const part = scalePartNow() || (state.transformTool && (state.selectedIds || []).length === 1
@@ -203,11 +286,18 @@ function placeGizmo() {
   if (!single || !gizmo.visible) return;
   if (gesture && gesture.kind === 'scale') gizmo.position.copy(gesture.origin);
   else pivotOf(single, gizmo.position);
-  gizmo.scale.setScalar((120 * pxScale(gizmo.position)) / 18);
+  gizmo.scale.set(1, 1, 1);
+  // 移动箭头保持屏幕上约 120px。旋转圈按模型最长边。缩放轴仍按三维对角。
+  moveRoot.scale.setScalar((120 * pxScale(gizmo.position)) / 18);
+  const scaleFit = (gizmoModelRadius(single) * 1.08) / 16;
+  const rotFit = gizmoRotateRadius(single) / 16;
+  rotRoot.scale.setScalar(rotFit);
+  scaleRoot.scale.setScalar(scaleFit);
   gizmo.updateMatrixWorld(true);
+  if (rotRoot.visible) aimRotateRings();
 }
 
-/* 包围盒八角的短折线。深色视口用浅色，浅色视口用深色，避免角标消失。 */
+/* 缩放时画完整线框，深色视口用浅色，浅色视口用深色。 */
 function syncScaleCage() {
   if (!scaleCage) return;
   const part = scalePartNow();
@@ -217,27 +307,19 @@ function syncScaleCage() {
   const lift = raiseH();
   const x0 = b.min.x, y0 = b.min.y + lift, z0 = b.min.z;
   const x1 = b.max.x, y1 = b.max.y + lift, z1 = b.max.z;
-  const mid = _tmp.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  let len = 14 * pxScale(mid);
-  const shortest = Math.min(x1 - x0, y1 - y0, z1 - z0);
-  if (len > shortest * 0.28) len = shortest * 0.28;
-  if (len < 0.4) len = 0.4;
-  const corners = [
-    [x0, y0, z0, 1, 1, 1], [x1, y0, z0, -1, 1, 1], [x1, y0, z1, -1, 1, -1], [x0, y0, z1, 1, 1, -1],
-    [x0, y1, z0, 1, -1, 1], [x1, y1, z0, -1, -1, 1], [x1, y1, z1, -1, -1, -1], [x0, y1, z1, 1, -1, -1],
+  const edges = [
+    x0, y0, z0, x1, y0, z0, x1, y0, z0, x1, y0, z1, x1, y0, z1, x0, y0, z1, x0, y0, z1, x0, y0, z0,
+    x0, y1, z0, x1, y1, z0, x1, y1, z0, x1, y1, z1, x1, y1, z1, x0, y1, z1, x0, y1, z1, x0, y1, z0,
+    x0, y0, z0, x0, y1, z0, x1, y0, z0, x1, y1, z0, x1, y0, z1, x1, y1, z1, x0, y0, z1, x0, y1, z1,
   ];
   const pos = scaleCage.geometry.attributes.position.array;
-  let o = 0;
-  for (const [x, y, z, sx, sy, sz] of corners) {
-    pos[o++] = x; pos[o++] = y; pos[o++] = z; pos[o++] = x + sx * len; pos[o++] = y; pos[o++] = z;
-    pos[o++] = x; pos[o++] = y; pos[o++] = z; pos[o++] = x; pos[o++] = y + sy * len; pos[o++] = z;
-    pos[o++] = x; pos[o++] = y; pos[o++] = z; pos[o++] = x; pos[o++] = y; pos[o++] = z + sz * len;
-  }
+  for (let i = 0; i < edges.length; i++) pos[i] = edges[i];
+  scaleCage.geometry.setDrawRange(0, 24);
   scaleCage.geometry.attributes.position.needsUpdate = true;
   scaleCage.geometry.computeBoundingSphere();
   const bg = scene.background;
   const lum = bg && bg.isColor ? bg.r * 0.2126 + bg.g * 0.7152 + bg.b * 0.0722 : 0;
-  scaleCage.material.color.setHex(lum > 0.55 ? 0x1c2430 : 0xf4f6f8);
+  scaleCage.material.color.setHex(lum > 0.55 ? 0x314056 : 0xb7c9de);
 }
 
 function syncSelectionBoxes() {
@@ -248,7 +330,7 @@ function syncSelectionBoxes() {
     c.material.dispose();
   }
   const lift = raiseH();
-  // 缩放时改画角标，不再叠一条完整的蓝色框线
+  // 缩放时改画线框，不再叠一条蓝色选中框
   if (scalingTool()) { raised = lift; return; }
   for (const id of state.selectedIds || []) {
     const p = state.parts.find(x => x.id === id);
@@ -497,7 +579,9 @@ function beginScale(part, group, e) {
   // 绕世界 Y 转 90° 时，切片 Y（世界 +Z）应转到世界 +X。q 为单位时方向就是 AXIS。
   if (objectSpace) dir.applyQuaternion(part.q);
   let startParam = axisParam(pointerRay(e).ray, origin, dir);
-  if (!(Math.abs(startParam) > 1)) startParam = 16 * (gizmo.scale.x || 1);
+  if (!(Math.abs(startParam) > 1)) {
+    startParam = (group.userData.sign || 1) * 16 * (scaleRoot?.scale.x || 1) * (gizmo.scale.x || 1);
+  }
   gesture = {
     kind: 'scale',
     pid: e.pointerId,
@@ -533,7 +617,10 @@ function beginGizmo(group, e) {
     return;
   }
   const origin = pivotOf(part, new THREE.Vector3());
-  const dir = AXIS[group.userData.axis];
+  const dir = group.userData.axis === 'e'
+    ? camera.position.clone().sub(origin).normalize()
+    : AXIS[group.userData.axis];
+  if (!dir || dir.lengthSq() < 1e-8) return;
   const ray = pointerRay(e).ray;
   if (group.userData.tool === 'move') {
     gesture = {
@@ -622,9 +709,25 @@ function applyScaleInput(axis, kind, raw) {
   if (Math.abs(part.size.x + part.size.y + part.size.z - before) > 1e-3) logScale(part, '模型已缩放');
 }
 
+/* 工作室画布在更低的层里，面板挂到 .stu 才能浮在左右卡片和底栏之上。演示界面仍挂在视口里。 */
+function scaleHost() {
+  const stage = canvas && canvas.parentElement;
+  return (stage && stage.closest('.stu')) || stage || document.body;
+}
+
 function placeScalePanel() {
   if (!scaleEl || !canvas || !canvas.parentElement) return;
-  const host = canvas.parentElement;
+  const host = scaleEl.parentElement || scaleHost();
+  // 宿主写了 --scale-panel-place: css 时，位置全部交给样式（工作室：底栏正上方居中）
+  if (getComputedStyle(host).getPropertyValue('--scale-panel-place').trim() === 'css') {
+    scaleEl.style.top = '';
+    scaleEl.style.left = '';
+    scaleEl.style.right = '';
+    scaleEl.style.bottom = '';
+    scaleEl.style.maxHeight = '';
+    scaleEl.style.transform = '';
+    return;
+  }
   const bar = host.querySelector('.modeBar, .mode-bar');
   let top = 12;
   if (bar) {
@@ -667,7 +770,9 @@ function syncScalePanel() {
 
 function scaleSpinHtml(kind) {
   const label = kind === 'mm' ? '大小' : '比率';
+  const unit = kind === 'mm' ? 'mm' : '%';
   return `<input data-kind="${kind}" inputmode="decimal" autocomplete="off" aria-label="${label}">
+    <em>${unit}</em>
     <span class="scaleSteps">
       <button type="button" data-kind="${kind}" data-step="1" aria-label="增大${label}">▴</button>
       <button type="button" data-kind="${kind}" data-step="-1" aria-label="减小${label}">▾</button>
@@ -676,7 +781,7 @@ function scaleSpinHtml(kind) {
 
 function ensureScalePanel() {
   if (scaleEl) return scaleEl;
-  const host = canvas.parentElement || document.body;
+  const host = scaleHost();
   scaleEl = document.createElement('div');
   scaleEl.className = 'scalePanel';
   scaleEl.hidden = true;
@@ -685,20 +790,16 @@ function ensureScalePanel() {
   scaleEl.addEventListener('pointerdown', ev => ev.stopPropagation());
   scaleEl.addEventListener('contextmenu', ev => ev.preventDefault());
   scaleEl.innerHTML = `
-    <div class="scaleHead">
-      <b>缩放</b>
-      <span class="scaleIconBtns">
-        <button type="button" class="scaleIcon" data-act="space" title="切换模型坐标系或世界坐标系"></button>
-        <button type="button" class="scaleIcon" data-act="reset" title="还原模型的原始大小">${SCALE_SVG.reset}</button>
-      </span>
-    </div>
-    <div class="scaleCols">
-      <span></span>
-      <span>大小 (mm)</span>
-      <span>比率 (%)</span>
-      <button type="button" class="scaleLink" data-act="link" aria-pressed="true"></button>
-    </div>`;
-  const colors = { x: '#e25b5b', y: '#3dbe74', z: '#4c8dff' };
+    <b class="scaleBrand">缩放</b>
+    <span class="scaleIconBtns">
+      <button type="button" class="scaleLink" data-act="link" aria-pressed="true" title="已锁定，三轴同一比例。点击后可单独改 XYZ"></button>
+      <button type="button" class="scaleIcon" data-act="space" title="切换模型坐标系或世界坐标系"></button>
+      <button type="button" class="scaleIcon" data-act="reset" title="还原模型的原始大小">${SCALE_SVG.reset}</button>
+    </span>
+    <div class="scaleAxes"></div>
+    <div class="scaleActs"></div>`;
+  const axes = scaleEl.querySelector('.scaleAxes');
+  const colors = { x: '#e55353', y: '#10b890', z: '#3760ea' };
   for (const axis of ['x', 'y', 'z']) {
     const row = document.createElement('div');
     row.className = 'scaleRow';
@@ -706,9 +807,8 @@ function ensureScalePanel() {
     row.innerHTML = `
       <span class="scaleAxis"><i style="background:${colors[axis]}"></i>${axis.toUpperCase()}</span>
       <span class="scaleSpin">${scaleSpinHtml('mm')}</span>
-      <span class="scaleSpin">${scaleSpinHtml('pct')}</span>
-      <span></span>`;
-    scaleEl.appendChild(row);
+      <span class="scaleSpin">${scaleSpinHtml('pct')}</span>`;
+    axes.appendChild(row);
   }
   const fit = document.createElement('button');
   fit.type = 'button';
@@ -720,7 +820,7 @@ function ensureScalePanel() {
   drag.className = 'scaleAction';
   drag.dataset.act = 'drag';
   drag.innerHTML = `${SCALE_SVG.drag}<span>拖拽缩放</span>`;
-  scaleEl.append(fit, drag);
+  scaleEl.querySelector('.scaleActs').append(fit, drag);
   host.appendChild(scaleEl);
 
   scaleEl.querySelector('[data-act="space"]').addEventListener('click', () => {
@@ -830,8 +930,21 @@ function showMenu(x, y) {
 }
 
 function chooseTool(tool) {
+  setTransformTool(tool);
+}
+
+/** 切换模型变换工具（move / rotate / scale），再点同一个取消。工具栏按钮与右键菜单共用。 */
+export function setTransformTool(tool) {
   hideMenu();
-  if ((state.selectedIds || []).length !== 1) return;
+  if (!tool || tool === state.transformTool) {
+    state.transformTool = null;
+    bus.emit('selection', { ids: (state.selectedIds || []).slice(), tool: null });
+    return;
+  }
+  if ((state.selectedIds || []).length !== 1) {
+    toast('先在视口里单击选中一件模型，再使用变换工具');
+    return;
+  }
   if (state.mode !== 'orbit') setMode('orbit');
   if (tool !== 'move' && tool !== 'rotate' && tool !== 'scale') return;
   if (tool === 'scale') scaleDrag = true;

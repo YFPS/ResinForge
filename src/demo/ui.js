@@ -49,8 +49,13 @@ const ui = createStore({ step: 'model', sidebarOpen: !narrowMedia.matches, busy:
 export const useUI = () => useStore(ui);
 export const getUI = ui.get;
 
-/** 切到某一步；侧栏收起时顺带展开（点步骤就是想看这一步的参数） */
-export function goStep(step) { ui.set({ step, sidebarOpen: true }); }
+/** 切到某一步；侧栏收起时顺带展开（点步骤就是想看这一步的参数）。
+    进入支撑步骤时补上逐层分析和热力图，不用再回分析页手点。 */
+export function goStep(step) {
+  const prev = ui.get().step;
+  ui.set({ step, sidebarOpen: true });
+  if (step === 'support' && prev !== 'support') bus.emit('enterSupport');
+}
 export function setSidebarOpen(open) { ui.set({ sidebarOpen: open }); }
 export function toggleSidebar() { ui.set({ sidebarOpen: !ui.get().sidebarOpen }); }
 

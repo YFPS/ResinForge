@@ -1443,7 +1443,7 @@ export async function buildEStageTowers(ctx, points, P) {
     const rTip = 0.2;   // 短连接接触端半径（原取树状前端球直径的一半，固定为 0.2）
     const tiltMax = Math.PI / 2 - Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
     const gBuf = new TriBuf();
-    const gBufG = new TriBuf();   // 落到平台的短杆 / 分叉：属落板支撑，归入绿色那一组（落到模型上的才是琥珀色的短小支撑）
+    const gBufG = new TriBuf();   // 落到平台的短杆 / 分叉：属落板支撑，归入黑灰那一组（落到模型上的才是红色的短小支撑）
     /* ---- 分叉短杆（一主干两头，2026-10-12 用户提议）：相邻的两个兜底点共用一根主干，在 F 处分叉成两个接触头 ----
        主干：自 F 竖直落到模型面 / 平台（F 端粗、落点端细）；头：F → 接触点（F 端粗、接触端细）。
        F 取两点水平中点的上方，高度从接触点下方 0.5 mm 起逐级下探，取第一个同时满足：头长 ∈ [0.55, 针最大长]、

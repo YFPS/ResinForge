@@ -18,11 +18,11 @@ export default defineConfig({
   // Worker 默认打包格式 iife 不支持代码分割，改用 ES 模块（创建时已是 { type: 'module' }）
   worker: { format: 'es' },
   build: {
-    // 双入口：index.html 为旧 Arco 界面，demo.html 为 Arc UI 新版界面
     rollupOptions: {
       input: {
         main: path.resolve(root, 'index.html'),
         demo: path.resolve(root, 'demo.html'),
+        studio: path.resolve(root, 'studio.html'),
       },
     },
   },

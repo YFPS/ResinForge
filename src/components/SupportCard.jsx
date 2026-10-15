@@ -90,7 +90,7 @@ export default function SupportCard() {
           {stats.ok !== undefined && <div className="kv"><span>已生成结构</span><b className="good">{stats.ok}</b></div>}
           {stats.needles !== undefined && <div className="kv"><span>十字针 / 塔块</span><b style={{ color: '#38d996' }}>{stats.needles} / {stats.towers}</b></div>}
           {stats.nodes !== undefined && <div className="kv"><span>格架节点 / 杆件</span><b>{stats.nodes} / {stats.bars}</b></div>}
-          {stats.anchors !== undefined && <div className="kv"><span>短小支撑</span><b style={{ color: '#ffb020' }}>{stats.anchors}</b></div>}
+          {stats.anchors !== undefined && <div className="kv"><span>短小支撑</span><b style={{ color: '#e0242c' }}>{stats.anchors}</b></div>}
           {stats.ok !== undefined && <div className="kv"><span>无法支撑</span><b className={fail ? 'warn' : 'good'}>{fail}</b></div>}
           <div className="kv"><span>保护面</span><b>{stats.prot.toLocaleString()} 面</b></div>
         </div>

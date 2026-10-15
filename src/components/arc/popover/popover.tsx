@@ -7,6 +7,7 @@ import styles from "./popover.module.css";
 
 export const Popover = PopoverPrimitive.Root;
 export const PopoverClose = PopoverPrimitive.Close;
+export const PopoverAnchor = PopoverPrimitive.Anchor;
 
 /** The trigger anchors the panel, so it opts out of press-scale: a scaled rect measured on open would shift the panel as the trigger springs back. */
 export const PopoverTrigger = forwardRef<

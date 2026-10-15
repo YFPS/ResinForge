@@ -12,6 +12,9 @@ import { motionTokens } from '@/components/arc/motion-tokens';
 import { useBusLatest } from '../bridge.js';
 import { STEPS, goStep, stepIndex, useDone } from '../ui.js';
 
+/* 「下一步」默认渲染在面板底栏；Studio 把它挪到视口底栏时，用这个 context 让面板里的那份不渲染 */
+export const NextSlotContext = React.createContext('panel');
+
 export function StepPanel({ step, footer, children }) {
   const done = useDone();
   return (
@@ -62,8 +65,9 @@ function StepFooter({ children }) {
 
 /** 「下一步」：这一步完成后由幽灵按钮变为描边按钮 */
 export function NextButton({ from, emphasized }) {
+  const slot = React.useContext(NextSlotContext);
   const next = STEPS[stepIndex(from) + 1];
-  if (!next) return null;
+  if (!next || slot === 'external') return null;
   return (
     <Button variant={emphasized ? 'secondary' : 'ghost'} size="md" onClick={() => goStep(next.id)}>
       下一步：{next.label}

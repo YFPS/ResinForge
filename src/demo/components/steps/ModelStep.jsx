@@ -23,7 +23,7 @@ function readSize() {
   return [bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z].map(fmt).join('|');
 }
 
-export default function ModelStep({ hideCurrentModel = false, hideSimplify = false }) {
+export default function ModelStep({ hideCurrentModel = false, hideSimplify = false, hideDemos = false }) {
   const info = useBusLatest('modelInfo', null);
   const sizeKey = useBusValue(['modelInfo', 'orientResults'], readSize);
   const machine = useMachine();
@@ -121,17 +121,19 @@ export default function ModelStep({ hideCurrentModel = false, hideSimplify = fal
         </Section>
       ) : null}
 
-      <Section title="演示模型" desc="各自代表一类典型的支撑难点。">
-        <RadioCards
-          aria-label="演示模型"
-          layout="grid"
-          minColumnWidth={128}
-          value={demoKind}
-          disabled={!!busy}
-          onValueChange={kind => runTask('demo', () => doLoadDemo(kind))}
-          options={DEMOS.map(d => ({ value: d.kind, label: d.label, description: d.hint }))}
-        />
-      </Section>
+      {!hideDemos ? (
+        <Section title="演示模型" desc="各自代表一类典型的支撑难点。">
+          <RadioCards
+            aria-label="演示模型"
+            layout="grid"
+            minColumnWidth={128}
+            value={demoKind}
+            disabled={!!busy}
+            onValueChange={kind => runTask('demo', () => doLoadDemo(kind))}
+            options={DEMOS.map(d => ({ value: d.kind, label: d.label, description: d.hint }))}
+          />
+        </Section>
+      ) : null}
     </StepPanel>
   );
 }

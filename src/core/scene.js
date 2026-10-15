@@ -9,9 +9,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
-import { loadDemo, loadModelFiles, partAtWorld, focusPartFromHit, localFaceOf, raiseH, plateAxisOrigin, meshPick } from './model.js';
+import { loadDemo, loadModelFiles, localFaceOf, raiseH, plateAxisOrigin } from './model.js';
 import { modelKind } from './meshio.js';
 import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
+import { showHeightLine, clearHeightLine } from './heightLine.js';
+import { downPolyLine, movePolyLine, finishPolyLine, cancelPolyLine } from './polyLine.js';
 import { initManipulate, tickManipulate } from './manipulate.js';
 import { initViewCube, tickViewCube } from './viewCube.js';
 
@@ -156,7 +158,7 @@ export const modelGroup = new THREE.Group(); scene.add(modelGroup);
 export const supportGroup = new THREE.Group(); scene.add(supportGroup);
 
 export const modelMat = new THREE.MeshStandardMaterial({
-  color: 0xb9c2cf, roughness: 0.55, metalness: 0.15, vertexColors: true, envMapIntensity: 0.95
+  color: 0xa7b0bd, roughness: 0.55, metalness: 0.15, vertexColors: true, envMapIntensity: 0.95
 });
 /** 落板支撑（格架塔、落到平台的短杆与底板）：#312F32 */
 export const SUP_COLOR = 0x312f32;
@@ -278,12 +280,18 @@ export function setMode(m) {
   controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
   controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
   canvas.style.cursor = m === 'orbit' ? 'default' : 'crosshair';
+  if (m !== 'add') clearHeightLine();
+  if (m !== 'poly') cancelPolyLine();
   if (m === 'del') prepareSupportColors();
   else setSupportSelection([]);
   cancelSupBox();
   bus.emit('mode', m);
-  // 切入加支撑 / 删支撑时，界面层补上逐层分析和热力图（见 demo/actions.js）
-  if ((m === 'add' || m === 'del') && prev !== m) bus.emit('enterSupport');
+  // 加支撑：先分析，再默认打开热力图，进来就是分析完成后的样子。
+  // 退出加支撑 / 多线段 / 删支撑时关掉热力图。多线段和删支撑本身不强迫打开。
+  const manual = x => x === 'add' || x === 'del' || x === 'poly';
+  if (m === 'add' && prev !== 'add') bus.emit('enterAddSupport');
+  else if ((m === 'del' || m === 'poly') && !manual(prev)) bus.emit('enterManual');
+  if (!manual(m) && manual(prev)) bus.emit('leaveManual');
 }
 
 /* 删支撑：单击点选一个点，拖出框线框选。选中的点变成洋红。 */
@@ -397,10 +405,25 @@ function typingTarget() {
 
 function onSupportKey(e) {
   if (e.isComposing || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = (e.key || '').toLowerCase();
+  // 接触点间距面板会把焦点放进数字框。多线段的回车 / Esc 仍要生效，不能当成在打字。
+  if (state.mode === 'poly' && (k === 'enter' || e.code === 'Enter')) {
+    const el = document.activeElement;
+    if (el && el.tagName === 'INPUT') el.blur();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    finishPolyLine();
+    return;
+  }
+  if (state.mode === 'poly' && (k === 'escape' || e.code === 'Escape')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    cancelPolyLine();
+    return;
+  }
   if (typingTarget()) return;
   if (document.querySelector('dialog[open], [role="dialog"][data-state="open"]')) return;
   const hot = supportHotkeys || state.mode === 'add' || state.mode === 'del';
-  const k = (e.key || '').toLowerCase();
   // V：循环切换支撑显示（全部 → 仅连接体 → 仅接触点，黑格同款快捷键）
   if (!e.shiftKey && (k === 'v' || e.code === 'KeyV')) {
     e.preventDefault();
@@ -599,6 +622,14 @@ function samplePerf(tWork) {
   perfAcc.t0 = now;
 }
 
+function polyView() {
+  return {
+    camera,
+    width: canvas ? canvas.clientWidth : 1,
+    height: canvas ? canvas.clientHeight : 1,
+  };
+}
+
 export function readPerf() {
   return perfSample;
 }
@@ -639,10 +670,17 @@ export function initScene(canvasEl) {
       // 命中面法线作为接触端朝向（模型仅平移变换，几何面法线即世界系方向）；朝上的面无从支撑
       const fn = h.face ? h.face.normal : null;
       if (fn && fn.y > 0.3) { toast('只能在朝下（悬空）的表面添加支撑点'); return; }
-      // 点到另一件模型时把摄影机跳过去，方便接着在这件上加点
-      focusPartFromHit(partAtWorld(h.point.x, h.point.z));
-      // 加点后整体重建结构（树/格架分支互连，不能单根追加）——与 PrusaSlicer 的支撑点编辑一致
-      addSupportPoint(h.point, fn ? [fn.x, fn.y, fn.z] : null);
+      const loc = localFaceOf(h.faceIndex);
+      if (state.parts.length > 1) {
+        if (!state.manualPartId) { toast('先选中一个模型，再使用手动支撑'); return; }
+        if (!loc || loc.part.id !== state.manualPartId) { toast('一次只能给一个模型使用手动支撑'); return; }
+      }
+      addSupportPoint(h.point, fn ? [fn.x, fn.y, fn.z] : null, loc && loc.part.id);
+    } else if (state.mode === 'poly' && state.mesh) {
+      const hits = pointerRay(e).intersectObject(state.mesh);
+      if (!hits.length) return;
+      e.stopPropagation();
+      downPolyLine(hits[0], polyView());
     } else if (state.mode === 'del') {
       // 左键留给点选和框选支撑点，不让后面的模型框选把这次拖动接走
       e.stopImmediatePropagation();
@@ -668,9 +706,12 @@ export function initScene(canvasEl) {
   window.addEventListener('keydown', onSupportKey, true);
   canvas.addEventListener('pointermove', e => {
     if (state.painting && state.mode === 'paint') paintAt(e);
-    // 加支撑：悬在模型上是十字准星，空白处恢复默认箭头（旋转是右键，平移是中键）
-    if (state.mode === 'add' && state.mesh && e.buttons === 0) {
-      canvas.style.cursor = meshPick(pointerRay(e).ray) ? 'crosshair' : 'default';
+    // 加支撑时画高度线。多线段只画贴在表面上的折线，不再叠高度线。
+    if ((state.mode === 'add' || state.mode === 'poly') && state.mesh && e.buttons === 0) {
+      const hits = pointerRay(e).intersectObject(state.mesh);
+      canvas.style.cursor = hits.length ? 'crosshair' : 'default';
+      if (state.mode === 'add') showHeightLine(hits[0] || null, polyView());
+      if (state.mode === 'poly') movePolyLine(hits[0] || null, polyView());
     }
   });
   window.addEventListener('pointerup', () => { state.painting = false; });

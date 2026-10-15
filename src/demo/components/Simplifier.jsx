@@ -3,10 +3,17 @@ import { useState } from 'react';
 import { Rabbit, Snail } from 'lucide-react';
 import Button from '@/components/arc/button/button';
 import { ElasticSlider } from '@/components/arc/elastic-slider/elastic-slider';
+import SegmentedControl from '@/components/arc/segmented-control/segmented-control';
 import { useBusLatest } from '../bridge.js';
 import { doSimplify } from '../actions.js';
 import { runTask, useUI } from '../ui.js';
 import { Choice } from './fields.jsx';
+
+/* 横条里的两种简化方式：交给 Arc 分段控件，选中块会滑过去 */
+const SIMP_MODES = [
+  { value: 'fidelity', label: '保真度' },
+  { value: 'ratio', label: '面数比' },
+];
 
 /* 整数是常用档，拖到附近会卡住；1 / 5 / 10 标出来，其余只作刻度 */
 const FIDELITY_MARKS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(value =>
@@ -41,10 +48,13 @@ export default function Simplifier({ compact = false }) {
     return (
       <div className="simpBar">
         <span className="simpBarBrand">简化</span>
-        <div className="simpBarModes" role="group" aria-label="简化方式">
-          <button type="button" aria-pressed={fidelityMode} onClick={() => setSimpMode('fidelity')}>保真度</button>
-          <button type="button" aria-pressed={!fidelityMode} onClick={() => setSimpMode('ratio')}>面数比</button>
-        </div>
+        <SegmentedControl
+          className="simpBarSeg"
+          options={SIMP_MODES}
+          value={simpMode}
+          onValueChange={setSimpMode}
+          label="简化方式"
+        />
         <ElasticSlider
           key={simpMode}
           className="simpBarSlider"

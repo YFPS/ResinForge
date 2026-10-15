@@ -96,6 +96,8 @@
   display: flex; flex-direction: column; gap: 10px; min-height: 0; pointer-events: none;
 }
 .stuFloatLeft > .stuCard { pointer-events: auto; }
+/* 模型卡可以拖着换位置：拖动时提到最上层，免得被右边的参数卡压住 */
+.stuFloatLeft[data-dragging] { z-index: 6; }
 .stuFloatLeft .stuCard--model { flex: 0 1 auto; min-height: 38px; max-height: 46%; }
 .stuFloatLeft .stuCard--model .stuCardBody { display: flex; overflow: hidden; }
 .stuToolsRow {
@@ -103,35 +105,12 @@
   display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: nowrap;
   width: max-content; max-width: calc(100vw - 24px); pointer-events: auto;
 }
-/* 方砖边长，和底栏同一条玻璃。字重只到 500。 */
-.stuBedSize {
-  flex: none; display: flex; align-items: center; gap: 2px; height: 46px; padding: 0 6px;
-  border: 1px solid var(--border); border-radius: 18px;
-  background: color-mix(in oklab, var(--background) 82%, transparent);
-  backdrop-filter: blur(16px) saturate(1.2);
-  box-shadow: 0 8px 22px rgb(0 0 0 / .18);
-}
-.stuBedSize button {
-  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 10px;
-  background: transparent; color: var(--foreground);
-  font: inherit; font-size: 16px; font-weight: 500; cursor: pointer;
-}
-.stuBedSize button:hover { background: color-mix(in oklab, var(--foreground) 7%, transparent); }
-.stuBedSize button:disabled { opacity: .35; cursor: default; }
-.stuBedSize button:disabled:hover { background: transparent; }
-.stuBedSize b {
-  min-width: 48px; text-align: center; color: var(--foreground);
-  font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
-}
 .stuDockAnchor { display: flex; max-width: 100%; }
 .stuDockSlot { position: relative; display: flex; max-width: 100%; min-width: 0; }
-/* 「下一步」独立成一块，与工具坞同高同质：玻璃壳里放一颗面板同款按钮 */
-.stuNextCard {
-  flex: none; display: flex; align-items: center; padding: 5px;
-  border: 1px solid var(--border); border-radius: 18px;
-  background: color-mix(in oklab, var(--background) 82%, transparent);
-  backdrop-filter: blur(16px) saturate(1.2);
-  box-shadow: 0 8px 22px rgb(0 0 0 / .18);
+/* 「下一步」排在坞里的尾巴上：一条发丝线隔开，两侧各留一段，和相邻图标拉开呼吸 */
+.stuDockSep {
+  flex: none; align-self: center; width: 1px; height: 22px; margin: 0 8px;
+  background: var(--border-strong);
 }
 /* 生成支撑等长任务的进度，盖住底栏这一排，不另占窗口底边 */
 .stuDockProgress {
@@ -162,6 +141,9 @@
   display: flex; align-items: center; gap: 8px; flex: none; height: 36px; padding: 0 12px;
   border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-xs); cursor: pointer;
 }
+/* 标题行是拖动手柄：抓着能挪卡片，光标也这么示意 */
+.stuCardHead { cursor: grab; }
+.stuCardHead:active { cursor: grabbing; }
 .stuCardHead:hover { color: var(--foreground); }
 .stuCardTitle { font-weight: 500; }
 .stuCardMeta { margin-left: auto; font-size: var(--text-xs); color: var(--text-muted); }
@@ -169,30 +151,64 @@
 .stuCardChev { margin-left: auto; transition: transform var(--duration-fast) var(--ease-standard); }
 .stuCard[data-open="0"] .stuCardChev { transform: rotate(-90deg); }
 .stuCardBody { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
-.stuCard--panel .stuCardBody { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+/* 参数栏没有标题行，面板标题直接贴着卡片顶边，补一点上边距，免得挤在圆角里 */
+.stuCard--panel .stuCardBody { display: flex; flex-direction: column; overflow: hidden; padding: 6px 0 0; }
 
-/* 工具栏的简化浮层：底栏正上方一条横条。双类名压过 Popover 内容区 22rem 的最大宽度。 */
+/* 工具栏的简化浮层：底栏正上方一条横条。双类名压过 Popover 内容区 22rem 的最大宽度。
+   卡片按缩放对话框那套玻璃来：半透明底 + 背景模糊 + 描边 + 抬升阴影，圆角用同一个面板 token。 */
 .stuPop.stuPop {
-  width: min(820px, calc(100vw - 48px));
+  width: min(600px, calc(100vw - 48px));
   max-width: calc(100vw - 24px);
   padding: 8px 12px 8px 16px;
-  border-radius: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--stu-card-bg);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-raised);
+  color: var(--foreground);
+  font-size: 13px;
 }
+@media (prefers-reduced-transparency: reduce) {
+  .stuPop.stuPop { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+/* 笔刷浮层（保护面）：比简化条窄，一行开关 + 两列数值框。
+   横向位置由 --stu-brush-shift 从整条坞的中心挪到保护面格正上方——用 translate 而不是 margin，
+   浮层的定位是布局层面的，margin 会被父容器分掉一半。 */
+.stuPop.stuPopBrush,
+.stuPop.stuPopPoly {
+  width: min(400px, calc(100vw - 24px)); padding: 14px 16px;
+  translate: var(--stu-brush-shift, 0px) 0;
+}
+.stuPop.stuPopPoly { width: min(420px, calc(100vw - 24px)); padding: 10px 12px; }
+.polyGap {
+  display: grid; align-items: center; column-gap: 10px; row-gap: 6px;
+  grid-template-columns: 28px auto auto minmax(120px, 1fr) 28px;
+  grid-template-areas: "icon label num slider help";
+}
+.polyGapIcon { grid-area: icon; width: 28px; height: 28px; color: var(--foreground); }
+.polyGapLabel { grid-area: label; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.polyGapNum { grid-area: num; --number-field-width: 128px; }
+.polyGapNum > div > div:first-child,
+.polyGapSlider > div > div:first-child {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.polyGapSlider { grid-area: slider; min-width: 0; }
+.polyGapHelp {
+  grid-area: help; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.polyGapHelp:hover { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+.stuBrush { display: flex; flex-direction: column; gap: 12px; }
 .simpBar {
   display: grid; align-items: center; column-gap: 12px;
   grid-template-columns: auto auto minmax(180px, 1fr) auto auto;
 }
 .simpBarBrand { font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; }
-.simpBarModes { display: flex; gap: 2px; }
-.simpBarModes button {
-  height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent;
-  color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 400; cursor: pointer;
-}
-.simpBarModes button:hover { color: var(--foreground); }
-.simpBarModes button[aria-pressed="true"] {
-  background: color-mix(in oklab, var(--foreground) 8%, var(--surface-raised));
-  color: var(--foreground); font-weight: 500;
-}
+/* Arc 分段控件压到横条这一档：整块 32px 高（内部格子 24px），和右边的面数、按钮齐平 */
+.simpBar .simpBarSeg { flex: none; }
+.simpBar .simpBarSeg button { min-height: 24px; padding: 0 10px; font-size: 12px; }
 .simpBarSlider { min-width: 0; }
 .simpBarStat, .simpBarGo {
   display: flex; align-items: center; justify-content: center; height: 32px; margin: 0;
@@ -203,13 +219,15 @@
   background: color-mix(in oklab, var(--foreground) 5%, var(--surface-raised));
 }
 .simpBarGo {
-  padding: 0 14px; border-color: var(--border); background: transparent;
-  color: var(--foreground); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+  padding: 0 16px; border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--accent-foreground);
+  font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
 }
-.simpBarGo:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.simpBarGo:hover { background: color-mix(in oklab, var(--accent) 88%, var(--foreground)); }
 .simpBarGo:disabled { opacity: .45; cursor: not-allowed; }
 @media (max-width: 860px) {
   .stuPop.stuPop { width: min(340px, calc(100vw - 24px)); padding: 12px; }
+  .stuPop.stuPopBrush { width: min(320px, calc(100vw - 24px)); }
   .simpBar {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "brand modes" "slider slider" "stat go";

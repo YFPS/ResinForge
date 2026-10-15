@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Checkbox, InputNumber, Select, Tooltip } from '@arco-design/web-react';
+import { Button, Checkbox, InputNumber, Tooltip } from '@arco-design/web-react';
 import Card from './Card.jsx';
 import { useParams } from './useParams.js';
 import { bus, state } from '../store.js';
@@ -31,14 +31,7 @@ export default function SupportCard() {
         <Checkbox checked={params.shortSup} onChange={v => setParam('shortSup', v)}>短小支撑（连不上格架的点用十字短杆接到下方表面 / 平台）</Checkbox>
         <Checkbox checked={pointsOnly} onChange={v => { setPointsOnlyUi(v); setPointsOnly(v); }}>只显示支撑点</Checkbox>
       </div>
-      <div className="hint">模型默认从平台抬高 {params.raiseH}mm。加点时点到另一件模型，摄影机会跳过去。</div>
-      <div className="row" style={{ alignItems: 'center' }}>
-        <label className="f"><span>接触朝向</span>
-          <Select size="small" style={{ width: 110 }} value={params.tipMode} onChange={v => setParam('tipMode', v)}
-            options={[{ label: '沿法线', value: 'normal' }, { label: '竖直', value: 'vertical' }, { label: '固定角度', value: 'fixed' }]} />
-        </label>
-        {num('tipTilt', '接触最大倾角', 0, 75, 5, '°', '接触端与竖直方向的夹角上限（沿法线时钳制、固定角度时直接采用）；针身 / 分支仍受自支撑角约束')}
-      </div>
+      <div className="hint">模型默认从平台抬高 {params.raiseH}mm。加点时点到另一件模型，摄影机会跳过去。针尖沿被托面法线，不另选朝向。</div>
       <div className="row">
         {num('esCell', '格宽', 1.5, 8, 0.5, 'mm', '墙距（原 Diamond width）：格架最小孔格宽')}
         {num('esDiamAngle', '斜边角', 25, 80, 5, '°', '斜边仰角（不低于自支撑临界角）')}
@@ -61,7 +54,9 @@ export default function SupportCard() {
       </div>
       <div className="row">
         {num('esContactMargin', '接触边距', 0, 2, 0.1, 'mm', 'Contact margin：贴模型前保持接触直径的细直段长')}
-        {num('esTaper', '过渡段长', 0.2, 3, 0.1, 'mm', '连接宽 → 接触直径 的渐缩长度')}
+        {num('esTaper', '顶端长度', 0.2, 6, 0.1, 'mm', '球头和下面针身之间那一截锥的长度，默认 1.5 mm')}
+        {num('esTopD', '上端直径', 0.05, 2, 0.05, 'mm', '顶端锥靠近模型的一头')}
+        {num('esBotD', '底部直径', 0.05, 3, 0.05, 'mm', '顶端锥靠近主干的一头')}
         {num('pen', '接触深度', 0, 1, 0.05, 'mm', 'Penetration length：针尖沿针轴扎入模型的深度')}
       </div>
       <div className="row">
@@ -70,6 +65,7 @@ export default function SupportCard() {
       </div>
       <div className="row" style={{ alignItems: 'center' }}>
         <Checkbox checked={params.esMidBars} onChange={v => setParam('esMidBars', v)}>墙内竖杆（墙上每半格一根）</Checkbox>
+        <Checkbox checked={params.tipBall !== false} onChange={v => setParam('tipBall', v)}>开启球头（关掉则针顶只有顶端这段锥）</Checkbox>
       </div>
       <div className="hint">光固化支撑塔：正交墙上的斜边在竖杆处折返（孔为三角形），减去外扩净距的模型；每个支撑点沿竖杆 / 斜边找到落地路径（被模型挡住时绕行），路径所在格随深度展宽，相邻支撑点的格并成连续塔块；自平台逐层向上只保留有支撑的节点（无打印孤岛），接入点下为尖顶、往下铺满；杆件在节点处经节点板圆滑相接；孔洞按壳层缩减逐级放大；塔底为带三角缺口的基础带。十字针自格架节点直通接触点（十字板对齐格架墙向）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 扎入渗透长度；接不上格架的点依次改走就近接格架 / 分叉 / 十字短杆，仍接不上的标红。</div>
       <div className="row">

@@ -155,7 +155,11 @@ function paintHover(face) {
 }
 
 export function initViewCube(canvasEl) {
-  if (host || !canvasEl || !canvasEl.parentElement) return;
+  if (!canvasEl || !canvasEl.parentElement) return;
+  /* 开发期 HMR 重挂载会把上一棵树连方块一起摘掉，但模块级 host 还指着旧节点：
+     认一下它还在不在文档里，不在就重建，免得视角方块凭空消失 */
+  if (host && !host.isConnected) host = null;
+  if (host) return;
   host = document.createElement('div');
   host.className = 'viewCube';
   host.title = '点一面，把视角转到那一面';

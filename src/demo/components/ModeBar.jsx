@@ -6,8 +6,9 @@ import { setMode } from '../../core/scene.js';
 const MODES = [
   { value: 'orbit', label: '旋转' },
   { value: 'paint', label: '保护面' },
-  { value: 'add', label: '加支撑' },
-  { value: 'del', label: '删支撑' },
+  { value: 'add', label: '添加支撑' },
+  { value: 'del', label: '删除支撑' },
+  { value: 'poly', label: '多线段' },
 ];
 
 /* 视口模式：core 的 setMode 广播 'mode'，这里只做受控显示 */

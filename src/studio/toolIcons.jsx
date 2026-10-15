@@ -129,8 +129,31 @@ export function WandIcon({ state = false, live = false, size, strokeWidth }) {
   );
 }
 
+/* ---------- 笔刷：整枚随半径微微放大，点亮时笔杆立起来 ---------- */
+const BRUSH = [
+  'M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3Z',
+  'M9 8c-2 3-4 3.5-7 4l8 10c2-1 6-5 6-7',
+  'M14.5 17.5 4.5 15',
+];
+
+export function BrushIcon({ state = false, size, strokeWidth }) {
+  const reduced = useReducedFlag();
+  return (
+    <Frame size={size} strokeWidth={strokeWidth}>
+      <motion.g
+        style={{ transformBox: 'view-box', transformOrigin: '12px 12px' }}
+        initial={false}
+        animate={{ rotate: state ? -12 : 0, scale: state ? 1.06 : 1 }}
+        transition={morph(reduced)}
+      >
+        {BRUSH.map(d => <path key={d} d={d} />)}
+      </motion.g>
+    </Frame>
+  );
+}
+
 /* ---------- 支撑柱：上框接触端，下框主干，都是实心。
-   加支撑两段都用工具栏墨色。选中时接触端落下、主干向下长，像把支撑放上去。
+   手动支撑两段都用工具栏墨色。选中时接触端落下、主干向下长，像把支撑放上去。
    删支撑只把接触端填红。选中时红头抬起并略倾斜，主干从顶端缩短，像把接触端拔掉。 ---------- */
 const SUPPORT_RED = '#fb3838';
 const PILLAR = { x: 9, w: 6, capH: 5.4 };
@@ -267,6 +290,20 @@ export function SplineIcon({ state = false, live = false, size, strokeWidth }) {
         animate={{ pathLength: 1 }}
         transition={t}
       />
+    </Frame>
+  );
+}
+
+/** 多线段：折线。选中时折角再拉开一点。 */
+export function PolyIcon({ state = false, live = false, size, strokeWidth }) {
+  const reduced = useReducedFlag();
+  const t = morph(reduced);
+  const intro = live && !reduced;
+  const rest = 'M4 16 L9 8 L15 16 L20 8';
+  const on = 'M3 18 L9 5 L15 18 L21 5';
+  return (
+    <Frame size={size} strokeWidth={strokeWidth}>
+      <motion.path d={rest} initial={intro ? { d: rest } : false} animate={{ d: state ? on : rest }} transition={t} />
     </Frame>
   );
 }

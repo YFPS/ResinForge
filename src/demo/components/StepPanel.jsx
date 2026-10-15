@@ -64,12 +64,12 @@ function StepFooter({ children }) {
 }
 
 /** 「下一步」：这一步完成后由幽灵按钮变为描边按钮 */
-export function NextButton({ from, emphasized }) {
+export function NextButton({ from, emphasized, size = 'md' }) {
   const slot = React.useContext(NextSlotContext);
   const next = STEPS[stepIndex(from) + 1];
   if (!next || slot === 'external') return null;
   return (
-    <Button variant={emphasized ? 'secondary' : 'ghost'} size="md" onClick={() => goStep(next.id)}>
+    <Button variant={emphasized ? 'secondary' : 'ghost'} size={size} onClick={() => goStep(next.id)}>
       下一步：{next.label}
       <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
     </Button>

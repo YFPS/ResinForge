@@ -12,8 +12,9 @@ import { raycast, capsuleClear } from './collide.js';
 /* 接触端方向候选（单位向量，从接触点指向外）。n = 接触面外法线；sgn = −1 向下伸出（顶端）/ +1 向上伸出（锚定端）。
    主方向 = 法线钳制进「与 sgn·Y 夹角 ≤ tiltMax」的锥（超角时保留方位角、倾角饱和到锥面）；
    与轴夹角 < dead 视为水平面 → 取轴向（吸收细分法线噪声）。
-   其后为锥内替补方向（多环倾角 × 12 方位），按与主方向夹角升序——避让时依次试放，越靠前越贴近理想朝向 */
-export function dirCandidates(n, sgn, tiltMax, dead, fixed = false) {
+   其后为锥内替补方向（多环倾角 × 12 方位），按与主方向夹角升序——避让时依次试放，越靠前越贴近理想朝向。
+   朝向一律沿法线，不提供「整件竖直 / 固定倾角」——那两项会把曲面上的针尖拧成同一个方向。 */
+export function dirCandidates(n, sgn, tiltMax, dead) {
   const ax = [0, sgn, 0];
   let main = ax;
   if (n) {
@@ -21,8 +22,7 @@ export function dirCandidates(n, sgn, tiltMax, dead, fixed = false) {
     const c = n[1] * sgn / l;
     const h = Math.hypot(n[0], n[2]) / l;
     if (c < Math.cos(dead) && h > 1e-9) {
-      // fixed：固定倾角模式——沿法线方位、倾角直接取 tiltMax
-      const tilt = fixed ? tiltMax : Math.min(Math.acos(Math.max(-1, Math.min(1, c))), tiltMax);
+      const tilt = Math.min(Math.acos(Math.max(-1, Math.min(1, c))), tiltMax);
       const s = Math.sin(tilt);
       main = [n[0] / l / h * s, sgn * Math.cos(tilt), n[2] / l / h * s];
     }
@@ -40,12 +40,10 @@ export function dirCandidates(n, sgn, tiltMax, dead, fixed = false) {
   return [main, ...out];
 }
 
-/* 接触朝向参数 → { tilt 接触端最大倾角（弧度，从竖直）, fixed 固定倾角 }。
-   接触端很短（约 1mm），可比自支撑角更斜；针身 / 分支仍按 selfAngle 的临界锥约束 */
-export function tipCone(P) {
-  const mode = P.tipMode || 'normal';
-  const tilt = mode === 'vertical' ? 0 : Math.max(0, Math.min(75, P.tipTilt ?? 45)) * Math.PI / 180;
-  return { tilt, fixed: mode === 'fixed' };
+/* 接触锥：倾角上限固定 45°（从竖直量）。接触段很短，可以比自支撑角更斜；针身 / 分支仍按 selfAngle 的临界锥约束。
+   每个接触点用自己那一面的法线，再钳进这个锥。 */
+export function tipCone() {
+  return { tilt: 45 * Math.PI / 180 };
 }
 
 /* ---------- 桥接 ---------- */

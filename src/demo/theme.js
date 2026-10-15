@@ -5,6 +5,8 @@
    顶栏的 Arc ThemeSwitch 与命令面板共用这里的 store，任一处切换另一处同步。 */
 import { useSyncExternalStore } from 'react';
 import { scene, prevScene, modelMat, updateBuildVolume } from '../core/scene.js';
+import { syncHeatMaterial } from '../core/heat.js';
+import { syncPartTint } from '../core/model.js';
 
 const THEME_KEY = 'resinforge:theme';
 const ACCENT_KEY = 'resinforge:accent';
@@ -40,8 +42,8 @@ const resolveTheme = mode => (mode === 'system' ? (media.matches ? 'dark' : 'lig
 
 /* three.js 不读 CSS 变量：深色下视口近黑、模型浅灰；浅色下视口浅灰、模型压深一档保持对比 */
 const SCENE_COLORS = {
-  dark: { bg: 0x101012, model: 0xb9c2cf },
-  light: { bg: 0xe6e7ea, model: 0x7d8794 },
+  dark: { bg: 0x101012, model: 0xa7b0bd },
+  light: { bg: 0xe6e7ea, model: 0x717b88 },
 };
 
 function paint(resolved) {
@@ -52,6 +54,8 @@ function paint(resolved) {
   prevScene.background.set(c.bg);
   modelMat.color.set(c.model);
   updateBuildVolume();
+  syncHeatMaterial();
+  syncPartTint();
 }
 
 /* ---------- store ---------- */

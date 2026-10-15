@@ -100,6 +100,7 @@ export function setParam(k, v) {
   params[k] = v;
   paramsVersion.v++;
   paramsVersion.subs.forEach(fn => fn());
+  bus.emit('param', k);
 }
 
 export function useParams() {

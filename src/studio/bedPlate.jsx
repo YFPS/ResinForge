@@ -1,14 +1,12 @@
 /* Studio 打印网板：18 mm 黑色圆角方砖，缝和四周留出视口底色，不铺浅色底板。
    线网格和板框收起，坐标轴保留。演示页和旧界面仍用 scene.js 的线网格。
    开发时打开 ?proto=bed 会改走原来的方案切换，这里让开。 */
-import { useLayoutEffect, useState } from 'react';
+import { useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { scene } from '../core/scene.js';
 import { plateAxisOrigin } from '../core/model.js';
 
-const TILE_MIN = 3;
-const TILE_MAX = 18;
-const TILE_KEY = 'resinforge:bed.tile';
+const TILE_MM = 18;
 
 const TILE_VERT = `
 varying vec3 vWorld;
@@ -44,22 +42,6 @@ void main() {
   gl_FragColor = vec4(uInk, 1.0 - smoothstep(-tileAa, tileAa, tileDist));
 }
 `;
-
-function clampTile(n) {
-  return Math.min(TILE_MAX, Math.max(TILE_MIN, Math.round(n)));
-}
-
-function readTileSize() {
-  try {
-    const n = Number(localStorage.getItem(TILE_KEY));
-    if (Number.isFinite(n) && n > 0) return clampTile(n);
-  } catch { /* 隐私模式读不到时用 18 mm */ }
-  return 18;
-}
-
-function writeTileSize(n) {
-  try { localStorage.setItem(TILE_KEY, String(n)); } catch { /* 写失败就只留在这一页 */ }
-}
 
 function themeName() {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
@@ -149,25 +131,24 @@ function protoBedOn() {
   return import.meta.env.DEV && new URLSearchParams(location.search).get('proto') === 'bed';
 }
 
-/* 方砖边长。挂在底栏这一排，和工具坞、下一步并排。 */
+/* 方砖固定 18 mm，不提供尺寸调节。 */
 export default function BedPlate() {
-  const [tileSize, setTileSize] = useState(readTileSize);
   if (protoBedOn()) return null;
-  return <BedPlateLive tileSize={tileSize} setTileSize={setTileSize} />;
+  return <BedPlateLive />;
 }
 
-function BedPlateLive({ tileSize, setTileSize }) {
+function BedPlateLive() {
   useLayoutEffect(() => {
     let key = '';
     const rebuild = () => {
       const frame = plateAxisOrigin();
       const theme = themeName();
-      const next = `${frame.px}:${frame.pz}:${theme}:${tileSize}`;
+      const next = `${frame.px}:${frame.pz}:${theme}:${TILE_MM}`;
       hideLinePlate();
       const cloud = scene.getObjectByName('bedPlate');
       if (cloud && key === next) return;
       dropPlate();
-      const mesh = makePlate(frame, theme, tileSize);
+      const mesh = makePlate(frame, theme, TILE_MM);
       scene.add(mesh);
       key = next;
     };
@@ -186,21 +167,6 @@ function BedPlateLive({ tileSize, setTileSize }) {
       dropPlate();
       restoreLinePlate();
     };
-  }, [tileSize]);
-
-  const bump = (dir) => {
-    setTileSize(prev => {
-      const next = clampTile(prev + dir);
-      writeTileSize(next);
-      return next;
-    });
-  };
-
-  return (
-    <div className="stuBedSize" role="group" aria-label="方砖大小">
-      <button type="button" onClick={() => bump(-1)} disabled={tileSize <= TILE_MIN} aria-label="缩小方砖">−</button>
-      <b>{tileSize} mm</b>
-      <button type="button" onClick={() => bump(1)} disabled={tileSize >= TILE_MAX} aria-label="放大方砖">+</button>
-    </div>
-  );
+  }, []);
+  return null;
 }

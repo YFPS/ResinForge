@@ -2,7 +2,7 @@
    2026-10-14 用户定（简化设计）：界面上只留 4 个主参数——主干直径 / 接触直径 / 接触深度 / 支撑间距；
    主干直径全联动（格架杆 / 针身 / 板厚 / 格宽 / 针最大长 / 支撑间距 / 底部疏密一起按同一口径缩放，见
    supportTemplates.js 的 trunkLinkage）；其余工程参数（格架 / 柱与展宽 / 十字针 / 基础带 / 布点 / 接触）
-   收进「高级设置」折叠区，默认收起。主操作是带变体菜单的「生成支撑」。 */
+   收进「高级设置」折叠区，默认收起。接触方向不放进界面：针尖一律沿被托面法线。主操作是带变体菜单的「生成支撑」。 */
 import React from 'react';
 import { Crosshair, Eraser, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { SplitButton } from '@/components/arc/split-button/split-button';
@@ -25,12 +25,6 @@ const EDIT_MODES = [
   { value: 'del', label: '删点' },
 ];
 
-const TIP_MODES = [
-  { value: 'normal', label: '沿法线' },
-  { value: 'vertical', label: '竖直' },
-  { value: 'fixed', label: '固定角度' },
-];
-
 const TEMPLATE_OPTIONS = SUPPORT_TEMPLATES.map(t => ({ value: t.id, label: t.name }));
 
 /* 支撑模板：按支撑粗细一键套用一组工艺参数。
@@ -51,7 +45,7 @@ function TemplatePicker() {
       />
       <p className="hint">
         {tpl
-          ? `当前生效：主干直径 ${tpl.diameter} mm · 接触直径 ${tpl.tipW} mm · 支撑间距 ${tpl.spacing} mm · 格宽 ${tpl.cell} mm · ${tpl.source}（切片层厚在分析步骤设置）`
+          ? `当前生效：主干直径 ${tpl.diameter} mm · 接触直径 ${tpl.tipW} mm · 接触深度 ${tpl.pen} mm · 上端 ${tpl.topD} mm · 顶端长度 ${tpl.taper} mm · 支撑间距 ${tpl.spacing} mm · ${tpl.source}`
           : '当前参数不属于任何模板（默认值，或套用后手动改过某项）。点选一档即按该模板写入参数。'}
       </p>
     </Section>
@@ -62,7 +56,7 @@ function TemplatePicker() {
    一起按模板同口径缩放（supportTemplates.js 的 trunkLinkage）；「小支撑缩放比例」管短小支撑
    （十字短杆 / 分叉 / 贴面短连接）的宽度 = 主干直径 × 比例，生成时实时计算。 */
 function CoreParams() {
-  const [, setParam] = useParams();
+  const [params, setParam] = useParams();
   return (
     <Section title="支撑参数" desc="主干直径一调，整套支撑按同一口径等比缩放（杆件、格宽、针长、间距一起走，与套模板同一套公式）。">
       <Grid>
@@ -73,13 +67,22 @@ function CoreParams() {
             for (const key of Object.keys(d)) if (key !== 'esBarW') setParam(key, d[key]);
           }}
         />
-        <Num k="esTipW" label="接触直径" min={0.05} max={1} step={0.05} unit="mm" />
+        <Num k="esTipW" label="接触直径" min={0.05} max={2} step={0.05} unit="mm" />
         <Num k="pen" label="接触深度" min={0} max={1} step={0.05} unit="mm" />
+        <Num k="esTopD" label="上端直径" min={0.05} max={2} step={0.05} unit="mm" />
+        <Num k="esBotD" label="底部直径" min={0.05} max={3} step={0.05} unit="mm" />
+        <Num k="esTaper" label="顶端长度" min={0.2} max={6} step={0.1} unit="mm" />
         <Num k="spacing" label="支撑间距" min={1} max={10} step={0.5} unit="mm" />
         <Num k="esGap" label="与模型最小间距" min={0} max={3} step={0.1} unit="mm" />
         <Num k="smallScale" label="小支撑缩放比例" min={0.3} max={1.5} step={0.05} unit="×" />
       </Grid>
-      <p className="hint">接触深度 = 针尖扎入模型的深度；接触直径 = 针尖接触处的宽度；小支撑缩放比例管短小支撑（十字短杆、分叉、贴面短连接）的粗细：其直径 = 主干直径 × 该比例，该值越大直径相对越粗。改完点「重新生成」生效。</p>
+      <SwitchRow
+        label="球头"
+        desc="开着时，接触直径是球的直径，接触深度是球扎进模型的深度。关掉就只留下面那段锥。"
+        checked={params.tipBall !== false}
+        onChange={v => setParam('tipBall', v)}
+      />
+      <p className="hint">球头开着时，接触直径调的是球有多大，接触深度调的是球扎进模型多深。上端直径和底部直径调的是球下面那段锥的两头。改完点「重新生成」生效。</p>
     </Section>
   );
 }
@@ -111,8 +114,7 @@ function Advanced() {
       </Section>
       <Section title="十字针" desc="从格架节点直通接触点，末端渐缩后扎入模型。">
         <Grid>
-          <Num k="esNeedleMax" label="针最大长" min={1} max={12} step={0.5} unit="mm" />
-          <Num k="esTaper" label="过渡段长" min={0.2} max={3} step={0.1} unit="mm" />
+          <Num k="esNeedleMax" label="针最大长" min={1} max={20} step={0.5} unit="mm" />
           <Num k="esContactMargin" label="接触边距" min={0} max={2} step={0.1} unit="mm" />
         </Grid>
       </Section>
@@ -139,12 +141,6 @@ function Advanced() {
         {params.shortSup ? (
           <p className="hint">连不上格架的点用十字短杆接到下方表面或平台（两端收到接触直径），先于「分叉 / 标红」。</p>
         ) : null}
-      </Section>
-      <Section title="接触">
-        <Choice label="接触朝向" options={TIP_MODES} value={params.tipMode} onChange={v => setParam('tipMode', v)} />
-        <Grid>
-          <Num k="tipTilt" label="接触最大倾角" min={0} max={75} step={5} unit="°" />
-        </Grid>
       </Section>
     </details>
   );

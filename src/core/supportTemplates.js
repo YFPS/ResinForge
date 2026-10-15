@@ -27,29 +27,30 @@
    间距与格宽不从表里取，见 toParams */
 const SOURCES = {
   fine: {
-    label: '细', ppId: '1720324258973949965', source: '原表 Miniature 30 µm（UltraCraft Reflex）',
+    label: '细', ppId: '1720324258973949965', source: '黑格 PAP10',
     diameter: 0.3, embeddedDepth: 0.15, sphereRadius: 0.125,
     tipRadius: 0.1, connectionLength: 1.5,
     boundaryOffset: 0.5, awayFromWall: 0.6, baseHeight: 1.2, hullRed: 0,
   },
   'mid-fine': {
-    label: '中细', ppId: '2005905103973912580', source: '原表 General Purpose 50 µm（UltraCraft Reflex 2）',
+    label: '中细', ppId: '2005905103973912580', source: '黑格工艺包 主干 0.75',
     diameter: 0.375, embeddedDepth: 0.2, sphereRadius: 0.15,
     tipRadius: 0.12, connectionLength: 1.5,
     boundaryOffset: 0.5, awayFromWall: 0.6, baseHeight: 1.0, hullRed: 0,
   },
   'mid-coarse': {
-    label: '中粗', ppId: '1976519320312893442', source: '原表 General Purpose 50 µm（UltraCraft Reflex 2）',
+    label: '中粗', ppId: '1976519320312893442', source: '黑格工艺包 主干 0.85',
     diameter: 0.425, embeddedDepth: 0.2, sphereRadius: 0.16,
     tipRadius: 0.12, connectionLength: 1.5,
     boundaryOffset: 0.5, awayFromWall: 0.6, baseHeight: 1.0, hullRed: 1,
   },
   coarse: {
-    label: '粗', ppId: '1963879732640530440', source: '原表 General Purpose 50 µm（UltraCraft Reflex 2）',
+    label: '粗', ppId: '1963879732640530440', source: '粗档指定参数',
     diameter: 0.475, embeddedDepth: 0.28, sphereRadius: 0.22,
     tipRadius: 0.15, connectionLength: 1.5,
     boundaryOffset: 0.5, awayFromWall: 0.6, baseHeight: 1.0, hullRed: 1,
-    taper: 2.5,   // 非原表字段：过渡段覆盖值 2.5 mm（用户 2026-10-12 指定，粗档针头比原表 1.5 更长）；缺省取原表连接长
+    // 2026-10-16 用户指定粗档界面值。接触直径 1.0 就是球头直径，接触深度 0.6。
+    ui: { trunk: 1.5, tip: 1.0, pen: 0.6, taper: 3.0, spacing: 4.0, gap: 0.6 },
   },
 };
 
@@ -60,7 +61,8 @@ const SOURCES = {
            主干直径 = 2 × diameter → esBarW（边宽），边厚 = 边宽 → esBarT（方截面）；
            主力针身（十字针）宽度 = 主干直径 → esConnW（连接宽），针板厚 = 连接宽 → esNeedleT（方截面）；
            短小支撑（十字短杆 / 分叉 / 贴面短连接）的中段宽度 = 主干直径 × smallScale（界面「小支撑缩放比例」，表内 bracketSupportScalingRatio 0.8）——生成时由 supportTower 直接计算，不占独立参数；
-           尖半径 ×2 → esTipW（接触宽/接触直径）；过渡段 = 原表连接长（黑格「连接体长度」，四个工艺包均为 1.5 mm，不再减 0.5；粗档 taper 覆盖为 2.5 mm），接触边距取 0（针头为纯梯形）；
+           开球头时接触直径 = 接触点球半径 ×2 → esTipW；上端直径 = 尖半径 ×2 → esTopD；
+           顶端长度 = 原表连接长（黑格连接体长度，细 / 中细 / 中粗为 1.5 mm；粗档按用户指定 3.0 mm），接触边距取 0；
            离墙距离 → esGap（界面「与模型最小间距」）；底座高 → esFoundH（基础带高）。
    未映射（沿用本系统默认）：模型抬高（统一 4 mm）、临界角（统一 45°）、密度、接触形状、壳层类型与壳厚、
    最低点加强、线底宽、顶补偿、曝光时间与功率。 */
@@ -72,20 +74,23 @@ function toParams(s) {
   const spacing = r1(Math.max(3.3 * trunk, 2.5 * (trunk + 0.4)));   // 支撑间距：等强度（∝ 主干直径）与防粘连（最近中心距 ≈ 0.4 × 间距 ≥ 主干直径 + 0.4）取大
   const cell = r1(5.8 * trunk);       // 格宽：同样按主干直径缩放，粗档不把格子压得太密
   const cellZ = r1(1.4 * cell);       // 孔格竖高
-  return {
+  const out = {
     shared: {
       spacing,
       edgeInset: s.boundaryOffset,
       pen: s.embeddedDepth,
       smallScale: 0.8,    // 小支撑缩放比例（界面主参数；与表内 bracketSupportScalingRatio 一致）
+      tipBall: true,      // 黑格接触形状是球
     },
     tower: {
       esCell: cell,
       esDiamAngle: r3(Math.atan2(cellZ, cell) * 180 / Math.PI),
       esBarW: trunk,
       esConnW: trunk,
-      esTipW: r3(2 * s.tipRadius),
-      esTaper: r3(s.taper ?? s.connectionLength),   // 过渡段：缺省 = 原表连接长（连接体长度 1.5，接触边距 0）；粗档由 taper 覆盖为 2.5
+      esTipW: r3(2 * s.sphereRadius),   // 接触直径：开球头时就是球的直径
+      esTopD: r3(2 * s.tipRadius),      // 上端直径：锥靠近模型的一头（连接体尖部）
+      esBotD: trunk,                     // 底部直径：锥靠近主干的一头，默认同主干
+      esTaper: r3(s.taper ?? s.connectionLength),   // 顶端长度：缺省 = 原表连接长 1.5；粗档由 ui 覆盖
       esContactMargin: margin,
       esGap: s.awayFromWall,
       esBarT: trunk,      // 边厚 = 边宽（方截面，不做扁板条）
@@ -95,6 +100,27 @@ function toParams(s) {
       esNeedleMax: r1(10 * trunk),   // 针最大长 = 10 × 主干直径（长细比不变）：格宽随直径放大后节点变稀，针固定 6 mm 时粗模板近四成的点接不上格架
     },
   };
+  // 粗档按用户给定的界面值，主干不再用表内 0.95，接触 / 深度 / 顶端长度 / 间距也不走上面的公式
+  if (s.ui) {
+    const u = s.ui;
+    const cellU = r1(5.8 * u.trunk);
+    const cellZU = r1(1.4 * cellU);
+    out.shared.spacing = u.spacing;
+    out.shared.pen = u.pen;
+    out.tower.esBarW = u.trunk;
+    out.tower.esBarT = u.trunk;
+    out.tower.esConnW = u.trunk;
+    out.tower.esNeedleT = u.trunk;
+    out.tower.esTipW = u.tip;          // 接触直径 = 球头直径
+    out.tower.esBotD = u.trunk;
+    out.tower.esTaper = u.taper;
+    out.tower.esGap = u.gap;
+    out.tower.esCell = cellU;
+    out.tower.esDiamAngle = r3(Math.atan2(cellZU, cellU) * 180 / Math.PI);
+    out.tower.esNeedleMax = r1(10 * u.trunk);
+    out.tower.esHullRed = u.trunk > 0.82 ? 1 : 0;
+  }
+  return out;
 }
 
 /** 四套支撑模板（细 → 粗）。name 为界面显示名；diameter（主干直径，已 ×2）、spacing（支撑间距）与 tipW（接触宽）即粗细的依据，source 为界面说明里的出处 */
@@ -107,6 +133,9 @@ export const SUPPORT_TEMPLATES = Object.entries(SOURCES).map(([id, s]) => {
     spacing: shared.spacing,
     cell: tower.esCell,
     tipW: tower.esTipW,
+    pen: shared.pen,
+    taper: tower.esTaper,
+    topD: tower.esTopD,
     source: s.source,
     ppId: s.ppId,
     shared, tower,

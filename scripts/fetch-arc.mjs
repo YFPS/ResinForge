@@ -66,6 +66,8 @@ const PATCHED = {
     'Swap 改为 forwardRef。React 18 下 AnimatePresence 的 PopChild 传 ref 会警告 Function components cannot be given refs。',
   'alert/alert.tsx':
     'Swap 改为 forwardRef，原因同 badge：React 18 不支持函数组件直接接收 ref。',
+  'progress/progress.tsx':
+    'Swap 改为 forwardRef，原因同 badge：React 18 不支持函数组件直接接收 ref（进度条文字换 label 时报警告）。',
   'number-field/number-field.tsx':
     'scrub 的指针事件同时绑在数值区域上（不只是标签），拖完一次后抑制紧接着的点击，避免把输入框重新选中。',
   'command-palette/command-palette.tsx':

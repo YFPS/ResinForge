@@ -47,6 +47,70 @@ export function activePart() {
   return state.parts.find(p => p.id === state.activePartId) || state.parts[0] || null;
 }
 
+/* 自动支撑 / 手动加点只作用于这一件。多模型没选中时不退回「全部」，避免给每件都长支撑。 */
+export function supportTargetPart() {
+  if (state.manualPartId) {
+    const locked = state.parts.find(p => p.id === state.manualPartId);
+    if (locked) return locked;
+  }
+  const ids = state.selectedIds || [];
+  if (ids.length) {
+    const id = ids.includes(state.activePartId) ? state.activePartId : ids[ids.length - 1];
+    return state.parts.find(p => p.id === id) || null;
+  }
+  if (state.parts.length <= 1) return state.parts[0] || null;
+  return null;
+}
+
+/* 热力图开着时顶点色归热力图，这里不盖。heat.js 在关掉热力图之后会再调一次。 */
+let heatActive = () => false;
+export function setHeatActiveReader(fn) { heatActive = fn; }
+/* 选中且热力图关闭时，把选中模型涂成热力图的蓝色（仍受光）。 */
+let paintSelected = null;
+export function setSelectedPainter(fn) { paintSelected = fn; }
+
+/* 零件几何保持白。选中色如果写进这里，重拼网格会盖掉热力图。 */
+function clearBakedTint() {
+  for (const p of state.parts) {
+    const ca = p.geom.attributes.color;
+    if (!ca) continue;
+    ca.array.fill(1);
+    for (const f of p.protected) {
+      const v = f * 3;
+      ca.setXYZ(v, 1, 0.38, 0.38);
+      ca.setXYZ(v + 1, 1, 0.38, 0.38);
+      ca.setXYZ(v + 2, 1, 0.38, 0.38);
+    }
+    ca.needsUpdate = true;
+  }
+}
+
+function paintNeutralMesh() {
+  if (!state.mesh) return;
+  bus.emit('restoreLitModel');
+  if (state.mesh.material !== modelMat) state.mesh.material = modelMat;
+  const ca = state.mesh.geometry.attributes.color;
+  if (!ca) return;
+  ca.array.fill(1);
+  for (const f of state.protectedFaces) {
+    const v = f * 9;
+    for (let k = 0; k < 3; k++) {
+      ca.array[v + k * 3] = 1;
+      ca.array[v + k * 3 + 1] = 0.38;
+      ca.array[v + k * 3 + 2] = 0.38;
+    }
+  }
+  ca.needsUpdate = true;
+}
+
+/** 热力图开着时不改。关掉时：有选中就用热力图的蓝，否则回到带光照的灰。 */
+export function syncPartTint() {
+  clearBakedTint();
+  if (heatActive() || !state.mesh) return;
+  if ((state.selectedIds || []).length && paintSelected && paintSelected()) return;
+  paintNeutralMesh();
+}
+
 /* 世界 XZ 落在哪个零件的底面上（点在底面外时取最近的一个） */
 export function partAtWorld(x, z) {
   let best = null, bd = Infinity;
@@ -469,7 +533,7 @@ function syncPreview(part) {
     prev.mesh = null;
   }
   if (!part) return;
-  prev.mesh = new THREE.Mesh(part.geom, new THREE.MeshStandardMaterial({ color: 0xb9c2cf, roughness: 0.55, metalness: 0.15 }));
+  prev.mesh = new THREE.Mesh(part.geom, new THREE.MeshStandardMaterial({ color: 0xa7b0bd, roughness: 0.55, metalness: 0.15 }));
   prevScene.add(prev.mesh);
 }
 
@@ -611,6 +675,8 @@ function rebuildMergedMesh(faces = true) {
   scheduleMeshBVH();
   // 拖动中每帧都重拼网格，面数据等松手再算
   if (faces) state.faces = computeFaceDataFull(pos);
+  // 重拼会带回零件上的白顶点色。热力图或选中色在这一步之后再画。
+  bus.emit('displayMesh');
 }
 
 /* 拾取用的 BVH。大模型不在鼠标移动时逐三角形扫描。网格一换就作废，空闲时重建。 */
@@ -740,6 +806,7 @@ export function setSelection(ids) {
   if (primary) state.focusId = primary.id;
   emitModelInfo();
   bus.emit('selection', { ids: valid.slice(), tool: state.transformTool });
+  syncPartTint();
 }
 
 /* 板上一个模型都不剩时拆掉合并网格和底板。零件几何由调用方先 dispose。 */
@@ -1151,13 +1218,18 @@ export function setActivePart(id) {
   emitModelInfo();
 }
 
-/* 加点时若点到另一件模型，由场景调用：切到该零件并跳转视角 */
+/* 加点时若点到另一件模型，切到该零件再拉近。同一件上加点（包括第一次）不动视角。 */
 export function focusPartFromHit(part) {
-  if (!part || state.focusId === part.id) return;
+  if (!part) return;
   const changed = state.activePartId !== part.id;
+  if (!changed) {
+    state.focusId = part.id;
+    return;
+  }
   state.activePartId = part.id;
-  if (changed) syncPreview(part);
-  framePart(part);
+  syncPreview(part);
+  if (state.parts.length > 1) framePart(part);
+  else state.focusId = part.id;
   emitModelInfo();
 }
 

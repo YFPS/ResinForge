@@ -2,7 +2,7 @@
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
 import { params, state, bus, log, toast } from '../store.js';
 import { isHeatOn, setHeat } from '../core/heat.js';
-import { loadDemo, loadModelFiles, setActivePart, simplifySelection } from '../core/model.js';
+import { loadDemo, loadModelFiles, setActivePart, simplifySelection, supportTargetPart } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis } from '../core/inspect.js';
 import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
@@ -114,6 +114,42 @@ export function enterSupport() {
 }
 
 bus.on('enterSupport', () => { enterSupport(); });
+/* 离开支撑这一步：热力图跟着收起。人还停在加支撑时，模式切换会再关一次，这里先关不影响。 */
+bus.on('leaveSupport', () => { if (isHeatOn()) setHeat(false); });
+
+/* 加支撑：锁定当前这一件。没分析过就先跑完（正在分析就等它结束），然后打开热力图。
+   进来看到的就是分析完成后的热力色，而不是只有角度、还没高差的一版。 */
+bus.on('enterAddSupport', async () => {
+  const target = supportTargetPart();
+  state.manualPartId = target ? target.id : null;
+  if (state.parts.length > 1 && !target) { toast('先选中一个模型，再使用手动支撑'); return; }
+  if (!state.mesh) return;
+  if (!state.analysis) {
+    if (getUI().busy && getUI().busy !== 'analyze') return;
+    if (!getUI().busy) await runTask('analyze', () => runSliceAnalysis());
+    else {
+      while (!state.analysis && getUI().busy === 'analyze') {
+        await new Promise(r => setTimeout(r, 40));
+      }
+    }
+  }
+  // 分析过程中已经退出加支撑的，不再把热力图打开
+  if (state.mode === 'add' && state.analysis && !isHeatOn()) setHeat(true);
+});
+/* 多线段 / 删支撑：只锁定模型。已有分析就用，不另外开关热力图。 */
+bus.on('enterManual', () => {
+  const target = supportTargetPart();
+  state.manualPartId = target ? target.id : null;
+  if (state.parts.length > 1 && !target) { toast('先选中一个模型，再使用手动支撑'); return; }
+  if (!state.mesh || state.analysis || getUI().busy) return;
+  return runTask('analyze', () => runSliceAnalysis());
+});
+/* 退出加支撑 / 多线段 / 删支撑：热力图只在支撑模式里看，离开就关掉。 */
+bus.on('leaveManual', () => {
+  state.manualPartId = null;
+  if (isHeatOn()) setHeat(false);
+  else bus.emit('syncTint');
+});
 
 export async function doGenSupports(opts = {}) {
   await syncModelLift();                           // 先按连接底板挪好模型：没分析过时，下面的分析直接在新高度上做（不白算一遍）

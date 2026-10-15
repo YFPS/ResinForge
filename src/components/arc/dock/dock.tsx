@@ -32,6 +32,8 @@ export interface DockProps {
   expandedId?: string | null;
   /** 托盘打开或收起。打开时 id 为分组，收起时为 null。 */
   onOpenChange?: (id: string | null) => void;
+  /** 排在最后一位、不进工具循环的内容（如「下一步」），跟着坞一起被同一条轮廓兜住 */
+  trailing?: ReactNode;
   label?: string;
   className?: string;
 }
@@ -132,9 +134,19 @@ function TrayMember({
   </motion.div>;
 }
 
+/* 分组名和当前这一项一样时不再重复，例如「手动支撑：手动支撑」。 */
+function groupTip(item: DockItem, shown?: DockItem) {
+  if (!item.items || !shown) return item.label;
+  if (shown.label === item.label) return shown.label;
+  return `${item.label}：${shown.label}`;
+}
+
 function nameOf(item: DockItem, shown?: DockItem) {
   const target = item.items ? shown : item;
-  const parts = [item.items && shown ? `${item.label}: ${shown.label}` : item.label];
+  const title = item.items && shown
+    ? (shown.label === item.label ? shown.label : `${item.label}: ${shown.label}`)
+    : item.label;
+  const parts = [title];
   if (target?.shortcut) parts.push(target.shortcut);
   if (item.badge) parts.push(String(item.badge));
   return parts.filter(Boolean).join(", ");
@@ -145,7 +157,7 @@ function nameOf(item: DockItem, shown?: DockItem) {
  * 标签在格子之间滑过去，选中底色用弹簧跟上，分组的托盘从坞的上沿长出来。
  * 底色同一时间只在一格上：展开托盘或面板时滑到那一格，收起后回到当前工具。
  */
-export function Dock({ items, value = null, onValueChange, onItemsChange, expandedId = null, onOpenChange, label = "工具", className }: DockProps) {
+export function Dock({ items, value = null, onValueChange, onItemsChange, expandedId = null, onOpenChange, trailing, label = "工具", className }: DockProps) {
   const reduced = useReducedMotion() ?? false;
   const reactId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -479,13 +491,13 @@ export function Dock({ items, value = null, onValueChange, onItemsChange, expand
             onFocus={() => {
               setFocusId(item.id);
               const slot = slotRefs.current.get(item.id);
-              if (slot) placeTip(item.items && shownMember ? `${item.label}：${shownMember.label}` : item.label, slot, false);
+              if (slot) placeTip(groupTip(item, shownMember), slot, false);
             }}
             onBlur={() => hideTip(false)}
             onPointerEnter={event => {
               if (event.pointerType === "touch") return;
               const slot = slotRefs.current.get(item.id);
-              if (slot) placeTip(item.items && shownMember ? `${item.label}：${shownMember.label}` : item.label, slot, true);
+              if (slot) placeTip(groupTip(item, shownMember), slot, true);
             }}
             onPointerDown={event => onPointerDown(event, item)}
             onPointerMove={onPointerMove}
@@ -506,6 +518,7 @@ export function Dock({ items, value = null, onValueChange, onItemsChange, expand
           </motion.button>
         </motion.div>;
       })}
+      {trailing}
     </div>
     <AnimatePresence>
       {tip && <motion.div key="tip" className={styles.tip} aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1, left: tip.x }} exit={{ opacity: 0 }} style={{ translateX: "-50%" }} transition={reduced ? { duration: duration.fast } : { left: spring.morph, opacity: { duration: duration.fast } }}>{tip.text}{tip.shortcut && <kbd className={styles.kbd}>{tip.shortcut}</kbd>}</motion.div>}

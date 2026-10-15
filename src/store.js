@@ -26,11 +26,10 @@ export const params = {
   minAttach: 1,       // 最小附着面积（mm²）
   /* 支撑点 */
   spacing: 2.5,       // 支撑间距（mm；默认与细档一致：间距 = max(3.3 × 主干直径, 2.5 × (主干直径 + 0.4))，粗支撑要按直径放大）：等距环上的点距；环与环之间的行距为间距 × √3/2（相邻环错开半步，近似正六角）
+  polySpacing: 2,     // 多线段接触点间距（mm）：沿画出的折线落点，不跟自动布点的支撑间距走
   edgeInset: 1.5,     // 边缘距离（mm）：支撑区域投影轮廓内缩这么多放第一圈（边缘环），边缘支撑离边处处一致
   minSupArea: 2,      // 最小悬空区域面积（mm²）
   shortSup: true,     // 短小支撑：竖直下方被模型挡住时允许锚到模型表面
-  tipMode: 'normal',  // 接触朝向：'normal' 沿法线（钳制到接触最大倾角）/ 'vertical' 竖直 / 'fixed' 固定倾角（沿法线方位）
-  tipTilt: 45,        // 接触最大倾角（°，接触端与竖直方向夹角；针身 / 分支仍受自支撑角约束）
   /* 支撑塔（格架塔；参数名原对齐 e-Stage 7.0 手册 Grid / Top connection / Foundation） */
   pen: 0.2,           // 渗透长度（Penetration length）：针尖沿针轴扎入模型的深度
   esCell: 3.5,        // 格宽（墙距；原无孔式格架的手册 Diamond width）
@@ -45,9 +44,12 @@ export const params = {
   esHullRed: 0,       // 壳层缩减等级（Hull reduction level：向下每柱高宽比个格允许格宽翻倍；0=底部全密，与「细」模板一致；中粗 / 粗模板为 1，底部稀）
   esConnW: 0.6,       // 连接宽（Connection width：十字针针身板宽 = 主干直径；界面由主干直径联动写入）
   esNeedleT: 0.6,     // 针板厚（十字针「+」截面板厚；与连接宽相等，针身截面为方形）
-  esTipW: 0.3,        // 接触宽（Contact width：针尖接触模型处的宽度）
+  esTipW: 0.3,        // 接触直径。开球头时就是球的直径；关掉球头时不另出圆球
+  esTopD: 0.3,        // 顶端锥的上端直径（靠近模型的一头）
+  esBotD: 0.6,        // 顶端锥的底部直径（靠近主干的一头）
+  tipBall: true,      // 是否开启球头。关掉则针顶只有顶端那段锥，不加圆球
   esContactMargin: 0, // 接触边距（Contact margin：贴模型前保持接触宽的细直段长；0 = 针头为纯梯形，过渡段直接到接触点）
-  esTaper: 1.5,       // 过渡段长（连接宽 → 接触宽 的渐缩长度；与黑格连接体长度一致，PAP10 / PAU10 / PARP10 / PAWR10 全部为 1.5 mm）
+  esTaper: 1.5,       // 顶端长度（mm）：球头和下面针身之间那一截锥，默认 1.5。几何上即过渡段长
   esNeedleMax: 6,     // 针最大长度（格架节点到接触点）
   esFoundH: 1,        // 基础带最大高（Foundation → Maximum height）
   esNotchH: 0.5,      // 基础带最大缺口高（Foundation → Maximum notch height）

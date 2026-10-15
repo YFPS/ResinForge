@@ -55,6 +55,7 @@ export function goStep(step) {
   const prev = ui.get().step;
   ui.set({ step, sidebarOpen: true });
   if (step === 'support' && prev !== 'support') bus.emit('enterSupport');
+  if (prev === 'support' && step !== 'support') bus.emit('leaveSupport');
 }
 export function setSidebarOpen(open) { ui.set({ sidebarOpen: open }); }
 export function toggleSidebar() { ui.set({ sidebarOpen: !ui.get().sidebarOpen }); }

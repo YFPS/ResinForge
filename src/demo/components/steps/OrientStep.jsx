@@ -23,7 +23,9 @@ const QUALITY = [
   { value: '128', label: '精细', accessory: <span className="segMeta">128</span> },
 ];
 
-export default function OrientStep() {
+/* hideQuality：Studio 把采样数这一节收起来了（沿用默认的 64），面板只留候选、保护面与主操作。
+   protectInToolbar：Studio 把「涂画保护面」开关与笔刷参数搬进视口工具坞（保护面按钮上方的浮层），面板只留计数与清除。 */
+export default function OrientStep({ hideQuality = false, protectInToolbar = false }) {
   const [params, setParam] = useParams();
   const cands = useBusLatest('orientResults', null);
   const info = useBusLatest('modelInfo', null);
@@ -89,31 +91,37 @@ export default function OrientStep() {
         )}
       </AnimatePresence>
 
-      <Section
-        title="优化"
-        desc={info && info.parts && info.parts.length > 1
-          ? `只优化当前模型「${splitModelName(info.parts.find(p => p.id === info.activeId) || info.parts[0]).name}」。采样越多越慢。`
-          : '采样越多越可能找到好朝向，也越慢。'}
-      >
-        <Choice
-          label="采样数"
-          options={QUALITY}
-          value={String(params.orientQuality)}
-          onChange={v => setParam('orientQuality', Number(v))}
-        />
-      </Section>
+      {!hideQuality && (
+        <Section
+          title="优化"
+          desc={info && info.parts && info.parts.length > 1
+            ? `只优化当前模型「${splitModelName(info.parts.find(p => p.id === info.activeId) || info.parts[0]).name}」。采样越多越慢。`
+            : '采样越多越可能找到好朝向，也越慢。'}
+        >
+          <Choice
+            label="采样数"
+            options={QUALITY}
+            value={String(params.orientQuality)}
+            onChange={v => setParam('orientQuality', Number(v))}
+          />
+        </Section>
+      )}
 
       <Section title="保护面" aside={<Badge size="sm">{protCount.toLocaleString('zh-CN')} 面</Badge>}>
-        <SwitchRow
-          label="涂画保护面"
-          desc="在模型上按住拖动。涂过的面不长支撑，朝向评分也会避开它。"
-          checked={mode === 'paint'}
-          onChange={on => setMode(on ? 'paint' : 'orbit')}
-        />
-        <Grid>
-          <Num k="brushR" label="笔刷半径" min={0.5} max={12} step={0.5} unit="mm" />
-          <Num k="protW" label="评分权重" min={0} max={30} step={1} unit="×" />
-        </Grid>
+        {!protectInToolbar && (
+          <>
+            <SwitchRow
+              label="涂画保护面"
+              desc="在模型上按住拖动。涂过的面不长支撑，朝向评分也会避开它。"
+              checked={mode === 'paint'}
+              onChange={on => setMode(on ? 'paint' : 'orbit')}
+            />
+            <Grid>
+              <Num k="brushR" label="笔刷半径" min={0.5} max={12} step={0.5} unit="mm" />
+              <Num k="protW" label="评分权重" min={0} max={30} step={1} unit="×" />
+            </Grid>
+          </>
+        )}
         <div className="rowStart">
           <Button variant="secondary" size="sm" disabled={!protCount} onClick={clearProtectedFaces}>清除保护面</Button>
         </div>

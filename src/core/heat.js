@@ -5,29 +5,30 @@
            × 悬空高差调制（有精分析 LDI 时：下方 <0.8mm 有材料 = 已托住不热；
              高差越大越热，8mm 封顶——与支撑生成的「已托住豁免」口径一致）
    - 无分析数据时退化为纯角度
-   **平滑实现**：热度直接在「平滑顶点法线」上计算（非索引几何的重复顶点按位置合并，
-   邻接面法线按面积加权平均成连续法线场）——热度场天生光滑，不做「面热度→顶点平均」
-   的二次平滑（那会沿三角拓扑扩散出波浪纹）。最后仅 1 轮轻度邻域扩散去毛刺。
-   配色：亮灰蓝(无需支撑) → 青 → 绿 → 黄 → 橙红 → 红(强需求)；保护面在热力图模式下用紫色，
+   **按面涂色**：用这个三角形自己的法线，三个顶点同色。平面底盖整面是红，不会被侧壁法线抹成中间一点红。
+   配色：蓝(无需支撑) → 橙 → 红(朝下底面)。开热力图时仍用和模型一样的受光材质，只把表面换成热力色，形体的明暗还在。保护面在热力图模式下用紫色，
    避免与红色热点混淆（关闭后恢复红色）。
    联动：分析完成 / 换模型 / 保护面变更 时若开关开着则自动重算重绘。
 ================================================================ */
+import * as THREE from 'three';
 import { state, params, bus, log } from '../store.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, displayPosePending, ensureBakedDisplay } from './model.js';
+import { baseY, raiseH, displayPosePending, ensureBakedDisplay, syncPartTint, setHeatActiveReader, setSelectedPainter } from './model.js';
+import { modelMat } from './scene.js';
 
 let heatOn = false;
 export const isHeatOn = () => heatOn;
+setHeatActiveReader(() => heatOn);
 
-/* 热力色带：t∈[0,1]，亮灰蓝 → 青 → 绿 → 黄 → 橙红 → 红 */
+/* 热力色带：不需要支撑的面是蓝，过了自支撑角先橙再红。
+   颜色比纯色略压暗，仍走和模型一样的光照，管子的起伏还在。 */
 const STOPS = [
-  [0.00, [0.36, 0.47, 0.62]],   // 无需支撑：亮灰蓝（保持模型体积感，顶点色乘算会压暗）
-  [0.08, [0.10, 0.62, 0.95]],   // 青（弱需求很快显色）
-  [0.30, [0.15, 0.80, 0.42]],   // 绿
-  [0.55, [1.00, 0.85, 0.10]],   // 黄
-  [0.80, [1.00, 0.30, 0.08]],   // 橙红
-  [1.00, [1.00, 0.05, 0.05]],   // 纯红
+  [0.00, [0.18, 0.36, 0.86]],   // 无需支撑：蓝
+  [0.34, [1.00, 0.55, 0.06]],   // 刚过临界角：橙
+  [0.68, [0.94, 0.20, 0.05]],   // 更朝下：红橙
+  [1.00, [0.86, 0.05, 0.04]],   // 朝下底面：红
 ];
+const HEAT_DIM = 0.88;   // 和模型一样只压暗一点点，灯光仍在，形体不会变成一块平色
 function heatRGB(t, out) {
   for (let s = 1; s < STOPS.length; s++) {
     if (t <= STOPS[s][0] || s === STOPS.length - 1) {
@@ -43,119 +44,84 @@ function heatRGB(t, out) {
 }
 
 const PROT_HOT = [0.80, 0.30, 0.95];   // 热力图模式下的保护面：紫
-const PROT_STD = [1, 0.38, 0.38];      // 常规模式保护面：红
-const protColor = () => heatOn ? PROT_HOT : PROT_STD;
 
-/* 顶点热度计算（平滑法线场 + LDI 高差）：
-   输出 state.vertHeat = { vid, vh }——vid: 渲染顶点 → 唯一顶点；vh: 唯一顶点热度 0..1 */
+/* 位置相同的顶点合成一个。热度取四周各面里最热的一面，不做法线平均。
+   平底端盖边缘的点也会拿到盖面的红；球面上相邻面差不多热，渐变仍然顺。 */
 export function computeVertHeat() {
   if (!state.mesh || !state.faces) return null;
   const pos = state.mesh.geometry.attributes.position;
   const n = pos.count;
-  const { nrm, area } = state.faces;
+  const nf = n / 3;
+  const { nrm } = state.faces;
   const cosv = Math.cos(params.selfAngle * Math.PI / 180);
+  const span = Math.max(1e-4, 1 - cosv);
   const ld = state.analysis && state.analysis.ld ? state.analysis.ld : null;
-  const raise = state.analysis ? state.analysis.raiseH : raiseH();   // 有效抬高（含连接底板）
-  const floorY = baseY();   // 与支撑落点口径一致（自动底板顶 / 平台）
-
-  // 1) 唯一顶点合并（量化 1e-4mm）+ 平滑顶点法线（邻接面法线按面积加权）
+  const raise = state.analysis ? state.analysis.raiseH : raiseH();
+  const floorY = baseY();
   const vid = new Int32Array(n);
   const map = new Map();
-  const accN = [];   // [Σnx·w, Σny·w, Σnz·w]
-  const upos = [];   // 唯一顶点局部坐标（首个代表）
+  let nu = 0;
   for (let v = 0; v < n; v++) {
-    const x = pos.getX(v), y = pos.getY(v), z = pos.getZ(v);
-    const key = Math.round(x * 1e4) + '_' + Math.round(y * 1e4) + '_' + Math.round(z * 1e4);
+    const key = Math.round(pos.getX(v) * 1e4) + '_' + Math.round(pos.getY(v) * 1e4) + '_' + Math.round(pos.getZ(v) * 1e4);
     let id = map.get(key);
-    if (id === undefined) { id = accN.length; map.set(key, id); accN.push([0, 0, 0]); upos.push(x, y, z); }
+    if (id === undefined) { id = nu++; map.set(key, id); }
     vid[v] = id;
-    const f = (v / 3) | 0, w = area[f] || 1;
-    accN[id][0] += nrm[f * 3] * w; accN[id][1] += nrm[f * 3 + 1] * w; accN[id][2] += nrm[f * 3 + 2] * w;
   }
-  const nu = accN.length;
-
-  // 2) 逐唯一顶点热度：平滑法线 y → 角度超出量（0.6 次幂提亮低热区）× LDI 高差调制
-  let vh = new Float32Array(nu);
-  for (let i = 0; i < nu; i++) {
-    const nx = accN[i][0], ny = accN[i][1], nz = accN[i][2];
+  const vh = new Float32Array(nu);
+  const faceH = new Float32Array(nf);
+  for (let f = 0; f < nf; f++) {
+    const ny = nrm[f * 3 + 1];
+    const nx = nrm[f * 3], nz = nrm[f * 3 + 2];
     const len = Math.hypot(nx, ny, nz) || 1;
     const sny = ny / len;
-    if (sny >= -cosv) continue;                            // 未越过自支撑角：自支撑
-    const e = Math.min(1, (-sny - cosv) / (1 - cosv));
-    const e2 = Math.pow(e, 0.6);
-    let hFac = 1;
-    if (ld) {
-      const wx = upos[i * 3], wy = upos[i * 3 + 1] + raise, wz = upos[i * 3 + 2];
-      const ci = Math.min(ld.W - 1, Math.max(0, Math.floor((wx - ld.x0) / ld.sx)));
-      const cj = Math.min(ld.H - 1, Math.max(0, Math.floor((wz - ld.z0) / ld.sz)));
-      const c = cj * ld.W + ci;
-      const info = ldiGapAt(ld, c, wy - 0.02, floorY) || ldiGapAt(ld, c, wy, floorY);
-      if (info) {
-        if (info.gap < 0.8) { vh[i] = 0; continue; }       // 下方 0.8mm 内有材料：已托住
-        hFac = 0.35 + 0.65 * Math.min(1, info.gap / 8);    // 高差越大越热，8mm 封顶
+    let h = 0;
+    if (sny < -cosv) {
+      const e = Math.min(1, (-sny - cosv) / span);
+      h = Math.pow(e, 0.8);
+      if (ld) {
+        const v = f * 3;
+        const wy = (pos.getY(v) + pos.getY(v + 1) + pos.getY(v + 2)) / 3 + raise;
+        const wx = (pos.getX(v) + pos.getX(v + 1) + pos.getX(v + 2)) / 3;
+        const wz = (pos.getZ(v) + pos.getZ(v + 1) + pos.getZ(v + 2)) / 3;
+        const ci = Math.min(ld.W - 1, Math.max(0, Math.floor((wx - ld.x0) / ld.sx)));
+        const cj = Math.min(ld.H - 1, Math.max(0, Math.floor((wz - ld.z0) / ld.sz)));
+        const info = ldiGapAt(ld, cj * ld.W + ci, wy - 0.02, floorY) || ldiGapAt(ld, cj * ld.W + ci, wy, floorY);
+        if (info && info.gap < 0.8) h = 0;
+        else if (info) h *= 0.9 + 0.1 * Math.min(1, info.gap / 8);
       }
     }
-    vh[i] = e2 * hFac;
-  }
-
-  // 3) 1 轮轻度邻域 Jacobi 扩散（0.75 自身 + 0.25 邻域平均）：去 LDI 栅格毛刺，不引入拓扑波浪
-  const adj = new Map();
-  const link = (a, b) => {
-    if (a === b) return;
-    let s = adj.get(a); if (!s) adj.set(a, s = new Set());
-    s.add(b);
-  };
-  for (let f = 0; f < n / 3; f++) {
-    const a = vid[f * 3], b = vid[f * 3 + 1], c = vid[f * 3 + 2];
-    link(a, b); link(b, c); link(c, a);
-  }
-  {
-    const next = new Float32Array(vh);
-    for (const [i, s] of adj) {
-      let sum = 0;
-      for (const j of s) sum += vh[j];
-      next[i] = vh[i] * 0.75 + (sum / s.size) * 0.25;
+    faceH[f] = h;
+    const v = f * 3;
+    for (let k = 0; k < 3; k++) {
+      const id = vid[v + k];
+      if (h > vh[id]) vh[id] = h;
     }
-    vh = next;
   }
-  state.vertHeat = { vid, vh };
-  state.faceHeat = null;   // 兼容字段：顶点模式不再使用逐面热度
+  state.vertHeat = { vid, vh, faceH };
+  state.faceHeat = faceH;
   return state.vertHeat;
 }
 
-/* 把热度写入顶点色（同一面三个顶点颜色不同，GPU 插值成连续渐变；保护面覆盖为紫） */
+/* 顶点色按各自热度写。保护面覆盖为紫。 */
 export function applyHeatColors() {
   if (!state.mesh || !state.vertHeat) return;
+  if (state.mesh.material !== modelMat) state.mesh.material = modelMat;
   const ca = state.mesh.geometry.attributes.color;
-  const { vid, vh } = state.vertHeat;
+  const { faceH } = state.vertHeat;
   const prot = state.protectedFaces;
-  const nf = vid.length / 3;
+  const nf = faceH.length;
   const rgb = [0, 0, 0];
   for (let f = 0; f < nf; f++) {
     const v = f * 3;
-    if (prot.has(f)) {
-      for (let k = 0; k < 3; k++) ca.setXYZ(v + k, PROT_HOT[0], PROT_HOT[1], PROT_HOT[2]);
-    } else {
-      for (let k = 0; k < 3; k++) {
-        const c = heatRGB(vh[vid[v + k]], rgb);
-        ca.setXYZ(v + k, c[0], c[1], c[2]);
-      }
-    }
+    const c = prot.has(f) ? PROT_HOT : heatRGB(faceH[f], rgb);
+    for (let k = 0; k < 3; k++) ca.setXYZ(v + k, c[0] * HEAT_DIM, c[1] * HEAT_DIM, c[2] * HEAT_DIM);
   }
   ca.needsUpdate = true;
 }
 
-/* 恢复常规配色：白 + 保护面红 */
+/* 关掉热力图：有选中就涂热力图的蓝，否则回到带光照的灰。保护面仍盖红。 */
 export function restoreColors() {
-  if (!state.mesh) return;
-  const ca = state.mesh.geometry.attributes.color;
-  ca.array.fill(1);
-  const pc = protColor();
-  for (const f of state.protectedFaces) {
-    const v = f * 3;
-    for (let k = 0; k < 3; k++) ca.setXYZ(v + k, pc[0], pc[1], pc[2]);
-  }
-  ca.needsUpdate = true;
+  syncPartTint();
 }
 
 function refresh() {
@@ -165,23 +131,82 @@ function refresh() {
   applyHeatColors();
 }
 
-export function setHeat(on) {
+/* 热力图和普通模型用同一套光照。材质保持受光，顶点色只负责蓝橙红，所以管子的明暗还在。 */
+export function syncHeatMaterial() {
+  const light = document.documentElement.getAttribute('data-theme') === 'light';
+  modelMat.color.set(heatOn ? 0xffffff : (light ? 0x717b88 : 0xa7b0bd));
+  modelMat.envMapIntensity = 0.95;
+  modelMat.metalness = 0.15;
+  modelMat.roughness = 0.55;
+  if (state.mesh) state.mesh.material = modelMat;
+}
+
+export function setHeat(on, opts = {}) {
   heatOn = !!on;
+  syncHeatMaterial();
   if (heatOn) {
     if (state.mesh) {
       const hasLDI = !!(state.analysis && state.analysis.ld);
-      log(`支撑热力图已开启（${hasLDI ? '悬空角 × LDI 高差' : '纯悬空角，运行逐层分析后更准'}）`);
+      if (!opts.quiet) log(`支撑热力图已开启（${hasLDI ? '悬空角 × LDI 高差' : '纯悬空角，运行逐层分析后更准'}）`);
       refresh();
     }
   } else {
     restoreColors();
-    log('支撑热力图已关闭');
+    if (!opts.quiet) log('支撑热力图已关闭');
   }
   bus.emit('heat', heatOn);
 }
 
+/* 选中模型用热力图的蓝，材质仍受光，所以管子的明暗还在。 */
+function paintSelectedBlue() {
+  if (!state.mesh) return false;
+  const sel = new Set(state.selectedIds || []);
+  if (!sel.size) return false;
+  modelMat.color.set(0xffffff);
+  modelMat.envMapIntensity = 0.95;
+  modelMat.metalness = 0.15;
+  modelMat.roughness = 0.55;
+  state.mesh.material = modelMat;
+  const blue = STOPS[0][1];
+  const ca = state.mesh.geometry.attributes.color;
+  if (!ca) return false;
+  const light = document.documentElement.getAttribute('data-theme') === 'light';
+  const base = new THREE.Color(light ? 0x717b88 : 0xa7b0bd);
+  for (const p of state.parts) {
+    const on = sel.has(p.id);
+    const start = p.faceStart || 0;
+    const n = p.nf || 0;
+    for (let f = 0; f < n; f++) {
+      const gf = start + f;
+      const v = gf * 3;
+      const prot = state.protectedFaces.has(gf);
+      const r = prot ? 1 : (on ? blue[0] * HEAT_DIM : base.r);
+      const g = prot ? 0.38 : (on ? blue[1] * HEAT_DIM : base.g);
+      const b = prot ? 0.38 : (on ? blue[2] * HEAT_DIM : base.b);
+      ca.setXYZ(v, r, g, b);
+      ca.setXYZ(v + 1, r, g, b);
+      ca.setXYZ(v + 2, r, g, b);
+    }
+  }
+  ca.needsUpdate = true;
+  return true;
+}
+setSelectedPainter(paintSelectedBlue);
+
+/* 热力图开着就画热力色。关掉后：选中的是受光的蓝，没选中的是灰。 */
+function showDisplayColor() {
+  if (heatOn) { if (state.vertHeat) applyHeatColors(); return; }
+  syncPartTint();
+}
+bus.on('suspendHeat', () => { if (!heatOn) syncPartTint(); });
+bus.on('syncTint', showDisplayColor);
+bus.on('displayMesh', showDisplayColor);
+/* 取消选中时模型要回到主题灰。顶点涂白之后，材质色必须跟着回到灰，否则会变成一片发白。 */
+bus.on('restoreLitModel', () => { if (!heatOn) syncHeatMaterial(); });
+
 /* 联动：分析完成（LDI 可用）/ 更换模型 / 保护面增减 时自动重算重绘 */
 bus.on('sliceStats', s => { if (heatOn && s) refresh(); });
+bus.on('param', k => { if (heatOn && k === 'selfAngle') refresh(); });
 // 只平移时显示靠矩阵，顶点还在原处。这时重算热力图既慢又会读到旧坐标，颜色跟着网格走就对。
 bus.on('modelInfo', () => { if (heatOn && !displayPosePending()) refresh(); });
 bus.on('protectedChanged', () => { if (heatOn) applyHeatColors(); });

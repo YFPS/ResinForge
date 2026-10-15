@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor, supMatBase, supMatGlass, supMatAnchorGlass } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, placeModelAtLift, updateRaft } from './model.js';
+import { baseY, raiseH, placeModelAtLift, updateRaft, localFaceOf, supportTargetPart, partAtWorld } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
 import { joinLiftWanted } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
@@ -320,13 +320,12 @@ function paramSnapshot() {
   const p = params, num = (v, d) => (Number.isFinite(v) ? v : d);
   return {
     selfAngle: num(p.selfAngle, 45), shortSup: !!p.shortSup, spacing: num(p.spacing, 2.5),
-    tipMode: p.tipMode || 'normal', tipTilt: num(p.tipTilt, 45),   // 接触朝向 / 接触最大倾角
     pen: num(p.pen, 0.2),                                          // 渗透长度（针尖扎入模型）
     // 支撑塔（格架塔）
     esCell: num(p.esCell, 3.5), esDiamAngle: num(p.esDiamAngle, 55), esMidBars: p.esMidBars !== false,
     esBarW: num(p.esBarW, 0.6), esBarT: num(p.esBarT, 0.6), esGap: num(p.esGap, 1.2),
     esColRatio: num(p.esColRatio, 7), esTowerMaxR: num(p.esTowerMaxR, 4), esHullRed: num(p.esHullRed, 0),
-    esConnW: num(p.esConnW, 0.6), esNeedleT: num(p.esNeedleT, 0.6), esTipW: num(p.esTipW, 0.3), esContactMargin: num(p.esContactMargin, 0), esTaper: num(p.esTaper, 1), esNeedleMax: num(p.esNeedleMax, 6), smallScale: num(p.smallScale, 0.8),
+    esConnW: num(p.esConnW, 0.6), esNeedleT: num(p.esNeedleT, 0.6), esTipW: num(p.esTipW, 0.3), esTopD: num(p.esTopD, num(p.esTipW, 0.3)), esBotD: num(p.esBotD, num(p.esBarW, 0.6)), tipBall: p.tipBall !== false, esContactMargin: num(p.esContactMargin, 0), esTaper: num(p.esTaper, 1.5), esNeedleMax: num(p.esNeedleMax, 6), smallScale: num(p.smallScale, 0.8),
     esFoundH: num(p.esFoundH, 1), esNotchH: num(p.esNotchH, 0.5), baseJoin: !!p.baseJoin, baseChamfer: !!p.baseChamfer, baseFlush: !!p.baseFlush, baseHole: !!p.baseHole, autoPlateOn: !!p.autoPlateOn,
   };
 }
@@ -400,6 +399,43 @@ function ldiGapBelow(ld, x, y, z) {
   return top === -Infinity ? Infinity : Math.max(0, y - top);
 }
 
+/* 多模型时只支撑选中的那一件。只有一个模型时返回 null，表示不按零件过滤。 */
+function supportTargetId() {
+  const t = supportTargetPart();
+  if (!t || state.parts.length <= 1) return null;
+  return t.id;
+}
+function facePartId(f) {
+  const loc = localFaceOf(f);
+  return loc ? loc.part.id : null;
+}
+function partIdOfPoint(p) {
+  if (p.partId != null) return p.partId;
+  const A = state.analysis;
+  if (A && A._bvh) {
+    const hit = raycast(A._bvh, p.x, p.y + 0.8, p.z, 0, -1, 0, 0, 4);
+    if (hit && hit.f >= 0) {
+      const id = facePartId(hit.f);
+      if (id != null) return id;
+    }
+  }
+  const part = partAtWorld(p.x, p.z);
+  return part ? part.id : null;
+}
+function islandOnTarget(nd, A, bvh, targetId) {
+  const pix = nd.pixels;
+  if (!pix || !pix.length) return false;
+  const { W: GW } = A.grid;
+  const cc = pix[0];
+  const ci = cc % GW, cj = (cc / GW) | 0;
+  const x = A.grid.x0 + (ci + 0.5) * A.grid.sx;
+  const z = A.grid.z0 + (cj + 0.5) * A.grid.sz;
+  const hit = raycast(bvh, x, nd.y + 0.8, z, 0, -1, 0, 0, 4);
+  if (hit && hit.f >= 0) return facePartId(hit.f) === targetId;
+  const part = partAtWorld(x, z);
+  return !!(part && part.id === targetId);
+}
+
 /** 支撑区域 → 图块。返回 { faces（候选面的全局面号）, charts: [{ reg, faces（候选序号）, tris2 }], rep } */
 async function buildCharts(ctx, tick) {
   const A = state.analysis, p = A.p, { bvh, groundY } = ctx;
@@ -407,9 +443,11 @@ async function buildCharts(ctx, tick) {
   // 1. 候选面：朝下超出自支撑角，去掉保护面与已托住面
   const faces = [];
   const seen = new Set();
+  const targetId = supportTargetId();
   for (const sp of A.steepPts) {
     const f = sp.f;
     if (f === undefined || seen.has(f)) continue;
+    if (targetId != null && facePartId(f) !== targetId) continue;
     seen.add(f);
     if (state.protectedFaces.has(f)) { rep.protFaces++; continue; }
     const i = f * 9;
@@ -564,8 +602,10 @@ async function collectContactPoints(ctx, islandsOnly) {
   if (A.graph && ld) {
     const floorY = A.grid.minY - A.raiseH, { W: GW, H: GH, layerH } = A.grid;
     const vkey = (x, y, z) => `${Math.floor(x / spacing)},${Math.floor(y / spacing)},${Math.floor(z / spacing)}`;
+    const targetId = supportTargetId();
     for (const nd of A.graph.nodes) {
       if (!nd.island || !nd.pixels) continue;
+      if (targetId != null && !islandOnTarget(nd, A, bvh, targetId)) continue;
       rep.islands++;
       const pix = new Set(nd.pixels);
       const peri = new Map(), cells = new Map();          // 像素号 → 点
@@ -645,7 +685,8 @@ async function collectContactPoints(ctx, islandsOnly) {
     if (f >= 0 && state.protectedFaces.has(f)) { rep.prot++; return null; }
     if (protNear && protNear(c)) { rep.prot++; return null; }
     const n = f >= 0 ? [faces.nrm[f * 3], faces.nrm[f * 3 + 1], faces.nrm[f * 3 + 2]] : [0, -1, 0];
-    return { x: c.x, y: c.y, z: c.z, n, island: c.island !== undefined ? c.island : null, reg: c.reg };
+    const partId = f >= 0 ? facePartId(f) : supportTargetId();
+    return { x: c.x, y: c.y, z: c.z, n, island: c.island !== undefined ? c.island : null, reg: c.reg, partId };
   };
 
   // 3. 最近距离（哈希格）与接受
@@ -992,11 +1033,24 @@ export async function rebuildStructure() {
 export async function runGenSup(opts = {}) {
   const islandsOnly = !!opts.islandsOnly;
   if (!state.analysis) return toast('请先运行逐层分析');
+  const target = supportTargetPart();
+  if (state.parts.length > 1 && !target) return toast('先选中一个模型，再生成支撑');
   await syncModelLift();                              // 先按连接底板挪好模型（已有点同步平移），再布点
-  // keepManual：重新布点时保留手动加的点（套用模板换间距时用）；手动点先放回去，布点按「已有点」去重，新点自动避开它们
-  const keep = !islandsOnly && opts.keepManual ? (state.supportPoints || []).filter(p => p.manual) : [];
+  const onlyId = target && state.parts.length > 1 ? target.id : null;
+  if (state.analysis && !state.analysis._bvh) state.analysis._bvh = buildBVH(state.analysis.p);
+  // 别的模型上已经有的支撑留下。这一件上的手动点在换参数重布时保留。
+  const foreign = [];
+  const keep = [];
+  if (!islandsOnly) {
+    for (const p of state.supportPoints || []) {
+      const id = partIdOfPoint(p);
+      if (onlyId != null && id !== onlyId) foreign.push(p);
+      else if (opts.keepManual && p.manual) keep.push(p);
+    }
+  }
   if (!islandsOnly) clearSupports(false);
   if (!state.supportPoints) state.supportPoints = [];
+  if (foreign.length) state.supportPoints.push(...foreign);
   if (keep.length) state.supportPoints.push(...keep);
   setProgress(0.2, '提取支撑点…'); await nextFrame();
   const ctx = makeCtx();
@@ -1013,17 +1067,18 @@ export async function runGenSup(opts = {}) {
   const res = await rebuildStructure();
   if (!res) return;                                   // 计算期间又发起了新的重建，日志交给那一次
   const s = res.stats;
-  const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点` : `支撑点 ${state.supportPoints.length} 个`;
+  const scope = onlyId != null && target ? `（只给「${target.name}」）` : '';
+  const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点${scope}` : `支撑点 ${state.supportPoints.length} 个${scope}`;
   log(islandsOnly
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
       + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.5}mm）`, 'ok');
   const al = (s.needlesV || 0) + (s.needlesP || 0);
-  if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}）· 自由直针 ${s.needlesFree || 0} 根${s.needlesNear ? `（其中就近接格架 ${s.needlesNear} 根）` : ''}；同向针的支撑点已挪到接触点（平均 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）`, 'ok');
+  if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}）· 自由直针 ${s.needlesFree || 0} 根${s.needlesNear ? `（其中就近接格架 ${s.needlesNear} 根）` : ''}；同向针的支撑点已挪到接触点（平均 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）；针尖沿法线折向 ${s.tipBent || 0} 根；球头 ${params.tipBall !== false ? (s.balls || 0) : 0} 个；顶端长度 ${(params.esTaper || 1.5).toFixed(2)} mm`, 'ok');
   // 连不上格架的点：就近接格架 / 分叉 / 十字短杆之后仍接不上的，标红、不生成结构
   const plateOn = !!params.shortSup;   // 十字短杆（贴面短连接）
   const fb = !s.fallback ? '全部连上格架'
-    : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
+    : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}${s.braces ? `，加强筋 ${s.braces} 根` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
   log(`支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
   if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   const bad = (s.noHead || 0) + (s.unroutable || 0);
@@ -1042,13 +1097,33 @@ export async function runGenSup(opts = {}) {
 }
 
 /* 手动加支撑点：点击模型表面 → 加点 → 重建结构 */
-export async function addSupportPoint(p, n) {
+export async function addSupportPoint(p, n, partId) {
   if (!state.analysis) { toast('请先运行逐层分析'); return; }
   if (!state.supportPoints) state.supportPoints = [];
-  const pt = { x: p.x, y: p.y, z: p.z, n: n || [0, -1, 0], manual: true, island: null };
+  const pt = { x: p.x, y: p.y, z: p.z, n: n || [0, -1, 0], manual: true, island: null, partId: partId != null ? partId : state.manualPartId };
   state.supportPoints.push(pt);
   if (!(await rebuildStructure())) return;            // 被更新的重建取代（连点加点时只有最后一次出日志）
   log(`手动支撑点 @ (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) → ${STATE_TEXT[pt.state] || '未生成'}`, pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro' ? 'ok' : 'warn');
+}
+
+/* 多线段一次加一串点，只重建一次结构。 */
+export async function addSupportPoints(list) {
+  if (!state.analysis) { toast('请先运行逐层分析'); return; }
+  if (!list || !list.length) return;
+  if (!state.supportPoints) state.supportPoints = [];
+  for (const p of list) {
+    state.supportPoints.push({
+      x: p.x, y: p.y, z: p.z, n: p.n || [0, -1, 0], manual: true, island: null, partId: state.manualPartId,
+    });
+  }
+  if (!(await rebuildStructure())) return;
+  const start = state.supportPoints.length - list.length;
+  let ok = 0;
+  for (let i = 0; i < list.length; i++) {
+    const pt = state.supportPoints[start + i];
+    if (pt && (pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro')) ok++;
+  }
+  log(`多线段支撑点 ${list.length} 个，生成结构 ${ok} 个`, ok ? 'ok' : 'warn');
 }
 
 /** 删掉这些支撑点（索引），只重建一次结构。 */

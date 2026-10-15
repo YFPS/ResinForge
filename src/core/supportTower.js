@@ -182,30 +182,87 @@ function bar(buf, A, B, e, m, w0, t0, w1, t1, nA, nB, o0 = 0, o1 = 0, tag = '') 
   buf.hexa(c, tag);
 }
 /* 小点集凸包，写进同一个构件。短杆针尖折向时，杆端截面和沿法线的接触面不平行，
-   凸包把折角填实（与格架针的尖凸包同一做法）。点都在凸包上的面才留下。 */
+   凸包把折角填实。
+   同一张平面上的点（杆端方截面、颈圈方截面）只能三角化一次。逐个三点都收下的话，
+   一个四边形会叠出四张三角形，边被用了三次以上；后面的朝向修复分不清正反，
+   一半面翻到里面，正面剔除后这截杆就像缺了面。 */
 function emitHull(buf, pts, tag) {
-  const n = pts.length;
+  const uniq = [];
+  for (const p of pts) {
+    if (uniq.some(q => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 1e-6)) continue;
+    uniq.push(p);
+  }
+  const n = uniq.length;
   if (n < 4) return;
-  buf.beginRun(tag);
-  const eps = 1e-7;
+  let cx = 0, cy = 0, cz = 0;
+  for (const p of uniq) { cx += p[0]; cy += p[1]; cz += p[2]; }
+  cx /= n; cy /= n; cz /= n;
+  const planes = [];
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       for (let k = j + 1; k < n; k++) {
-        const a = pts[i], b = pts[j], c = pts[k];
-        const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-        const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-        if (nx * nx + ny * ny + nz * nz < 1e-16) continue;
-        let pos = 0, neg = 0;
+        const a = uniq[i], b = uniq[j], c = uniq[k];
+        let nx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
+        let ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+        let nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        const nl = Math.hypot(nx, ny, nz);
+        if (nl < 1e-12) continue;
+        nx /= nl; ny /= nl; nz /= nl;
+        const mx = (a[0] + b[0] + c[0]) / 3, my = (a[1] + b[1] + c[1]) / 3, mz = (a[2] + b[2] + c[2]) / 3;
+        if (nx * (mx - cx) + ny * (my - cy) + nz * (mz - cz) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        const d = nx * a[0] + ny * a[1] + nz * a[2];
+        let outside = false;
         for (let t = 0; t < n; t++) {
           if (t === i || t === j || t === k) continue;
-          const d = nx * (pts[t][0] - a[0]) + ny * (pts[t][1] - a[1]) + nz * (pts[t][2] - a[2]);
-          if (d > eps) pos++;
-          else if (d < -eps) neg++;
+          if (nx * uniq[t][0] + ny * uniq[t][1] + nz * uniq[t][2] - d > 1e-5) { outside = true; break; }
         }
-        if (pos && neg) continue;
-        buf.tri(a, b, c);
+        if (outside) continue;
+        let pl = null;
+        for (const p of planes) {
+          if (p.nx * nx + p.ny * ny + p.nz * nz > 0.9999 && Math.abs(p.d - d) < 1e-4) { pl = p; break; }
+        }
+        if (!pl) { pl = { nx, ny, nz, d, ids: [] }; planes.push(pl); }
+        for (const id of [i, j, k]) if (!pl.ids.includes(id)) pl.ids.push(id);
       }
+    }
+  }
+  buf.beginRun(tag);
+  for (const pl of planes) {
+    for (let t = 0; t < n; t++) {
+      if (pl.ids.includes(t)) continue;
+      if (Math.abs(pl.nx * uniq[t][0] + pl.ny * uniq[t][1] + pl.nz * uniq[t][2] - pl.d) <= 1e-5) pl.ids.push(t);
+    }
+    if (pl.ids.length < 3) continue;
+    const ref = Math.abs(pl.ny) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    let ex = ref[1] * pl.nz - ref[2] * pl.ny, ey = ref[2] * pl.nx - ref[0] * pl.nz, ez = ref[0] * pl.ny - ref[1] * pl.nx;
+    const el = Math.hypot(ex, ey, ez) || 1;
+    ex /= el; ey /= el; ez /= el;
+    const mx = pl.ny * ez - pl.nz * ey, my = pl.nz * ex - pl.nx * ez, mz = pl.nx * ey - pl.ny * ex;
+    const uv = pl.ids.map(id => {
+      const p = uniq[id];
+      return { id, u: p[0] * ex + p[1] * ey + p[2] * ez, v: p[0] * mx + p[1] * my + p[2] * mz };
+    });
+    uv.sort((a, b) => a.u - b.u || a.v - b.v);
+    const cross2 = (o, a, b) => (a.u - o.u) * (b.v - o.v) - (a.v - o.v) * (b.u - o.u);
+    const chain = (list) => {
+      const h = [];
+      for (const p of list) {
+        while (h.length >= 2 && cross2(h[h.length - 2], h[h.length - 1], p) <= 1e-12) h.pop();
+        h.push(p);
+      }
+      return h;
+    };
+    const lower = chain(uv), upper = chain(uv.slice().reverse());
+    upper.pop(); lower.pop();
+    const hull = lower.concat(upper);
+    if (hull.length < 3) continue;
+    const p0 = uniq[hull[0].id], p1 = uniq[hull[1].id], p2 = uniq[hull[2].id];
+    const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+    const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+    const flip = (uy * vz - uz * vy) * pl.nx + (uz * vx - ux * vz) * pl.ny + (ux * vy - uy * vx) * pl.nz < 0;
+    for (let i = 1; i < hull.length - 1; i++) {
+      const A = uniq[hull[0].id], B = uniq[hull[i].id], C = uniq[hull[i + 1].id];
+      if (flip) buf.tri(A, C, B); else buf.tri(A, B, C);
     }
   }
   buf.endRun();
@@ -1678,11 +1735,16 @@ export async function buildEStageTowers(ctx, points, P) {
       }
     };
     emit(X, Z, sStart, sEnd);                                  // 第一片：折向的那一端收到过渡段起点
-    // 接触段截面为正方形时两片完全重合，第二片只补中段（少一份重合几何）；否则两片各自全段
-    if (Math.abs(shortTW - shortTT) < 1e-6) {
-      const a = footAim ? sStart : Math.max(cm, sLo), b = Math.min(L - cm, sEnd);
-      if (b > a + 1e-4) emit(Z, X, a, b);
-    } else emit(Z, X, sStart, sEnd);
+    // 宽和厚一样时第二片占的体积和第一片相同。叠上去两层壳抢深度，看起来像杆身缺面。
+    // 只有某一段宽厚不同，第二片才是十字的另一臂。
+    {
+      let need2 = false;
+      for (const s of [sStart, (sStart + sEnd) / 2, sEnd]) {
+        const [w, t] = prof(s);
+        if (Math.abs(w - t) > 1e-4) { need2 = true; break; }
+      }
+      if (need2) emit(Z, X, sStart, sEnd);
+    }
     if (!aim && !footAim) return true;
     // 杆端方截面接到沿法线的接触面，一个凸包填上折角。向杆身里多包 0.05，贴面布尔并会留缝
     const ringOf = (P, dir, e, m, w, th) => {

@@ -59,11 +59,13 @@ export function bridgeSpan(bvh, faces, from, opts = {}) {
   if (dy > -0.2) return null;
   if (opts.tiltMax != null && Math.acos(Math.min(1, -dy)) > opts.tiltMax + 1e-3) return null;
   const hit = raycast(bvh, from.x, from.y, from.z, dx, dy, dz, 0.05, maxLen);
-  let land = null;
+  let land = null, landN = null;
   if (hit) {
     // 先碰到的是朝上的模型面才落上去；碰到朝下的面（别的零件的底面）说明被挡住
     if (faces.nrm[hit.f * 3 + 1] < 0.5) return null;
     land = { x: from.x + dx * hit.t, y: from.y + dy * hit.t, z: from.z + dz * hit.t };
+    const i = hit.f * 3;
+    landN = [faces.nrm[i], faces.nrm[i + 1], faces.nrm[i + 2]];
   } else if (opts.groundY != null) {
     // 下方没有模型面：可竖直落到平台面（groundY，连接底板时为板顶）
     const tg = (from.y - opts.groundY) / -dy;
@@ -97,7 +99,7 @@ export function bridgeSpan(bvh, faces, from, opts = {}) {
     if (travel > 0.12 && !capsuleClear(bvh, start.x, start.y, start.z, stop.x, stop.y, stop.z, env)) return null;
   }
   // ground：落在平台面（groundY）而不是模型面——落点端不该收细、不该扎进平台，由调用方决定端头形状
-  return { upper, lower, rFrom, rTip, thick, thickRoot, ground: !hit };
+  return { upper, lower, rFrom, rTip, thick, thickRoot, landN, ground: !hit };
 }
 
 /* 竖直优先，再在接触锥里试几个斜向。命中的第一个方案即可。 */

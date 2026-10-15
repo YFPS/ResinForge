@@ -1,0 +1,48 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "resinforge-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 8123
+    },
+    {
+      "name": "resinforge-dev-8124",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "8124",
+        "--strictPort"
+      ],
+      "port": 8124
+    },
+    {
+      "name": "resinforge-dev-8125",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "8125",
+        "--strictPort"
+      ],
+      "port": 8125
+    },
+    {
+      "name": "resinforge-dist-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--port",
+        "8126",
+        "--strictPort"
+      ],
+      "port": 8126
+    }
+  ]
+}

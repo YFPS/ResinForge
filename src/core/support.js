@@ -1078,7 +1078,7 @@ export async function runGenSup(opts = {}) {
   // 连不上格架的点：就近接格架 / 分叉 / 十字短杆之后仍接不上的，标红、不生成结构
   const plateOn = !!params.shortSup;   // 十字短杆（贴面短连接）
   const fb = !s.fallback ? '全部连上格架'
-    : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}${s.braces ? `，加强筋 ${s.braces} 根` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
+    : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}${s.shortBent ? `，针尖沿法线折向 ${s.shortBent} 处${s.shortBentFoot ? `（底部 ${s.shortBentFoot} 处）` : ''}` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
   log(`支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
   if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   const bad = (s.noHead || 0) + (s.unroutable || 0);

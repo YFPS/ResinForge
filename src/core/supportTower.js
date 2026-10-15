@@ -1581,6 +1581,14 @@ export async function buildEStageTowers(ctx, points, P) {
     const sLo = (ball && thinA && !flatA) ? -neckOff : (flatA ? 0 : -penA);
     const sHi = (ball && thinB) ? (L + neckOff) : (L + penB);
     if (!(sHi > sLo + 0.05)) return false;
+    // 两端都不收细（加强筋）：整根一根等截面棱柱，端面垂直杆轴。
+    // 接触杆会在渐缩处分段，段界用水平切面。斜杆上这块水平方片的角会鼓出杆身，看起来像侧面长出一根尖刺。
+    if (!thinA && !thinB) {
+      const n0 = flatA ? Y : u;
+      bar(gBuf, at(sLo), at(sHi), X, Z, shortW, shortW, shortW, shortW, n0, u, 0, 0, 'gusset');
+      bar(gBuf, at(sLo), at(sHi), Z, X, shortW, shortW, shortW, shortW, n0, u, 0, 0, 'gusset');
+      return true;
+    }
     const endW = ball ? Math.min(shortTW, neckD) : shortTW;
     const endT = ball ? Math.min(shortTT, neckD) : shortTT;
     const prof = s => {                                        // 细端 g=0（球头时收到颈圈宽，否则接触宽 × 比例）、粗端 / 中段 g=1

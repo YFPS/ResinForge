@@ -398,6 +398,9 @@ export function unionParts(MF, parts) {
       < 0.45 × 就删；环上相邻两点之间弧长 ≥ 1.6 × 间距、弧长中点离所有点都 ≥ 0.8 × 间距就在中点加一个环点；任意两点（三维）< 0.8 × 间距删一个
       （先删内部 / 窄条点、同类删管得少的；转角钉不删）；内缩区里离最近站点 > 0.85 × 间距、边缘带里 > max(0.85 × 间距, 边缘距离 + 半间距)、
       窄条里超过按深度放宽的覆盖半径的地方补点。每轮增删后再松弛几次，直到不再增删；最后太近的一对只在拿掉后仍处处覆盖时才拿。
+      内缩区局部半宽 < 0.85 × 间距（E 宽 < 1.7 × 间距，两排边缘环之间放不下标准第三排）算窄带：补点阈值放到 0.65 × 间距、
+      最小点距放到 0.7 × 间距（中间一排与两侧错开插进去时约 0.71～0.8 × 间距）、内部点管辖面积下限放到 0.2 × 理想六角面积
+      （夹在两排之间的中间点管得少，按 0.45 会被删；中间空当约 0.79 × 间距又够不上 0.85，粗档环面结端头前就两排夹一道缝）。
    旧版的问题（2026-10-17 实测）：边缘环（固定）与对齐世界原点的六角格（固定）之间靠贪心补点硬拼，两套点的间距随处在变——
    不限最小距离时过渡带补出成坨的点（环面结细档 87 对 < 0.8 × 间距），限了 0.8 × 间距又补不进去（点数少 21%，
    环到内部第一排中位 1.1～1.2 × 间距、最差 2 ×）：只能在「坨」和「缝」之间换。现在两套点一起松弛，过渡带自己排开。
@@ -411,6 +414,10 @@ const COVER_NARROW = 1.2;                            // 窄条的覆盖半径按
 const DMIN_FRAC = 0.8;                               // 任意两点（三维）的最小距离 = 0.8 × 间距（正六角的间距是 1.0）
 const SPLIT_AREA = 1.4, DROP_AREA = 0.45;            // 内部点管辖曲面面积 / 理想正六角面积：> 1.4 加点、< 0.45 删点（相差三倍，增删不会来回翻）
 const HOLE_IN = 0.85;                                // 内缩区里离最近站点 > 0.85 × 间距就补（正六角的覆盖半径是 0.577 × 间距；补进去的点离邻点 ≥ 0.85 × 间距，不会被最小距离删掉）
+const NARROW_FRAC = 0.85;                           // E 内局部半宽 < 0.85 × 间距（E 宽 < 1.7 × 间距）算窄带：两排边缘环之间放不下标准第三排
+const HOLE_NARROW = 0.65;                           // 窄带里离最近站点 > 0.65 × 间距就补内部点（宽处仍是 HOLE_IN 0.85）
+const DMIN_NARROW = 0.7;                            // 窄带里两点最小距离 0.7 × 间距（宽处仍是 DMIN_FRAC 0.8）；中间一排与两侧错开插进去时点距约 0.71～0.8 × 间距
+const DROP_NARROW = 0.2;                            // 窄带里内部点管辖面积下限 0.2 × 理想六角面积（夹在两排之间的中间点管得少，按 0.45 会被删）
 const RING_GAP = 1.6;                                // 环上相邻两点之间弧长 ≥ 1.6 × 间距、弧长中点离所有点都 ≥ 最小距离，就在中点加一个环点
 const LAT_INIT = 0.55;                               // 初值六角格只铺在离 E 轮廓 ≥ 0.55 × 间距的地方（再往外是环点的地盘）
 const PIN = 0, RING = 1, INT = 2, MED = 3;           // 站点类别：转角钉 / 环点 / 内部点 / 窄条点
@@ -751,8 +758,14 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
     }
   }
   const yAt = (x, z) => { const c = cellOf(x, z); return inF[c] ? Y[c] : (ftIn[c] >= 0 ? Y[ftIn[c]] : 0); };
+  // 窄带格：局部半宽放不下标准第三排的内缩区，后面抽样与增删改用放宽阈值（见文件头第 5 条）
+  const NARROW = new Uint8Array(N);
+  if (hasE) {
+    const dInMax = maxFilter(dIn, nx, nz, Math.ceil(0.9 * s / h));   // 0.9 × 间距窗口里离 E 轮廓最远的距离 ≈ 局部半宽
+    for (let j = 0; j < N; j++) if (inE[j] && dInMax[j] < NARROW_FRAC * s) NARROW[j] = 1;
+  }
   // 6. 松弛与增删用的抽样（≈ 间距/7.5 一个）：坐标、曲面高度、代表的曲面面积、覆盖要求。类别：
-  //    0 = E 内（离最近站点 > 0.85 × 间距就补内部点）/ 1 = 归 E 管的边缘带（> max(0.85 × 间距, 边缘距离 + 半间距) 才补，补在环上，守住边缘距离）/
+  //    0 = E 内（宽处离最近站点 > 0.85 × 间距就补内部点；局部半宽 < 0.85 × 间距的窄带用 0.65）/ 1 = 归 E 管的边缘带（> max(0.85 × 间距, 边缘距离 + 半间距) 才补，补在环上，守住边缘距离）/
   //    2 = 窄条（按与中线的深度差放宽：沿中线点距 ≈ 间距；补在中线上）/ 3 = 不要求覆盖（离它最近的可放位置都盖不住：窄条末端两角，交给兜底补点）
   const ST = Math.max(1, Math.round(s / 7.5 / h)), hs = ST * h;
   const sj = [];
@@ -764,7 +777,7 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
   for (let i = 0; i < nS; i++) {
     const j = sj[i];
     SX[i] = cx(j); SZ[i] = cz(j); SY[i] = Y[j]; SA[i] = SWt[j] * hs * hs;
-    if (inE[j]) { KIND[i] = 0; THR[i] = HOLE_IN * s; continue; }
+    if (inE[j]) { KIND[i] = 0; THR[i] = (NARROW[j] ? HOLE_NARROW : HOLE_IN) * s; continue; }
     const f = ftO[j];
     if (f >= 0 && inE[f]) { KIND[i] = 1; THR[i] = holeEdge; continue; }
     if (f >= 0) {
@@ -912,6 +925,7 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
   };
   // 10. 按管辖面积增删（见文件头第 5 条）
   const A0 = Math.sqrt(3) / 2 * s * s, dMin2 = (DMIN_FRAC * s) ** 2, s2 = s * s;
+  const dMinN2 = (DMIN_NARROW * s) ** 2, dMin2At = (x, z) => (NARROW[cellOf(x, z)] ? dMinN2 : dMin2);   // 一点落在窄带就按 0.7 × 间距（取两点里更小的那个）
   // 删点的先后：内部 / 窄条点（1）→ 环点（2）→ 转角钉（3）；孤岛最低点与接缝钉（4）不删
   const rankOf = q => (q.seed ? 4 : q.t === PIN ? 3 : q.t === RING ? 2 : 1);
   const nearestRing = (x, z) => {
@@ -948,7 +962,7 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
           for (let m = head[b * nbx + a]; m >= 0 && !gone[k]; m = nxt[m]) {
             if (m <= k || gone[m]) continue;
             const o = S[m];
-            if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 + (o.y - q.y) ** 2 >= dMin2) continue;
+            if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 + (o.y - q.y) ** 2 >= Math.min(dMin2At(q.x, q.z), dMin2At(o.x, o.z))) continue;
             const rk = rankOf(q), rm = rankOf(o);
             if (rk === 4 && rm === 4) continue;
             gone[rk !== rm ? (rk < rm ? k : m) : (area[k] <= area[m] ? k : m)] = 1;
@@ -957,12 +971,12 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
         }
       }
     }
-    // ② 管得太少的内部点删掉
-    for (let k = 0; k < n; k++) if (!gone[k] && S[k].t === INT && area[k] < DROP_AREA * A0) { gone[k] = 1; changes++; }
+    // ② 管得太少的内部点删掉（窄带下限 0.2：夹在两排之间管得少，按 0.45 会把刚补上的中间排删掉）
+    for (let k = 0; k < n; k++) if (!gone[k] && S[k].t === INT && area[k] < (NARROW[cellOf(S[k].x, S[k].z)] ? DROP_NARROW : DROP_AREA) * A0) { gone[k] = 1; changes++; }
     // ③ 加点。新点之间至少隔一个间距（同一片空当一轮只补一个，补完松弛再看），离已有的点至少隔最小距离
     const adds = [];
     const nearAdd = (x, z, y, r2) => adds.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 + (p.y - y) ** 2 < r2);
-    const roomy = (x, z, y) => { nearest(x, z, y, -1, gone); return nd2 >= dMin2 && !nearAdd(x, z, y, dMin2); };
+    const roomy = (x, z, y) => { nearest(x, z, y, -1, gone); const dm = dMin2At(x, z); return nd2 >= dm && !nearAdd(x, z, y, dm); };
     // 环上的空当：每圈按弧长排序，相邻两点之间弧长中点离两边都超过最小距离就加一个环点
     const byRing = rings.map(() => []);
     for (let k = 0; k < n; k++) if (!gone[k] && S[k].r >= 0) byRing[S[k].r].push(S[k]);
@@ -1016,7 +1030,7 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
     for (const q of adds) S.push(q);
     return changes + adds.length;
   };
-  // 11. 收尾：太近的一对（三维 < 0.8 × 间距）里拿掉一个——只在拿掉后它管的采样仍都有别的点按覆盖半径盖着时才拿
+  // 11. 收尾：太近的一对（宽处三维 < 0.8 × 间距，窄带 < 0.7 × 间距；有一点在窄带就按窄带算）里拿掉一个——只在拿掉后它管的采样仍都有别的点按覆盖半径盖着时才拿
   //     （覆盖优先于均匀：窄尖、末端这类地方两点挨得近是为了盖住尖角）
   const finalCull = () => {
     assign();
@@ -1031,7 +1045,7 @@ function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
           for (let m = head[b * nbx + a]; m >= 0 && !gone[k]; m = nxt[m]) {
             if (m <= k || gone[m]) continue;
             const o = S[m];
-            if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 + (o.y - q.y) ** 2 >= dMin2) continue;
+            if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 + (o.y - q.y) ** 2 >= Math.min(dMin2At(q.x, q.z), dMin2At(o.x, o.z))) continue;
             const cands = [k, m].filter(c => !S[c].seed).sort((u, v) => rankOf(S[u]) - rankOf(S[v]) || lists[u].length - lists[v].length);
             for (const c of cands) {
               let ok = true;

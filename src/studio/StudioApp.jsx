@@ -9,6 +9,7 @@ import StageCanvas from './StageCanvas.jsx';
 import ShellC from './shells/ShellC.jsx';
 import SimplifyProto from './simplifyProto.jsx';
 import BedProto from './bedProto.jsx';
+import UpdateHost from './UpdateHost.jsx';
 
 export default function StudioApp() {
   const { step } = useUI();
@@ -53,6 +54,7 @@ export default function StudioApp() {
       <StageCanvas />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ToastHost />
+      <UpdateHost />
       <SimplifyProto />
       <BedProto />
     </div>

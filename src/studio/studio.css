@@ -10,6 +10,18 @@
    品牌已在标题栏里，浮动条里不再重复。浏览器打开时无 stu--desktop，布局零回归。 */
 .stu--desktop { padding-top: var(--titlebar-h); }
 .stu--desktop > .titlebar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; }
+.updShade {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  background: color-mix(in oklab, var(--background) 35%, transparent);
+}
+.upd {
+  width: min(380px, calc(100vw - 32px)); padding: 16px 16px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: var(--surface); color: var(--foreground); box-shadow: var(--shadow-raised);
+}
+.updTitle { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+.updNotes { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; white-space: pre-wrap; }
+.updActs { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .stu--desktop .stuShell { height: 100%; }
 .stu--desktop .stuStage { top: var(--titlebar-h); }
 .stu--desktop .stuBrand { display: none; }

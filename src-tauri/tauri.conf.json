@@ -32,6 +32,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
@@ -40,5 +41,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgwNzVEQzJCNDhGNjdCMUYKUldRZmUvWklLOXgxZ0RCejI3UmNpVThrY29kWGU4RDEveFV5S0NrOG1ZNktuSFYwbm5lc00zV20K",
+      "endpoints": [
+        "http://82.157.179.191:3000/admin/open-support/releases/latest/download/latest.json"
+      ],
+      "dangerousInsecureTransportProtocol": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

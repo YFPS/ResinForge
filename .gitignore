@@ -12,5 +12,8 @@ kimi-debug-session_*.zip
 node_modules/
 dist/
 
+# 在线更新签名私钥和口令。公钥写在 tauri.conf.json 里。
+src-tauri/keys/
+
 # 参考数据（第三方逆向样本，不入库）
 .ref/

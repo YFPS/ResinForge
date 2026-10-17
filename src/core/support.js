@@ -317,6 +317,26 @@ export function updateSupStats() {
   bus.emit('supStats', s ? { ...s, prot: state.protectedFaces.size } : { mode: 'tower', points: state.supportPoints.length, prot: state.protectedFaces.size });
 }
 
+/** 孤岛有没有被托住。图上标了孤岛的节点：有支撑点且至少一点生成了结构（ground / mesh / micro）算托住；
+ *  有点但全失败记 fail，一个点都没有记 noPoint。open 是两者之和，统计卡用它决定还要不要警告。 */
+function islandCoverage() {
+  const nodes = (state.analysis && state.analysis.graph && state.analysis.graph.nodes) || [];
+  const ok = new Set(), any = new Set();
+  for (const p of state.supportPoints || []) {
+    if (p.island == null) continue;
+    any.add(p.island);
+    if (p.state === 'ground' || p.state === 'mesh' || p.state === 'micro') ok.add(p.island);
+  }
+  let fail = 0, noPoint = 0;
+  for (const nd of nodes) {
+    if (!nd.island) continue;
+    if (ok.has(nd.id)) continue;
+    if (any.has(nd.id)) fail++;
+    else noPoint++;
+  }
+  return { fail, noPoint, open: fail + noPoint };
+}
+
 /* 参数快照（结构生成器只读快照，缺省值兜底） */
 function paramSnapshot() {
   const p = params, num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -1117,7 +1137,11 @@ export async function rebuildStructure() {
   add(res.geomBase, supMatBase, 'base', 'base');
   pts.forEach((p, k) => { p.state = res.pointState[k] || ''; });
   const ok = pts.filter(p => p.state === 'ground' || p.state === 'mesh' || p.state === 'micro').length;
-  state.supportStats = { mode: 'tower', ...res.stats, ok, ms: Math.round(performance.now() - t0) };
+  const cov = islandCoverage();
+  state.supportStats = {
+    mode: 'tower', ...res.stats, ok, ms: Math.round(performance.now() - t0),
+    islFail: cov.fail, islNoPoint: cov.noPoint, islOpen: cov.open,
+  };
   syncSupportView();
   prepareSupportColors();
   setProgress(null);
@@ -1184,13 +1208,8 @@ export async function runGenSup(opts = {}) {
   if (bad) log(`⚠ 支撑塔结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');
   if (s.unconnected) log(`⚠ ${s.unconnected} 个支撑点连不上格架，已标红、未生成结构（可加点 / 删点）`, 'warn');
   if (rep.islandsNoPoint) log(`⚠ ${rep.islandsNoPoint} 处孤岛没有可放置的支撑点（贴面/保护面/间隙过小），请检查层检查器`, 'warn');
-  // 孤岛结构覆盖：有支撑点的孤岛，至少一个点须生成结构，否则该孤岛实际悬空
-  const isl = new Map();
-  for (const p of state.supportPoints) {
-    if (p.island === null || p.island === undefined) continue;
-    isl.set(p.island, isl.get(p.island) || ['ground', 'mesh', 'micro'].includes(p.state));
-  }
-  const islFail = [...isl.values()].filter(v => !v).length;
+  // 孤岛结构覆盖：有支撑点的孤岛，至少一个点须生成结构，否则该孤岛实际悬空（rebuildStructure 已写入 supportStats）
+  const islFail = state.supportStats.islFail || 0;
   if (islFail) log(`⚠ ${islFail} 处孤岛的支撑点全部未能生成结构（该孤岛将悬空），请查看层检查器红点`, 'warn');
   if (rep.capped) log(`⚠ 支撑点达到上限 ${MAX_POINTS}，其余 ${rep.capped} 个候选未放置（可增大支撑间距）`, 'warn');
 }

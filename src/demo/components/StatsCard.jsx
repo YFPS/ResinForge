@@ -5,11 +5,20 @@ import Badge from '@/components/arc/badge/badge';
 import { motionTokens } from '@/components/arc/motion-tokens';
 import { useBusState } from '../bridge.js';
 
-/* 右上角统计卡：分析结果 + 支撑统计；数字用 animated-counter 滚动 */
+/* 右上角统计卡：分析结果 + 支撑统计；数字用 animated-counter 滚动。
+   还没生成支撑时，有孤岛就标「待支撑」。生成之后只报仍没被结构托住的孤岛，全部托住就收起。 */
+function islandNote(slice, sup) {
+  if (!slice || !(slice.islandCount > 0)) return null;
+  if (!sup || sup.islOpen == null) return `${slice.islandCount} 处孤岛待支撑`;
+  if (sup.islOpen <= 0) return null;
+  return `${sup.islOpen} 处孤岛仍悬空`;
+}
+
 export default function StatsCard() {
   const slice = useBusState('sliceStats', null);
   const sup = useBusState('supStats', null);
   const empty = !slice;
+  const note = islandNote(slice, sup);
 
   return (
     <div className="statsCard">
@@ -51,9 +60,9 @@ export default function StatsCard() {
           </motion.div>
         )}
       </AnimatePresence>
-      {slice && slice.islandCount > 0 && (
+      {note && (
         <Badge tone="warning" size="sm" className="statsBadge">
-          {slice.islandCount} 处孤岛待支撑
+          {note}
         </Badge>
       )}
     </div>

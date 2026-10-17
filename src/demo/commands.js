@@ -63,7 +63,7 @@ export function buildCommands(ctx) {
     { id: 'log', group: '视口', title: '打开或收起运行日志', icon: ic(TerminalSquare), run: () => window.dispatchEvent(new Event('demo:toggle-log')) },
 
     { id: 'base-join', group: '导出', title: '底板：连接底板', hint: '塔底连成一条立板，模型随板抬高', icon: ic(Layers), run: () => runTask('base-type', () => setBaseType('join', setParam)) },
-    { id: 'base-auto', group: '导出', title: '底板：自动底板', hint: '按支撑投影定尺寸：栅角 + 蜂窝孔', icon: ic(Grid3x3), run: () => runTask('base-type', () => setBaseType('auto', setParam)) },
+    { id: 'base-auto', group: '导出', title: '底板：自动底板', hint: '按支撑投影定尺寸，支撑从底板顶面往上生成', icon: ic(Grid3x3), run: () => runTask('base-type', () => setBaseType('auto', setParam)) },
     { id: 'export-all', group: '导出', title: '导出模型和支撑', hint: 'STL', icon: ic(Download), run: () => runTask('export', () => doExport(true)) },
     { id: 'export-sup', group: '导出', title: '仅导出支撑', hint: 'STL', icon: ic(Download), run: () => runTask('export', () => doExport(false)) },
 

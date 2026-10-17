@@ -129,8 +129,10 @@ function Advanced() {
           <Num k="minSupArea" label="最小悬空面积" min={0.5} max={50} step={0.5} unit="mm²" />
           <Num k="raiseH" label="模型抬高" min={0} max={15} step={0.5} unit="mm" onChange={handleRaiseHChange} />
         </Grid>
-        {joinLiftWanted(params) ? (
-          <p className="hint">开着连接底板：模型再抬高一个板高 {+joinLiftWanted(params).toFixed(2)} mm，离平台共 {+(Math.max(0, params.raiseH || 0) + joinLiftWanted(params)).toFixed(2)} mm。</p>
+        {params.baseJoin ? (
+          <p className="hint">开着连接底板：模型再抬高 {+joinLiftWanted(params).toFixed(2)} mm，支撑整段都在板顶上面，离平台共 {+(Math.max(0, params.raiseH || 0) + joinLiftWanted(params)).toFixed(2)} mm。</p>
+        ) : params.autoPlateOn ? (
+          <p className="hint">开着自动底板：模型再抬高一个板厚 {+joinLiftWanted(params).toFixed(2)} mm，支撑从底板顶面往上生成，离平台共 {+(Math.max(0, params.raiseH || 0) + joinLiftWanted(params)).toFixed(2)} mm。</p>
         ) : null}
         <SwitchRow
           label="短小支撑"
@@ -180,14 +182,6 @@ export default function SupportStep() {
         </>
       )}
     >
-      <Section
-        title="结构"
-        aside={points ? <span className="secMeta tnum">{points.toLocaleString('zh-CN')} 个支撑点</span> : null}
-        desc="支撑塔：格架从平台升起，十字针从节点接到接触点。"
-      >
-        <p className="hint">连不上格架的支撑点依次改走：就近接格架 → 分叉（一主干两头）→ 十字短杆；仍接不上的标红、不生成结构。</p>
-      </Section>
-
       <TemplatePicker />
 
       <CoreParams />

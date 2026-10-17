@@ -19,15 +19,16 @@ import { autoPlateAsync } from './geomClient.js';
 /* 包围盒八个角变换时复用，不外传 */
 const _corner = new THREE.Vector3();
 import { computeFaceDataFull } from './slicer.js';
+import { autoPlateThickness } from './joinPlate.js';
 import { clearSupports, updateSupStats } from './support.js';
 import { buildBVH, raycast as bvhRaycast } from './collide.js';
 import { hideInspector } from './inspect.js';
 
 /* 打印工艺参数：世界系 = 打印系（平台顶面 y=0，模型底面抬高 raiseH） */
 let raftMesh = null;          // 自动底板显示 Mesh
-// 模型抬高（mm）= 用户设的抬高（默认 4）+ 连接底板高（支撑塔选连接底板时，见 joinPlate.js）。
-// 连接底板那部分取「已提交」的值 state.joinLift：只在生成 / 重建支撑（或切换底板类型 / 结构 / 模板）时由 support.js 的 syncModelLift 更新，
-// 改了菱形宽等参数但还没重建时，模型、分析与已有支撑仍在同一高度上，导出不会错位
+// 模型抬高（mm）= 用户设的抬高（默认 4）+ 底板额外抬高（连接底板的板高，或自动底板的板厚，见 joinPlate.js）。
+// 额外抬高取「已提交」的值 state.joinLift：只在生成 / 重建支撑（或切换底板类型 / 改板厚 / 结构 / 模板）时由 support.js 的 syncModelLift 更新，
+// 改了格宽等参数但还没重建时，模型、分析与已有支撑仍在同一高度上，导出不会错位
 export const raiseH = () => Math.max(0, params.raiseH || 0) + (state.joinLift || 0);
 export const baseRaiseH = () => Math.max(0, params.raiseH || 0);   // 用户设的抬高（不含连接底板）
 
@@ -1248,11 +1249,23 @@ export function bakeActiveLayout() {
 }
 
 /* 自动底板（底板类型之一）显示：几何在后台线程按「支撑投影 + 参数」算（规格没变走缓存）。
-   支撑落点高度统一走 baseY()（自动底板顶 / 平台 0）。 */
-export const baseY = () => (params.autoPlateOn ? (params.apHeight || 1.3) : 0);
+   支撑落点高度统一走 baseY()：自动底板顶面 / 平台 0。开自动底板时模型另按同一板厚抬高（joinLift），
+   支撑从板顶往上长，板厚垫在下面，不占用户设的离地高度。 */
+export const baseY = () => (params.autoPlateOn ? autoPlateThickness(params) : 0);
+
+/** 自动底板跟随支撑显示模式：连接体 / 接触点模式只显示支撑本身，底板一并隐藏（support.js 的 syncSupportView 调用） */
+export function setRaftVisible(visible) { if (raftMesh) raftMesh.visible = !!visible; }
+
+/** 当前自动底板网格。没有底板时是 null。树脂用量拿它的体积，不把板再算进支撑网格。 */
+export function raftObject() { return raftMesh; }
 
 export function updateRaft() {
-  if (raftMesh) { scene.remove(raftMesh); raftMesh.geometry.dispose(); raftMesh = null; }
+  if (raftMesh) {
+    scene.remove(raftMesh);
+    raftMesh.geometry.dispose();
+    raftMesh = null;
+    bus.emit('raft');
+  }
   if (!state.mesh || !params.autoPlateOn) return;
   const mat = new THREE.MeshStandardMaterial({ color: 0x2a3444, roughness: 0.9, metalness: 0.05 });
   // 序号防竞（期间又改参数 / 换模型 / 切回连接底板）
@@ -1265,7 +1278,9 @@ export function updateRaft() {
     geo.computeVertexNormals();
     raftMesh = new THREE.Mesh(geo, mat);
     raftMesh.raycast = () => {};
+    raftMesh.visible = (state.supView || 'full') === 'full';   // 重建时按当前显示模式决定（连接体 / 接触点模式不显示底板）
     scene.add(raftMesh);
+    bus.emit('raft');
   }).catch(() => { /* 被更新的请求取代：交给后一次 */ });
 }
 
@@ -1296,6 +1311,7 @@ export function placeModelAtLift() {
   if (state.mesh.matrixAutoUpdate) state.mesh.updateMatrix();
   else previewPartPose();
   syncFocusRing();
+  bus.emit('lift');
 }
 export function handleRaiseHChange() {
   const h = raiseH();
@@ -1305,7 +1321,7 @@ export function handleRaiseHChange() {
   hideInspector();
   bus.emit('sliceStats', null);
   const lift = state.joinLift || 0;
-  log(`抬高已改为 ${baseRaiseH()}mm${lift ? `（连接底板再抬 ${+lift.toFixed(2)}mm，模型底面离平台 ${+h.toFixed(2)}mm）` : '（模型底面离平台）'}，请重新运行逐层分析`, 'warn');
+  log(`抬高已改为 ${baseRaiseH()}mm${lift ? `（底板再抬 ${+lift.toFixed(2)}mm，模型底面离平台 ${+h.toFixed(2)}mm）` : '（模型底面离平台）'}，请重新运行逐层分析`, 'warn');
 }
 
 /** 板面或打印高度变了：只更新体积框，不挪已排好的模型 */

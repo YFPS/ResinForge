@@ -15,6 +15,7 @@
    轮廓 / 孔在规格里是**相对底板中心**的 XZ 点列，中心 cx / cz 单独给（生成时平移）。
 ================================================================ */
 import { state, params } from '../store.js';
+import { autoPlateThickness } from './joinPlate.js';
 
 const num = (v, d) => (Number.isFinite(v) ? v : d);
 
@@ -292,7 +293,7 @@ export function autoPlateSpec() {
   }
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
   const outline = top.map(([x, z]) => [x - cx, z - cz]);
-  const t = Math.max(0.4, num(params.apHeight, 1.3));
+  const t = autoPlateThickness(params);
   const ang = Math.max(0, Math.min(60, num(params.apChamferAngle, 15))) * Math.PI / 180;
   const border = Math.max(0, num(params.apBorder, 2.5));
   const holeR = Math.max(0.5, num(params.apHoleR, 8.66));

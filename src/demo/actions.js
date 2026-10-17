@@ -2,7 +2,7 @@
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
 import { params, state, bus, log, toast } from '../store.js';
 import { isHeatOn, setHeat } from '../core/heat.js';
-import { loadDemo, loadModelFiles, setActivePart, simplifySelection, supportTargetPart } from '../core/model.js';
+import { loadDemo, loadModelFiles, setActivePart, simplifySelection, supportTargetPart, updateRaft } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis } from '../core/inspect.js';
 import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
@@ -194,7 +194,7 @@ export function setBaseChamfer(v, setParam) {
   return Promise.resolve();
 }
 
-/** 底板类型二选一：连接底板（支撑塔底部锯齿收成一条立板，模型随板抬高一个板高）/ 自动底板（按支撑投影的蜂窝板）。
+/** 底板类型二选一：连接底板（支撑塔底部锯齿收成一条立板，模型随板抬高一个板高）/ 自动底板（按支撑投影的蜂窝板，模型随板厚抬高，支撑从底板顶面往上生成）。
     两种切换都影响支撑结构（模型抬高 / 落点高度）——已有支撑时立刻重算，没有支撑时只同步模型抬高。 */
 export function setBaseType(v, setParam) {
   const join = v === 'join';
@@ -202,6 +202,17 @@ export function setBaseType(v, setParam) {
   setParam('autoPlateOn', !join);
   if (hasSupports()) return rebuildStructure();
   return syncModelLift();
+}
+
+/* 拖板厚时数值会连着变：先把模型抬到新板厚（便宜），支撑等停稳再从底板顶面重算，避免每一步都重跑整座塔 */
+let plateHTimer = 0;
+export function onAutoPlateThickness() {
+  updateRaft();
+  const lift = syncModelLift();
+  if (!hasSupports()) return lift;
+  clearTimeout(plateHTimer);
+  plateHTimer = setTimeout(() => { rebuildStructure(); }, 280);
+  return lift;
 }
 
 export const currentBaseType = () => (params.autoPlateOn ? 'auto' : 'join');

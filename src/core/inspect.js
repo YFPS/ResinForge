@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { analyze, steepFaces, sampleLDILayer, rasterizeSection } from './slicer.js';
 import { raiseH, ensureBakedDisplay } from './model.js';
+import { autoPlateThickness } from './joinPlate.js';
 import { supMat, supMatAnchor } from './scene.js';
 
 let layerCanvas = null;   // React 层检查器的 canvas（256×256）
@@ -48,7 +49,7 @@ export async function runSliceAnalysis() {
   const totIslandArea = r.islands.reduce((s, i) => s + i.area, 0);
   bus.emit('sliceStats', {
     layers: m.layers,
-    raiseText: `${rh}mm / ${params.autoPlateOn ? `底板 ${+(params.apHeight || 1.3).toFixed(2)}mm` : params.baseJoin ? `连接底板 ${+(state.joinLift || 0).toFixed(2)}mm` : '关'}`,
+    raiseText: `${rh}mm / ${params.autoPlateOn ? `底板顶 ${+autoPlateThickness(params).toFixed(2)}mm` : params.baseJoin ? `连接底板 ${+(state.joinLift || 0).toFixed(2)}mm` : '关'}`,
     islandCount: r.islands.length,
     totIslandArea,
     steepArea: sf.steepArea,

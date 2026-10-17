@@ -23,6 +23,7 @@ export default defineConfig({
         main: path.resolve(root, 'index.html'),
         demo: path.resolve(root, 'demo.html'),
         studio: path.resolve(root, 'studio.html'),
+        login: path.resolve(root, 'login.html'),
       },
     },
   },

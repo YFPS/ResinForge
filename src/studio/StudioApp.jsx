@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import CommandPalette from '../demo/components/CommandPalette.jsx';
 import ToastHost from '../demo/components/ToastHost.jsx';
+import TitleBar, { IN_TAURI } from '../demo/components/TitleBar.jsx';
 import { useBus } from '../demo/bridge.js';
 import { goStep, useUI } from '../demo/ui.js';
 import { setSupportHotkeys } from '../core/scene.js';
@@ -32,7 +33,9 @@ export default function StudioApp() {
   useBus('orientResults', r => { if (r && r.length) goStep('orient'); });
 
   return (
-    <div className="stu">
+    <div className={'stu' + (IN_TAURI ? ' stu--desktop' : '')}>
+      {/* 桌面版（Tauri 无边框窗口）自绘标题栏：拖动 + 最小化 / 最大化 / 关闭；浏览器里返回 null */}
+      <TitleBar />
       <h1 className="srOnly">ResinForge 光固化自动支撑 · Studio</h1>
       <ShellC stage={step} onOpenPalette={openPalette} />
       <StageCanvas />

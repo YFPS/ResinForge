@@ -24,7 +24,7 @@ export function StepPanel({ step, footer, children }) {
           <h2 className="stepTitle">{step.title}</h2>
           {done[step.id] ? <Badge tone="success" size="sm" icon={<Check size={12} strokeWidth={2} />}>已完成</Badge> : null}
         </div>
-        <p className="stepDesc">{step.desc}</p>
+        {step.desc ? <p className="stepDesc">{step.desc}</p> : null}
       </header>
       {/* 边缘渐隐只在那一侧确有被遮住的内容时出现（Arc ScrollArea 按溢出量计算），滚动时提示上下还有参数 */}
       <ScrollArea className="stepScroll" viewportClassName="stepViewport" fade={20}>

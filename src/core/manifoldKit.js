@@ -381,39 +381,45 @@ export function unionParts(MF, parts) {
 }
 
 /* ================================================================
-   支撑点布点：边缘环 + 内部六角格 + 窄条中线 + 按覆盖补点 + Lloyd 松弛
+   支撑点布点：边缘环与内部点放进同一次松弛（2026-10-17 重写）
    ----------------------------------------------------------------
-   输入每个「图块」（一片支撑区域里同一 XZ 位置只有一层曲面的部分）的投影三角形，在 XZ 投影平面上布点：
-   1. 边缘环：投影轮廓（三角形并集）内缩「边缘距离」（再做半径 0.3 × 间距的开运算，太细的部分不画环），沿内缩线按弧长均分
-      放点（点距 ≈ 支撑间距）。这一圈固定不动，边缘支撑到边的距离处处一致。
-   2. 内缩区深处（离内缩线 ≥ 0.85 × 间距）铺正六角格（点距 = 支撑间距，对齐世界原点），也固定不动——开阔处整整齐齐，
-      点距就是设定的间距。
-   3. 窄条（没有内缩区的条带、开运算去掉的细条）：中线取 λ-中轴，沿中线从一头扫过去，每隔约一个间距放一个点。
-   4. 按覆盖补点：内缩区里任一处离最近支撑点都不得超过覆盖半径（正六角排布的覆盖半径是 间距/√3 ≈ 0.577 × 间距，
-      开阔处本来就满足）。补的是六角格铺不进去的窄带（覆盖半径 0.6 × 间距：中间那排沿排点距 ≈ 间距），以及边缘环与
-      六角格之间的过渡带（放宽到 0.72 × 间距，≈ 边缘带本身的覆盖：两排之间超过约 1.3 倍理想行距才补一排，免得边上多出一圈挤着的点）。
-      用贪心最大覆盖选位置（每次选能新盖住最多未覆盖采样的那个），点数接近最省。
-   5. Lloyd 松弛：补出来的点挪到它所管辖采样（离它最近的那些采样）的重心，反复十几次，在固定点之间排匀；
-      只在允许的地方（内缩区 / 窄条中线）移动，不会跑进边缘带。拿掉后仍处处覆盖的多余点删掉，再松弛。
-   开阔处按间距，窄处按覆盖：条带宽度不是行距的整数倍时，只在需要的地方突破间距、把中间那排补上。
-   离散化：区域上铺 h ≈ 间距/15 的采样格，到边界的距离、最近站点用 Felzenszwalb–Huttenlocher 精确欧氏距离变换。
-   上一版（等距环）的问题：环距固定为 间距 × √3/2，条带宽度不是环距的整数倍时，最后剩下的一条放不下一环；
-   「中线补一排」又取整个图块最深的那一处，只剩一个点大小。环面结 7.6～8.5mm 宽的管底带因此只剩两条边缘排，
-   中间空出一道 2mm 多宽的带（用户截图「边缘均匀了，内部又没支撑了」）。
-   返回与输入同序的 Float64Array 数组，每个为 [x, z, 类别, ...]：0 = 边缘环，1 = 内部 / 窄条中线
+   输入每个「图块」（一片支撑区域里同一 XZ 位置只有一层曲面的部分）的投影三角形 + 各顶点高度 + 贴墙的边：
+   1. 区域：投影轮廓（三角形并集），减掉主线程按逐点校验判据铺的「禁放格」（贴面 / 已托住 / 贴壁根部 / 保护面附近）。
+      原先布完点才逐点校验：模板边缘距离 0.5mm < 贴壁根部 0.8mm，贴墙那段边缘环整排被删，墙边一段空、兜底补点又补得乱；
+      大三角形扇面盖住的已托住区域（双层平台的立柱顶）先铺满点再整片删掉。现在布点绕开这些地方，周围照样留边缘距离。
+   2. 内缩区 E：区域内缩「边缘距离」再做半径 0.3 × 间距的开运算（太细的部分不画环、按窄条处理）；E 的轮廓就是边缘环所在的线。
+   3. 站点四类：转角钉（E 轮廓上真正的凸角，不动）/ 环点（只能沿 E 轮廓滑动）/ 内部点（E 内自由移动）/
+      窄条点（没有内缩区的条带，只能在 λ-中轴上移动）。初值：环上按弧长均分、E 里铺一层正六角格、窄条沿中线每隔约一个间距一个。
+      落在本图块上的孤岛最低点也当钉（不动、不删、不输出，主线程按孤岛种子口径放它本身）：别的点绕着它排开，旁边不会挤出一对。
+   4. 统一 Lloyd 松弛：采样按三维距离（XZ + 曲面高度）归最近的站点，站点挪到所管采样的重心，重心按坡面面积加权
+      （一个采样代表的曲面面积 = 投影面积 / cos 坡度）；环点把重心投回轮廓、内部点吸回 E、窄条点吸回中线。
+      距离和面积都在曲面上量：坡面上顺坡方向不再被拉开（旧版在 XZ 投影里排匀，45° 坡面上的实际点距是 1.41 倍）。
+   5. 按管辖面积增删：内部点管的曲面面积 > 1.4 × 理想正六角面积（√3/2 × 间距²）就在它管辖区里最远的采样处加一个点，
+      < 0.45 × 就删；环上相邻两点之间弧长 ≥ 1.6 × 间距、弧长中点离所有点都 ≥ 0.8 × 间距就在中点加一个环点；任意两点（三维）< 0.8 × 间距删一个
+      （先删内部 / 窄条点、同类删管得少的；转角钉不删）；内缩区里离最近站点 > 0.85 × 间距、边缘带里 > max(0.85 × 间距, 边缘距离 + 半间距)、
+      窄条里超过按深度放宽的覆盖半径的地方补点。每轮增删后再松弛几次，直到不再增删；最后太近的一对只在拿掉后仍处处覆盖时才拿。
+   旧版的问题（2026-10-17 实测）：边缘环（固定）与对齐世界原点的六角格（固定）之间靠贪心补点硬拼，两套点的间距随处在变——
+   不限最小距离时过渡带补出成坨的点（环面结细档 87 对 < 0.8 × 间距），限了 0.8 × 间距又补不进去（点数少 21%，
+   环到内部第一排中位 1.1～1.2 × 间距、最差 2 ×）：只能在「坨」和「缝」之间换。现在两套点一起松弛，过渡带自己排开。
+   离散化：区域上铺 h ≈ 间距/15 的采样格（到边界的距离、中轴、最近可放位置用 Felzenszwalb–Huttenlocher 精确欧氏距离变换），
+   松弛与增删按 ≈ 间距/7.5 抽样。
+   返回与输入同序的 Float64Array 数组，每个为 [x, z, 类别, ...]：0 = 边缘环（含转角钉），1 = 内部 / 窄条中线
 ================================================================ */
-const COVER_IN = 0.6;                                // 内缩区覆盖半径（窄带）= 0.6 × 间距：正六角排布的覆盖半径是 间距/√3 ≈ 0.577 × 间距，各排沿排点距 ≈ 间距
-const COVER_LAT = 0.72;                              // 六角格旁的过渡带放宽到 0.72 × 间距（≈ 边缘带本身的覆盖 √(边缘距离² + 半间距²)）：边缘环与六角格之间超过约 1.3 倍理想行距才补一排
-const COVER_NARROW = 1.2;                            // 窄条：沿中线点距 ≈ 间距（留 20% 余量：弯曲窄带外侧边缘的点距比中线大，5% 不够，平放圆环底带实测被补密一倍）
 const OPEN_FRAC = 0.3;                               // 内缩区开运算半径 = 0.3 × 间距（窄于 0.6 × 间距的细条按中线处理）
 const LAMBDA_FRAC = 0.6, LAMBDA_MIN = 0.3;           // 窄条中线（λ-中轴）：λ = max(0.3 × 间距, 0.6 × 附近带宽)
-const LATTICE_KEEP = 0.85;                           // 正六角格只铺在离内缩线 ≥ 0.85 × 间距的深处
-const LLOYD_ITERS = 16;
+const COVER_NARROW = 1.2;                            // 窄条的覆盖半径按与中线的深度差放宽 × 1.2（弯曲窄带外侧的点距比中线大）
+const DMIN_FRAC = 0.8;                               // 任意两点（三维）的最小距离 = 0.8 × 间距（正六角的间距是 1.0）
+const SPLIT_AREA = 1.4, DROP_AREA = 0.45;            // 内部点管辖曲面面积 / 理想正六角面积：> 1.4 加点、< 0.45 删点（相差三倍，增删不会来回翻）
+const HOLE_IN = 0.85;                                // 内缩区里离最近站点 > 0.85 × 间距就补（正六角的覆盖半径是 0.577 × 间距；补进去的点离邻点 ≥ 0.85 × 间距，不会被最小距离删掉）
+const RING_GAP = 1.6;                                // 环上相邻两点之间弧长 ≥ 1.6 × 间距、弧长中点离所有点都 ≥ 最小距离，就在中点加一个环点
+const LAT_INIT = 0.55;                               // 初值六角格只铺在离 E 轮廓 ≥ 0.55 × 间距的地方（再往外是环点的地盘）
+const PIN = 0, RING = 1, INT = 2, MED = 3;           // 站点类别：转角钉 / 环点 / 内部点 / 窄条点
 
-/** 沿闭合轮廓放点（点距 ≈ sp）：先在每个真正的转角上放一个点（沿轮廓 2mm 内累计左转 ≥ 60°——区域的凸角；内缩后轮廓锯齿留下的
- *  小尖点被开运算磨成半径 0.3 × 间距的小圆弧，转不够这个角度，不算），转角之间按弧长均分；没有转角的一圈整圈均分；很小的一圈放在圈心。
- *  转角不放点的话，等距均分的点可能正好错开转角，尖角离最近的点超过兜底补点阈值，兜底补点就补在尖角里、贴着边（实测手办底座的梯形四角） */
-function sampleRing(cs, k, sp, pts) {
+/** E 的轮廓 → 环结构与初始环点。每个闭合轮廓记顶点、各边长、累计弧长；初始点：真正的凸角钉住（沿轮廓 2mm 内累计左转 ≥ 60°——
+ *  内缩后轮廓锯齿留下的小尖点被开运算磨成半径 0.3 × 间距的小圆弧，转不够这个角度），转角之间按弧长均分；没有转角的整圈均分；
+ *  很小的一圈只在圈心放一个钉。转角不钉的话，环点可能正好错开转角，尖角离最近的点超过兜底补点阈值，兜底补点就补在尖角里、贴着边 */
+function ringSetup(cs, sp) {
+  const rings = [], init = [];
   for (const poly of cs.toPolygons()) {
     const n = poly.length;
     if (n < 2) continue;
@@ -424,9 +430,11 @@ function sampleRing(cs, k, sp, pts) {
     if (P < sp * 0.6) {
       let cx = 0, cz = 0;
       for (const v of poly) { cx += v[0]; cz += v[1]; }
-      pts.push(cx / n, cz / n, k);
+      init.push({ x: cx / n, z: cz / n, t: PIN, r: -1, a: 0 });
       continue;
     }
+    const R = { poly, seg, acc, P, n }, ri = rings.length;
+    rings.push(R);
     // 各顶点的左转角（区域在边的左侧：外环逆时针、洞顺时针，凸角都是左转）
     const turn = new Float64Array(n);
     for (let i = 0; i < n; i++) {
@@ -447,30 +455,65 @@ function sampleRing(cs, k, sp, pts) {
       let peak = true;
       for (let j = 1, d = 0; j < n && peak; j++) { d += seg[(i - j + n) % n]; if (d > WIN) break; if (sum[(i - j + n) % n] > sum[i]) peak = false; }
       for (let j = 1, d = 0; j < n && peak; j++) { d += seg[(i + j - 1) % n]; if (d > WIN) break; if (sum[(i + j) % n] >= sum[i]) peak = false; }
-      if (peak) corners.push(acc[i]);
+      if (peak) corners.push({ s: acc[i], w: sum[i] });
     }
     if (corners.length * sp * 0.5 > P) corners = [];          // 小圈里到处都是「转角」（整圈就是一个小圆）：按整圈均分
-    const at = target => {                                      // 弧长 → 点（target 取模 P）
-      let t = ((target % P) + P) % P, lo = 0, hi = n;
-      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (acc[mid] <= t) lo = mid; else hi = mid; }
-      const a = poly[lo], b = poly[(lo + 1) % n], u = seg[lo] > 0 ? (t - acc[lo]) / seg[lo] : 0;
-      return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
-    };
+    // 相邻两个转角直线距离不到最小距离（轮廓锯齿在同一处折两次）：只钉较尖的那个
+    if (corners.length > 1) {
+      corners.sort((a, b) => b.w - a.w);
+      const kept = [];
+      for (const c of corners) {
+        const v = ringAt(R, c.s);
+        if (kept.every(k => { const q = ringAt(R, k.s); return Math.hypot(q[0] - v[0], q[1] - v[1]) >= DMIN_FRAC * sp; })) kept.push(c);
+      }
+      corners = kept.sort((a, b) => a.s - b.s).map(c => c.s);
+    } else corners = corners.map(c => c.s);
     if (!corners.length) {
       // 起点固定取 x + 0.618·z 最小的顶点（同样的轮廓每次结果一致）
       let s0 = 0, best = Infinity;
       for (let i = 0; i < n; i++) { const v = poly[i][0] + 0.618 * poly[i][1]; if (v < best) { best = v; s0 = i; } }
-      const m = Math.max(1, Math.round(P / sp)), step = P / m;
-      for (let q = 0; q < m; q++) { const v = at(acc[s0] + q * step); pts.push(v[0], v[1], k); }
+      const m = Math.max(1, Math.round(P / sp));
+      for (let q = 0; q < m; q++) init.push({ t: RING, r: ri, a: (acc[s0] + q * P / m) % P });
       continue;
     }
-    // 转角之间按弧长均分
     for (let c = 0; c < corners.length; c++) {
       const s0 = corners[c], s1 = c + 1 < corners.length ? corners[c + 1] : corners[0] + P, L = s1 - s0;
+      init.push({ t: PIN, r: ri, a: s0 });
       const m = Math.max(1, Math.round(L / sp));
-      for (let q = 0; q < m; q++) { const v = at(s0 + q * L / m); pts.push(v[0], v[1], k); }
+      for (let q = 1; q < m; q++) init.push({ t: RING, r: ri, a: (s0 + q * L / m) % P });
     }
   }
+  return { rings, init };
+}
+
+/** 环上弧长 a 处的点（a 取模周长） */
+function ringAt(R, a) {
+  const { poly, seg, acc, P, n } = R;
+  const t = ((a % P) + P) % P;
+  let lo = 0, hi = n;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (acc[mid] <= t) lo = mid; else hi = mid; }
+  const p = poly[lo], q = poly[(lo + 1) % n], u = seg[lo] > 0 ? (t - acc[lo]) / seg[lo] : 0;
+  return [p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u];
+}
+
+/** 把 (x, z) 投到环上：只在当前位置 a0 前后各 win 弧长内找最近点（不会跳到窄颈另一侧的那段轮廓），返回弧长 */
+function ringProj(R, a0, x, z, win) {
+  const { poly, seg, acc, P, n } = R;
+  const t0 = ((a0 % P) + P) % P;
+  let lo = 0, hi = n;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (acc[mid] <= t0) lo = mid; else hi = mid; }
+  let best = Infinity, bestA = t0;
+  const test = i => {
+    const p = poly[i], q = poly[(i + 1) % n], dx = q[0] - p[0], dz = q[1] - p[1], L2 = dx * dx + dz * dz;
+    let u = L2 > 0 ? ((x - p[0]) * dx + (z - p[1]) * dz) / L2 : 0;
+    u = Math.max(0, Math.min(1, u));
+    const d = (p[0] + dx * u - x) ** 2 + (p[1] + dz * u - z) ** 2;
+    if (d < best) { best = d; bestA = acc[i] + u * seg[i]; }
+  };
+  test(lo);
+  for (let k = 1, d = t0 - acc[lo]; k < n && d < win; k++) { const i = (lo - k + n) % n; test(i); d += seg[i]; }
+  for (let k = 1, d = acc[lo] + seg[lo] - t0; k < n && d < win; k++) { const i = (lo + k) % n; test(i); d += seg[i]; }
+  return bestA;
 }
 
 /** 多边形（Clipper 输出：互不相交，外环逆时针、洞顺时针）按格心扫描线栅格化（奇偶规则），区域内的格子置 1 */
@@ -569,16 +612,41 @@ function maxFilter(src, nx, nz, rw) {
   return out;
 }
 
-/** 单个图块布点（fp：投影轮廓 CrossSection）；点追加到 pts：[x, z, 类别, ...] */
-function layoutChart(K, fp, e, s, pts) {
-  // 内缩区再做一次开运算（半径 0.3 × 间距）：比 0.6 × 间距还窄的细条不画边缘环——否则细条两侧各一排，两排挤在 1mm 里
-  // （悬臂雕像 4mm 宽的悬臂实测如此）；这种细条和没有内缩区的窄带一样，点吸到中线上
+/** 单个图块布点。fp：投影轮廓 CrossSection；e：边缘距离；s：间距；pts：输出 [x, z, 类别, ...]；
+ *  surf：{ t2, ty, mask, pins }——XZ 三角形 + 各顶点高度（给采样插曲面高度与坡面面积系数；没有就按平面算）、
+ *  禁放格 { x0, z0, g, nx, nz, bits }（主线程按逐点校验判据铺的，1 = 放不了）、孤岛最低点 [x, z, ...]（当钉）；
+ *  ext：先布好的图块输出的点 [x, y, z, ...]（接缝那边的当钉）；placed：本图块的输出点追加到这里（给后面的图块用） */
+function layoutChart(K, CS, fp, e, s, pts, surf, ext, placed) {
+  // 0. 禁放格（贴面 / 已托住 / 贴壁根部 / 保护面附近）从区域里减掉：布点绕开它们，在它们周围照样留边缘距离。
+  //    先做半径约一格的开运算：零星的一两个格子（判据在格子边上抖动）不算
+  const mask = surf && surf.mask;
+  if (mask && mask.bits) {
+    const { x0, z0, g, nx: mx, nz: mz, bits } = mask, polys = [];
+    for (let r = 0; r < mz; r++) {
+      for (let c = 0; c < mx; c++) {
+        if (!bits[r * mx + c]) continue;
+        let c1 = c;
+        while (c1 + 1 < mx && bits[r * mx + c1 + 1]) c1++;
+        const xa = x0 + (c - 0.5) * g, xb = x0 + (c1 + 0.5) * g, za = z0 + (r - 0.5) * g, zb = z0 + (r + 0.5) * g;
+        polys.push([[xa, za], [xb, za], [xb, zb], [xa, zb]]);
+        c = c1;
+      }
+    }
+    if (polys.length) {
+      let bad = K(new CS(polys, 'Positive'));
+      bad = K(K(bad.offset(-0.6 * g, 'Square', 2, 8)).offset(0.6 * g, 'Square', 2, 8));
+      if (!bad.isEmpty()) {
+        fp = K(fp.subtract(bad));
+        if (fp.isEmpty()) return;
+      }
+    }
+  }
+  // 1. 内缩区 E 与环（开运算：比 0.6 × 间距还窄的细条不画环——否则细条两侧各一排挤在一起，按窄条走中线）
   let E = e > 0 ? K(fp.offset(-e, 'Round', 2, 32)) : fp;
   if (!E.isEmpty()) E = K(K(E.offset(-OPEN_FRAC * s, 'Round', 2, 32)).offset(OPEN_FRAC * s, 'Round', 2, 32));
   const hasE = !E.isEmpty();
-  // 1. 边缘环（固定）
-  const ring = [];
-  if (hasE) sampleRing(E, 0, s, ring);
+  const { rings, init } = hasE ? ringSetup(E, s) : { rings: [], init: [] };
+  const initXZ = p => (p.r >= 0 ? ringAt(rings[p.r], p.a) : [p.x, p.z]);
   // 2. 采样格（四周各留两格在区域外）
   const bb = fp.bounds();
   const bw = bb.max[0] - bb.min[0], bh = bb.max[1] - bb.min[1];
@@ -586,36 +654,40 @@ function layoutChart(K, fp, e, s, pts) {
   const nx = Math.ceil(bw / h) + 4, nz = Math.ceil(bh / h) + 4, N = nx * nz;
   const g = { nx, nz, x0: bb.min[0] - 2 * h, z0: bb.min[1] - 2 * h, h };
   const cx = j => g.x0 + (j % nx + 0.5) * h, cz = j => g.z0 + (((j / nx) | 0) + 0.5) * h;
-  const g_x = c => g.x0 + (c + 0.5) * h, g_z = r => g.z0 + (r + 0.5) * h;
   const cellOf = (x, z) => Math.min(nz - 1, Math.max(0, Math.floor((z - g.z0) / h))) * nx + Math.min(nx - 1, Math.max(0, Math.floor((x - g.x0) / h)));
   const inF = new Uint8Array(N), inE = new Uint8Array(N);
   rasterize(fp.toPolygons(), g, inF);
   if (hasE) rasterize(E.toPolygons(), g, inE);
   let nF = 0;
   for (let j = 0; j < N; j++) { inE[j] &= inF[j]; nF += inF[j]; }
-  if (!nF) {                                         // 比一个采样格还小：放在轮廓重心
-    if (!ring.length) pts.push((bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, 1);
-    for (let i = 0; i < ring.length; i++) pts.push(ring[i]);
+  if (!nF) {                                         // 比一个采样格还小：环点原样输出，没有环就放在轮廓重心
+    if (!init.length) pts.push((bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, 1);
+    for (const p of init) { const v = initXZ(p); pts.push(v[0], v[1], 0); }
     return;
   }
   const W = edtWork(nx, nz), site = new Uint8Array(N);
-  // 3. 每个采样到区域边界的距离（格心到区域外最近格心的距离 − 半格）
+  // 3. 每格到区域边界的距离（格心到区域外最近格心的距离 − 半格）、最近的区域外格（≈ 最近的边界点）、最近的区域内格（区域外的点取高度用）
   for (let j = 0; j < N; j++) site[j] = inF[j] ? 0 : 1;
   edt2(site, nx, nz, W);
   const dep = new Float32Array(N);
   for (let j = 0; j < N; j++) dep[j] = inF[j] ? Math.max(0, Math.sqrt(W.d2[j]) * h - h / 2) : -1;
-  const ftOut = W.ft.slice();                       // 每格最近的区域外格子（≈ 最近的边界点）
-  // 4. 允许放内部点的地方 Ω = 内缩区 ∪ 窄条中线。中线取 λ-中轴（Chazal & Lieutier 2005）：相邻两格各自最近的边界点相距 ≥ λ
-  //    的格子。λ = 附近带宽的 0.6 倍（至少 0.3 × 间距）——轮廓上三角面锯齿长出来的细枝，两侧边界点只隔一个齿宽，剪掉；真正的
-  //    中线两侧边界点隔整条带宽，留下，弯道、粗细渐变都不断（曾用「比两侧邻格深」的脊线 + 深度显著性：锯齿细枝剪不干净，
-  //    阈值一收紧弯道处中线又断了）。
-  //    离内缩区不到「边缘距离 + 半间距」的中线不算：内缩区角部的分叉、锯齿齿尖都在这个范围里，归边缘环管
+  const ftOut = W.ft.slice();
+  for (let j = 0; j < N; j++) site[j] = inF[j];
+  edt2(site, nx, nz, W);
+  const ftIn = W.ft.slice();
+  // 4. 允许放点的地方 Ω = E ∪ 窄条中线。中线取 λ-中轴（Chazal & Lieutier 2005）：相邻两格各自最近的边界点相距 ≥ λ 的格子，
+  //    λ = 附近带宽的 0.6 倍（至少 0.3 × 间距）——轮廓上三角面锯齿长出来的细枝两侧边界点只隔一个齿宽，剪掉；真正的中线两侧
+  //    隔整条带宽，留下，弯道、粗细渐变都不断。离 E 不到「边缘距离 + 半间距」的中线不算：E 角部的分叉、锯齿齿尖归环点管
   const omega = new Uint8Array(N);
-  let dE = null;
+  let dE = null, ftE = null, dIn = null;
   if (hasE) {
     for (let j = 0; j < N; j++) site[j] = inE[j];
     edt2(site, nx, nz, W);
-    dE = W.d2.slice();
+    dE = W.d2.slice(); ftE = W.ft.slice();          // 到 E 的距离、最近的 E 格（内部点吸回 E）
+    for (let j = 0; j < N; j++) site[j] = inE[j] ? 0 : 1;
+    edt2(site, nx, nz, W);
+    dIn = new Float32Array(N);                       // E 内到 E 轮廓的距离（初值六角格只铺在深处）
+    for (let j = 0; j < N; j++) dIn[j] = inE[j] ? Math.sqrt(W.d2[j]) * h - h / 2 : -1;
   }
   const reach2 = ((e + s / 2) / h) ** 2;
   const depMax = maxFilter(dep, nx, nz, Math.ceil((e + OPEN_FRAC * s) / h) + 1);
@@ -632,225 +704,115 @@ function layoutChart(K, fp, e, s, pts) {
       if ((xk - xj) ** 2 + (zk - zj) ** 2 >= lam2) { omega[j] = 1; break; }
     }
   }
-  // 最近的 Ω 站点（插点、松弛后吸附用）
+  const med = new Uint8Array(N);                     // 窄条中线（E 以外的 Ω）
+  let nMed = 0;
+  for (let j = 0; j < N; j++) if (omega[j] && !inE[j]) { med[j] = 1; nMed++; }
+  let ftM = null;                                    // 最近的中线格（窄条点吸回中线）
+  if (nMed) { for (let j = 0; j < N; j++) site[j] = med[j]; edt2(site, nx, nz, W); ftM = W.ft.slice(); }
   for (let j = 0; j < N; j++) site[j] = omega[j];
   edt2(site, nx, nz, W);
-  const ftO = W.ft.slice();
-  // 5. 正六角格（点距 = 支撑间距，对齐世界原点）只铺在离内缩线 ≥ 0.85 × 间距的深处，固定不动：开阔处整整齐齐、点距就是
-  //    设定的间距。内缩线与六角格之间的过渡带、以及窄带（内缩区不够宽，格子对不上条带走向）留给下面按覆盖补点 + 松弛
-  //    最外一排（离内缩线 0.85 × 间距 ～ 再往里一个行距）不固定，和补出来的点一起松弛：边缘环顺着轮廓走、六角格对齐世界原点，
-  //    两者之间的距离随处在变，固定死的话间距刚好比覆盖要求宽一点的地方会被硬塞进一排（用户截图：底座边上一溜挤着的点）
-  const rowH = s * Math.sqrt(3) / 2, keep = e + LATTICE_KEEP * s;
-  const lat = [], latLoose = [];
-  for (let jr = Math.floor(g.z0 / rowH), j1 = Math.ceil((g.z0 + nz * h) / rowH); jr <= j1; jr++) {
-    const zz = jr * rowH, off = (jr & 1) ? s / 2 : 0;
-    for (let ic = Math.floor((g.x0 - off) / s), i1 = Math.ceil((g.x0 + nx * h - off) / s); ic <= i1; ic++) {
-      const xx = ic * s + off, c = cellOf(xx, zz);
-      if (!inE[c] || dep[c] < keep) continue;
-      if (dep[c] >= keep + rowH) lat.push(xx, zz); else latLoose.push(xx, zz);
-    }
-  }
-  // 窗口内逐格取最小距离（点附近 rad 以内）
-  const stampInto = (arr, px, pz, rad) => {
-    const w = Math.ceil((rad + h) / h), c0 = Math.floor((px - g.x0) / h), r0 = Math.floor((pz - g.z0) / h);
-    for (let r = Math.max(0, r0 - w); r <= Math.min(nz - 1, r0 + w); r++) {
-      const zz = g.z0 + (r + 0.5) * h - pz;
-      for (let c = Math.max(0, c0 - w); c <= Math.min(nx - 1, c0 + w); c++) {
-        const d = Math.hypot(g.x0 + (c + 0.5) * h - px, zz), j = r * nx + c;
-        if (d < arr[j]) arr[j] = d;
-      }
-    }
-  };
-  const nearLat = new Float32Array(N).fill(Infinity);
-  for (let i = 0; i < lat.length; i += 2) stampInto(nearLat, lat[i], lat[i + 1], 1.5 * s);
-  for (let i = 0; i < latLoose.length; i += 2) stampInto(nearLat, latLoose[i], latLoose[i + 1], 1.5 * s);
-  // 6. 覆盖要求：内缩区里离六角格 1.5 × 间距以内 0.72 × 间距（过渡带别补得太密），其余（窄带）0.6 × 间距（各排沿排点距 ≈ 间距）；
-  //    归窄条中线管的采样按与中线的深度差放宽（沿中线点距 ≈ 间距；按中线自身深度算，不封顶到边缘距离——开运算去掉的带子
-  //    中线可能比边缘距离还深，封顶会把中线两侧一溜当成内部、点被逼密）；归内缩区管的边缘带交给边缘环。
-  //    窄内缩区（中线离内缩线不到 0.75 个行距，中间放一排会离两边太近）里离边缘环不到半个行距的采样由边缘环自己负责：要求放宽到
-  //    「点距一半 × 离环深度」的斜边——细长内缩区两侧的边缘排从转角起步、彼此对齐时，两排之间最远处离支撑 √(1.5² + 1.3²) ≈ 1.98mm，
-  //    按 1.8mm 卡会在中间再塞一排、离两边只有 1.3mm（平躺圆柱实测）。宽一些的内缩区不放宽：环面结管底带中间那排按原来的点距排
-  const half = s / 2, need = [], R = new Float32Array(N), rowHalf = s * Math.sqrt(3) / 4;
-  let Rmax = 0;
-  for (let j = 0; j < N; j++) {
-    if (!inF[j]) continue;
-    const f = ftO[j];
-    if (f < 0 || (!inE[j] && inE[f])) continue;
-    const base = (nearLat[j] <= 1.5 * s ? COVER_LAT : COVER_IN) * s;
-    R[j] = inE[j]
-      ? (depMax[j] - e < 1.5 * rowHalf ? Math.max(base, Math.hypot(half, Math.min(Math.max(0, dep[j] - e), rowHalf)) * 1.02) : base)
-      : Math.hypot(Math.max(0, dep[f] - dep[j]), half) * COVER_NARROW;
-    if (R[j] > Rmax) Rmax = R[j];
-    need.push(j);
-  }
-  // 到最近支撑点的距离（只更新点附近 max(Rmax, 间距) 以内的格子：更远的不影响「是否被覆盖」，窄条扫描查的是一个间距以内）
-  const dist = new Float32Array(N).fill(Infinity);
-  const stamp = (px, pz) => stampInto(dist, px, pz, Math.max(Rmax, s));
-  // 固定点：边缘环 + 六角格；补出来的点（mov）才参与松弛
-  const fix = [];
-  for (let i = 0; i < ring.length; i += 3) { fix.push(ring[i], ring[i + 1]); stamp(ring[i], ring[i + 1]); }
-  const nRing = fix.length / 2;
-  for (let i = 0; i < lat.length; i += 2) { fix.push(lat[i], lat[i + 1]); stamp(lat[i], lat[i + 1]); }
-  // 7. 按覆盖补点：贪心最大覆盖——候选位置是 Ω 站点（每 2 格取一个、只取未覆盖采样附近的），每次选能新盖住最多未覆盖采样的
-  //    那个放点（增益只会变小，惰性更新：出堆时重算，仍不小于堆顶才选中），直到处处覆盖；之后松弛把点摊匀。面上的点数接近最省。
-  //    曾用「哪里最空插哪里」（最远点插入）：在线上对半切空当，间距最后落在要求的 1～2 倍之间（50mm 窄条放了 23 点，应为 17 点）；
-  //    贪心在线上也会因为同分时任意挑而留下短空当多放点，所以窄条另用沿线扫描（7a），这里主要补面上的
-  const mov = [];
-  const dead = new Uint8Array(N);
-  const fill = thr => {
-    const unc = new Uint8Array(N);
-    let nUnc = 0;
-    for (let i = 0; i < need.length; i++) {
-      const j = need[i];
-      if (dead[j] || dist[j] <= thr * R[j]) continue;
-      // 离它最近的可放点位置（Ω 站点）都盖不住它（如窄条末端的两个角）：放弃，交给兜底补点——否则会在中线末端反复放
-      // 「只多盖一点点」的点，堆成一簇
-      const f = ftO[j];
-      if (f < 0 || Math.hypot(cx(f) - cx(j), cz(f) - cz(j)) > thr * R[j]) { dead[j] = 1; continue; }
-      unc[j] = 1; nUnc++;
-    }
-    if (!nUnc) return 0;
-    const wr = Math.ceil(thr * Rmax / h) + 1;
-    // 候选：未覆盖采样 thr·Rmax 以内的 Ω 站点（隔一格取一个）
-    const near = new Uint8Array(N);
-    for (let j = 0; j < N; j++) {
-      if (!unc[j]) continue;
-      const c0 = j % nx, r0 = (j / nx) | 0;
-      for (let r = Math.max(0, r0 - wr); r <= Math.min(nz - 1, r0 + wr); r++) for (let c = Math.max(0, c0 - wr); c <= Math.min(nx - 1, c0 + wr); c++) near[r * nx + c] = 1;
-    }
-    const cand = [];
-    for (let r = 0; r < nz; r += 2) for (let c = 0; c < nx; c += 2) { const j = r * nx + c; if (omega[j] && near[j]) cand.push(j); }
-    if (!cand.length) { for (let j = 0; j < N; j++) if (unc[j]) dead[j] = 1; return 0; }
-    const gainOf = q => {
-      const c0 = q % nx, r0 = (q / nx) | 0, qx = cx(q), qz = cz(q);
-      let g = 0;
-      for (let r = Math.max(0, r0 - wr); r <= Math.min(nz - 1, r0 + wr); r++) {
-        const dz = g_z(r) - qz, dz2 = dz * dz;
-        for (let c = Math.max(0, c0 - wr); c <= Math.min(nx - 1, c0 + wr); c++) {
+  const ftO = W.ft.slice();                          // 最近的可放点位置（判覆盖：窄条采样离它最近的中线有多远）
+  // 5. 曲面高度与坡面面积系数：格心落在哪个三角形，就取它的插值高度与「曲面面积 / 投影面积 = 1 / cos 坡度」
+  const Y = new Float32Array(N), SWt = new Float32Array(N).fill(1);
+  if (surf && surf.t2 && surf.ty) {
+    const t2 = surf.t2, ty = surf.ty, got = new Uint8Array(N);
+    for (let k = 0, m = 0; k + 5 < t2.length; k += 6, m += 3) {
+      const ax = t2[k], az = t2[k + 1], bx = t2[k + 2], bz = t2[k + 3], qx = t2[k + 4], qz = t2[k + 5];
+      const ya = ty[m], yb = ty[m + 1], yc = ty[m + 2];
+      const d = (bx - ax) * (qz - az) - (qx - ax) * (bz - az);
+      if (Math.abs(d) < 1e-12) continue;
+      const ux = bx - ax, uy = yb - ya, uz = bz - az, vx = qx - ax, vy = yc - ya, vz = qz - az;
+      const nX = uy * vz - uz * vy, nY = uz * vx - ux * vz, nZ = ux * vy - uy * vx, ln = Math.hypot(nX, nY, nZ);
+      const st = ln > 0 ? ln / Math.max(Math.abs(nY), 0.2 * ln) : 1;
+      const c0 = Math.max(0, Math.ceil((Math.min(ax, bx, qx) - g.x0) / h - 0.5)), c1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx, qx) - g.x0) / h - 0.5));
+      const r0 = Math.max(0, Math.ceil((Math.min(az, bz, qz) - g.z0) / h - 0.5)), r1 = Math.min(nz - 1, Math.floor((Math.max(az, bz, qz) - g.z0) / h - 0.5));
+      for (let r = r0; r <= r1; r++) {
+        const pz = g.z0 + (r + 0.5) * h;
+        for (let c = c0; c <= c1; c++) {
+          const px = g.x0 + (c + 0.5) * h;
+          const w1 = ((px - ax) * (qz - az) - (qx - ax) * (pz - az)) / d, w2 = ((bx - ax) * (pz - az) - (px - ax) * (bz - az)) / d, w0 = 1 - w1 - w2;
+          if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
           const j = r * nx + c;
-          if (!unc[j]) continue;
-          const rr = thr * R[j], dx = g_x(c) - qx;
-          if (dx * dx + dz2 <= rr * rr) g++;
+          Y[j] = w0 * ya + w1 * yb + w2 * yc; SWt[j] = st; got[j] = 1;
         }
       }
-      return g;
+    }
+    let miss = false;
+    for (let j = 0; j < N && !miss; j++) if (inF[j] && !got[j]) miss = true;
+    if (miss) {                                      // 三角形之间的数值缝、闭运算补出来的边：取最近一个扫到的格子
+      edt2(got, nx, nz, W);
+      for (let j = 0; j < N; j++) if (inF[j] && !got[j] && W.ft[j] >= 0) { Y[j] = Y[W.ft[j]]; SWt[j] = SWt[W.ft[j]]; }
+    }
+  }
+  const yAt = (x, z) => { const c = cellOf(x, z); return inF[c] ? Y[c] : (ftIn[c] >= 0 ? Y[ftIn[c]] : 0); };
+  // 6. 松弛与增删用的抽样（≈ 间距/7.5 一个）：坐标、曲面高度、代表的曲面面积、覆盖要求。类别：
+  //    0 = E 内（离最近站点 > 0.85 × 间距就补内部点）/ 1 = 归 E 管的边缘带（> max(0.85 × 间距, 边缘距离 + 半间距) 才补，补在环上，守住边缘距离）/
+  //    2 = 窄条（按与中线的深度差放宽：沿中线点距 ≈ 间距；补在中线上）/ 3 = 不要求覆盖（离它最近的可放位置都盖不住：窄条末端两角，交给兜底补点）
+  const ST = Math.max(1, Math.round(s / 7.5 / h)), hs = ST * h;
+  const sj = [];
+  for (let r = ST >> 1; r < nz; r += ST) for (let c = ST >> 1; c < nx; c += ST) { const j = r * nx + c; if (inF[j]) sj.push(j); }
+  const nS = sj.length;
+  const SX = new Float64Array(nS), SZ = new Float64Array(nS), SY = new Float64Array(nS), SA = new Float64Array(nS);
+  const KIND = new Uint8Array(nS), THR = new Float64Array(nS);
+  const holeEdge = Math.max(HOLE_IN * s, e + 0.5 * s) * 0.98;
+  for (let i = 0; i < nS; i++) {
+    const j = sj[i];
+    SX[i] = cx(j); SZ[i] = cz(j); SY[i] = Y[j]; SA[i] = SWt[j] * hs * hs;
+    if (inE[j]) { KIND[i] = 0; THR[i] = HOLE_IN * s; continue; }
+    const f = ftO[j];
+    if (f >= 0 && inE[f]) { KIND[i] = 1; THR[i] = holeEdge; continue; }
+    if (f >= 0) {
+      KIND[i] = 2; THR[i] = Math.hypot(Math.max(0, dep[f] - dep[j]), s / 2) * COVER_NARROW;
+      if (Math.hypot(cx(f) - SX[i], cz(f) - SZ[i]) <= THR[i]) continue;
+    }
+    KIND[i] = 3; THR[i] = Infinity;
+  }
+  // 7. 初始站点：环点 / 转角钉、E 里一层正六角格（对齐世界原点，点距 = 间距；跟着一起松弛，不固定）、窄条沿中线扫一遍
+  const S = [];
+  const addSite = (x, z, t, r = -1, a = 0) => S.push({ x, z, y: yAt(x, z), t, r, a });
+  for (const p of init) { const v = initXZ(p); addSite(v[0], v[1], p.t, p.r, p.a); }
+  // 孤岛最低点：当转角钉用（不动、不删），布点绕着它排；不输出（主线程按孤岛种子口径自己放）
+  const pins = surf && surf.pins;
+  if (pins) for (let i = 0; i + 1 < pins.length; i += 2) { addSite(pins[i], pins[i + 1], PIN); S[S.length - 1].seed = true; }
+  // 先布好的图块在接缝那边的点：离本图块不到一个间距、高度接得上（同一片曲面在接缝处连续；上下叠着的另一层不算）的，也当钉。
+  // 各图块各自布点时，接缝两侧各放一排、挨在一起，主线程按 0.8 × 间距去重后，后放的那块少一个点、留下空当（实测手办左手）
+  if (ext && ext.length) {
+    const xLo = g.x0 - s, xHi = g.x0 + nx * h + s, zLo = g.z0 - s, zHi = g.z0 + nz * h + s;
+    for (let i = 0; i + 2 < ext.length; i += 3) {
+      const x = ext[i], y = ext[i + 1], z = ext[i + 2];
+      if (x < xLo || x > xHi || z < zLo || z > zHi) continue;
+      const f = ftIn[cellOf(x, z)];
+      if (f < 0) continue;
+      const dxz = Math.hypot(x - cx(f), z - cz(f));
+      if (dxz > s || Math.abs(y - Y[f]) > Math.max(0.5, dxz)) continue;
+      S.push({ x, z, y, t: PIN, r: -1, a: 0, seed: true });
+    }
+  }
+  if (hasE) {
+    const rowH = s * Math.sqrt(3) / 2;
+    for (let jr = Math.floor(g.z0 / rowH), j1 = Math.ceil((g.z0 + nz * h) / rowH); jr <= j1; jr++) {
+      const zz = jr * rowH, off = (jr & 1) ? s / 2 : 0;
+      for (let ic = Math.floor((g.x0 - off) / s), i1 = Math.ceil((g.x0 + nx * h - off) / s); ic <= i1; ic++) {
+        const xx = ic * s + off, c = cellOf(xx, zz);
+        if (inE[c] && dIn[c] >= LAT_INIT * s) addSite(xx, zz, INT);
+      }
+    }
+  }
+  if (nMed) {
+    // 窄条是一维问题：每条中线（8 邻接连通片）先两遍广度优先找到一端，再按广度优先的顺序（= 沿线顺序）走，离已有点 ≥ 0.95 × 间距就放一个
+    const dist = new Float32Array(N).fill(Infinity);
+    const stamp = (px, pz) => {
+      const w = Math.ceil((s + h) / h), c0 = Math.floor((px - g.x0) / h), r0 = Math.floor((pz - g.z0) / h);
+      for (let r = Math.max(0, r0 - w); r <= Math.min(nz - 1, r0 + w); r++) {
+        const zz = g.z0 + (r + 0.5) * h - pz;
+        for (let c = Math.max(0, c0 - w); c <= Math.min(nx - 1, c0 + w); c++) {
+          const d = Math.hypot(g.x0 + (c + 0.5) * h - px, zz), j = r * nx + c;
+          if (d < dist[j]) dist[j] = d;
+        }
+      }
     };
-    // 最大堆（键 = 增益），惰性更新
-    const hk = [], hv = [];
-    const up = i => { while (i > 0) { const p2 = (i - 1) >> 1; if (hk[p2] >= hk[i]) break; [hk[p2], hk[i]] = [hk[i], hk[p2]]; [hv[p2], hv[i]] = [hv[i], hv[p2]]; i = p2; } };
-    const down = i => { for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hk.length && hk[l] > hk[m]) m = l; if (r < hk.length && hk[r] > hk[m]) m = r; if (m === i) break; [hk[m], hk[i]] = [hk[i], hk[m]]; [hv[m], hv[i]] = [hv[i], hv[m]]; i = m; } };
-    const push = (k, v) => { hk.push(k); hv.push(v); up(hk.length - 1); };
-    const pop = () => { const k = hk[0], v = hv[0], lk = hk.pop(), lv = hv.pop(); if (hk.length) { hk[0] = lk; hv[0] = lv; down(0); } return [k, v]; };
-    for (const q of cand) { const g = gainOf(q); if (g > 0) push(g, q); }
-    let added = 0;
-    while (nUnc > 0 && hk.length) {
-      const [, q] = pop();
-      const g = gainOf(q);
-      if (g <= 0) continue;
-      if (hk.length && g < hk[0]) { push(g, q); continue; }
-      const qx = cx(q), qz = cz(q);
-      mov.push(qx, qz); stamp(qx, qz); added++;
-      const c0 = q % nx, r0 = (q / nx) | 0;
-      for (let r = Math.max(0, r0 - wr); r <= Math.min(nz - 1, r0 + wr); r++) for (let c = Math.max(0, c0 - wr); c <= Math.min(nx - 1, c0 + wr); c++) {
-        const j = r * nx + c;
-        if (unc[j] && dist[j] <= thr * R[j]) { unc[j] = 0; nUnc--; }
-      }
-    }
-    for (let j = 0; j < N; j++) if (unc[j]) dead[j] = 1;   // 哪个候选都盖不住（不该发生），放弃
-    return added;
-  };
-  // 8. Lloyd 松弛：Ω 内的采样归最近的点，补出来的点挪到归它的采样的重心（落到 Ω 外就吸附回最近的 Ω 站点）；固定点不动
-  const nFix = fix.length / 2;
-  const owner = new Int32Array(N);
-  // 每个采样归最近的点：W.ft[j] 是最近点所在格，owner[格] 是点号（0..nFix-1 固定点，其后为补出来的点）
-  const assign = () => {
-    site.fill(0); owner.fill(-1);
-    const nMov = mov.length / 2;
-    for (let p = 0; p < nFix; p++) { const c = cellOf(fix[p * 2], fix[p * 2 + 1]); if (owner[c] < 0) { owner[c] = p; site[c] = 1; } }
-    for (let p = 0; p < nMov; p++) { const c = cellOf(mov[p * 2], mov[p * 2 + 1]); if (owner[c] < 0) { owner[c] = nFix + p; site[c] = 1; } }
-    edt2(site, nx, nz, W);
-  };
-  const lloyd = iters => {
-    const nMov = mov.length / 2;
-    if (!nMov) return;
-    const sx = new Float64Array(nMov), sz = new Float64Array(nMov), cnt = new Int32Array(nMov);
-    for (let it = 0; it < iters; it++) {
-      assign();
-      sx.fill(0); sz.fill(0); cnt.fill(0);
-      // 重心按点实际要管的采样（需求采样）算，再吸附回 Ω：窄条的中线比条带短一截（到不了末端），只按中线上的格子算的话，
-      // 末端的点拉不过去，末端还得另补一个点挤在旁边
-      for (let i = 0; i < need.length; i++) {
-        const j = need[i], o = owner[W.ft[j]] - nFix;
-        if (o < 0) continue;
-        sx[o] += cx(j); sz[o] += cz(j); cnt[o]++;
-      }
-      let moved = 0;
-      for (let p = 0; p < nMov; p++) {
-        if (!cnt[p]) continue;
-        let x = sx[p] / cnt[p], z = sz[p] / cnt[p];
-        const c = cellOf(x, z);
-        if (!omega[c]) { const f = ftO[c]; if (f >= 0) { x = cx(f); z = cz(f); } }
-        moved = Math.max(moved, Math.hypot(x - mov[p * 2], z - mov[p * 2 + 1]));
-        mov[p * 2] = x; mov[p * 2 + 1] = z;
-      }
-      if (moved < h * 0.25) break;
-    }
-  };
-  const restamp = () => {
-    dist.fill(Infinity);
-    for (let i = 0; i < fix.length; i += 2) stamp(fix[i], fix[i + 1]);
-    for (let i = 0; i < mov.length; i += 2) stamp(mov[i], mov[i + 1]);
-  };
-  // 9. 删多余的点（松弛只挪位置、不改点数）：把某个补出来的点拿掉后，它所管的每个采样都还能被别的点按要求覆盖，它就是多余的。
-  //    每轮从管得最少的点删起，同一轮删掉的点之间至少隔 2 倍覆盖要求（它们的采样不会互相依赖），删完再松弛、再查覆盖
-  //    （曾按「所管采样最远处 < 0.7 × 要求」判：宽窄条里靠边的采样离中线本来就远，比例总在 0.9 上下，一个都删不掉）
-  const thin = () => {
-    const nMov = mov.length / 2;
-    if (!nMov) return 0;
-    assign();
-    const lists = Array.from({ length: nMov }, () => []);
-    const rMaxOf = new Float32Array(nMov);
-    for (let i = 0; i < need.length; i++) {
-      const j = need[i], o = owner[W.ft[j]] - nFix;
-      if (o < 0) continue;
-      lists[o].push(j);
-      if (R[j] > rMaxOf[o]) rMaxOf[o] = R[j];
-    }
-    // 全部点（固定 + 补出来的）按 Rmax 分桶，查「除它以外」最近的点
-    const B = Math.max(Rmax, h), bk = new Map(), key = (x, z) => Math.floor(x / B) * 73856093 ^ Math.floor(z / B) * 19349663;
-    const P = fix.concat(mov), nAll = P.length / 2, gone = new Uint8Array(nAll);
-    for (let q = 0; q < nAll; q++) { const k = key(P[q * 2], P[q * 2 + 1]); let arr = bk.get(k); if (!arr) bk.set(k, arr = []); arr.push(q); }
-    const coveredWithout = (j, skip) => {
-      const x = cx(j), z = cz(j), gx = Math.floor(x / B), gz = Math.floor(z / B), r2 = R[j] * R[j];
-      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
-        const arr = bk.get((gx + a) * 73856093 ^ (gz + b) * 19349663);
-        if (arr) for (const q of arr) if (q !== skip && !gone[q] && (P[q * 2] - x) ** 2 + (P[q * 2 + 1] - z) ** 2 <= r2) return true;
-      }
-      return false;
-    };
-    const order = [];
-    for (let p = 0; p < nMov; p++) order.push(p);
-    order.sort((a, b) => lists[a].length - lists[b].length);
-    const picked = [];
-    for (const p of order) {
-      const x = mov[p * 2], z = mov[p * 2 + 1], keep = 2 * Math.max(rMaxOf[p], COVER_IN * s);
-      if (picked.some(q => (mov[q * 2] - x) ** 2 + (mov[q * 2 + 1] - z) ** 2 < keep * keep)) continue;
-      let red = true;
-      for (const j of lists[p]) if (!coveredWithout(j, nFix + p)) { red = false; break; }
-      if (!red) continue;
-      picked.push(p); gone[nFix + p] = 1;
-    }
-    if (!picked.length) return 0;
-    let w = 0;
-    for (let p = 0; p < nMov; p++) if (!gone[nFix + p]) { mov[w++] = mov[p * 2]; mov[w++] = mov[p * 2 + 1]; }
-    mov.length = w;
-    return picked.length;
-  };
-  for (let i = 0; i < latLoose.length; i += 2) { mov.push(latLoose[i], latLoose[i + 1]); stamp(latLoose[i], latLoose[i + 1]); }
-  // 7a. 窄条（内缩区以外的中线）：一维问题，最省的放法是从一头沿线扫过去——每条中线（8 邻接连通片）先两遍广度优先找到一端，
-  //     再按广度优先的顺序（= 沿线顺序）走，离已有的点 ≥ 0.95 × 间距 就放一个；分叉各自成段，闭环两路在对面会合（点距由距离判定把关）
-  {
-    const seen = new Uint8Array(N), queue = new Int32Array(N);
+    for (const q of S) stamp(q.x, q.z);
+    const seen = new Uint8Array(N), tmp = new Uint8Array(N), queue = new Int32Array(N);
     const NB8 = [1, -1, nx, -nx, nx + 1, nx - 1, -nx + 1, -nx - 1];
     const bfs = (start, mark) => {
       let head = 0, tail = 0;
@@ -859,81 +821,255 @@ function layoutChart(K, fp, e, s, pts) {
         const j = queue[head++];
         for (const o of NB8) {
           const k = j + o;
-          if (k < 0 || k >= N || mark[k] || !omega[k] || inE[k]) continue;
+          if (k < 0 || k >= N || mark[k] || !med[k]) continue;
           if (Math.abs((k % nx) - (j % nx)) > 1) continue;     // 不跨行首尾
           mark[k] = 1; queue[tail++] = k;
         }
       }
       return tail;
     };
-    const tmp = new Uint8Array(N), gap = 0.95 * s;
     for (let j0 = 0; j0 < N; j0++) {
-      if (!omega[j0] || inE[j0] || seen[j0]) continue;
-      const n1 = bfs(j0, seen);
-      const far = queue[n1 - 1];                                 // 第一遍最后出队的格 ≈ 一端
-      for (let i = 0; i < n1; i++) tmp[queue[i]] = 0;
+      if (!med[j0] || seen[j0]) continue;
+      const far = queue[bfs(j0, seen) - 1];                    // 第一遍最后出队的格 ≈ 一端
       const n2 = bfs(far, tmp);
       for (let i = 0; i < n2; i++) {
         const j = queue[i];
-        if (dist[j] < gap) continue;
-        const x = cx(j), z = cz(j);
-        mov.push(x, z); stamp(x, z);
+        if (dist[j] < 0.95 * s) continue;
+        addSite(cx(j), cz(j), MED); stamp(cx(j), cz(j));
       }
       for (let i = 0; i < n2; i++) tmp[queue[i]] = 0;
     }
   }
-  lloyd(LLOYD_ITERS);                                       // 松动的那排格点与窄条点先排开、错开，再看哪里还缺
-  restamp();
-  // 7b. 其余（内缩区里六角格以外的过渡带、窄带中间那排）贪心补到处处覆盖，再整体松弛；多余的点删掉后再松弛、再查
-  fill(1);
-  lloyd(LLOYD_ITERS);
-  for (let round = 0; round < 10 && thin(); round++) {
-    lloyd(LLOYD_ITERS);
-    restamp();
-    if (fill(1)) lloyd(6);
-  }
-  // 松弛后个别地方可能又露出空当：按放宽 10% 的要求再查一遍，有补点就再松弛几轮
-  restamp();
-  if (fill(1.1)) lloyd(6);
-  // 10. 边缘带的空当：边缘带归边缘环管、不参与上面的覆盖要求；这里按兜底补点的阈值（max(0.85 × 间距, 边缘距离 + 半间距)）查一遍，
-  //     离支撑还是太远的地方，在离它最近的可放位置（内缩线上或以内）补一个点——守住边缘距离。不在这里补的话，主线程的兜底补点会把点
-  //     补在空当里、贴着边（实测手办底座细长梯形两头的短斜边：边缘环只在两个转角上有点，斜边中段离它们刚过 3mm）。
-  //     内缩线都够不着的空当（尖角）仍交给兜底补点
-  {
-    restamp();
-    const hole = Math.max(0.85 * s, e + 0.5 * s) * 0.98, cand = [];
-    for (let j = 0; j < N; j++) {
-      if (!inF[j] || dist[j] <= hole) continue;
-      const f = ftO[j];
-      if (f >= 0 && inE[f] && !inE[j]) cand.push(j);                // 归内缩区管的边缘带采样
+  // 8. 站点分桶（桶宽 ≥ 间距）：最近站点按三维距离找
+  const B = Math.max(s, 4 * h);
+  const nbx = Math.max(1, Math.ceil(nx * h / B)), nbz = Math.max(1, Math.ceil(nz * h / B));
+  const head = new Int32Array(nbx * nbz);
+  let nxt = new Int32Array(Math.max(64, S.length * 2));
+  const bxOf = x => Math.min(nbx - 1, Math.max(0, Math.floor((x - g.x0) / B)));
+  const bzOf = z => Math.min(nbz - 1, Math.max(0, Math.floor((z - g.z0) / B)));
+  const buildBuckets = () => {
+    head.fill(-1);
+    if (nxt.length < S.length) nxt = new Int32Array(S.length * 2);
+    for (let k = 0; k < S.length; k++) { const b = bzOf(S[k].z) * nbx + bxOf(S[k].x); nxt[k] = head[b]; head[b] = k; }
+  };
+  let nk = -1, nd2 = Infinity;                       // nearest 的结果：站点号与三维距离平方
+  const nearest = (x, z, y, skip, gone) => {
+    const bx = bxOf(x), bz = bzOf(z);
+    nk = -1; nd2 = Infinity;
+    for (let rr = 0; ; rr++) {
+      for (let b = bz - rr; b <= bz + rr; b++) {
+        if (b < 0 || b >= nbz) continue;
+        const full = rr === 0 || b === bz - rr || b === bz + rr;
+        for (let a = bx - rr; a <= bx + rr; a += full ? 1 : 2 * rr) {
+          if (a < 0 || a >= nbx) continue;
+          for (let k = head[b * nbx + a]; k >= 0; k = nxt[k]) {
+            if (k === skip || (gone && gone[k])) continue;
+            const q = S[k], d = (q.x - x) ** 2 + (q.z - z) ** 2 + (q.y - y) ** 2;
+            if (d < nd2) { nd2 = d; nk = k; }
+          }
+        }
+      }
+      // 第 rr 圈以外的站点 XZ 距离都超过 rr × 桶宽，三维距离只会更大
+      if (nd2 <= (rr * B) ** 2 || (bx - rr <= 0 && bz - rr <= 0 && bx + rr >= nbx - 1 && bz + rr >= nbz - 1)) return;
     }
-    cand.sort((a, b) => dist[b] - dist[a]);
-    for (const j of cand) {
-      if (dist[j] <= hole) continue;
-      const f = ftO[j], fx = cx(f), fz = cz(f);
-      if (Math.hypot(fx - cx(j), fz - cz(j)) > hole) continue;      // 最近的可放位置也盖不住：留给兜底补点
-      mov.push(fx, fz); stamp(fx, fz);
+  };
+  const own = new Int32Array(nS), dmin = new Float64Array(nS);
+  const assign = () => {
+    buildBuckets();
+    for (let i = 0; i < nS; i++) { nearest(SX[i], SZ[i], SY[i], -1, null); own[i] = nk; dmin[i] = Math.sqrt(nd2); }
+  };
+  // 9. Lloyd：站点挪到所管采样的重心（按曲面面积加权）；环点投回轮廓（只在前后 0.6 × 间距弧长内找）、内部点吸回 E、窄条点吸回中线，转角钉不动
+  const lloyd = iters => {
+    for (let it = 0; it < iters; it++) {
+      assign();
+      const n = S.length, ax = new Float64Array(n), az = new Float64Array(n), aw = new Float64Array(n);
+      for (let i = 0; i < nS; i++) { const k = own[i]; if (k < 0) continue; const w = SA[i]; ax[k] += SX[i] * w; az[k] += SZ[i] * w; aw[k] += w; }
+      let moved = 0;
+      for (let k = 0; k < n; k++) {
+        const q = S[k];
+        if (q.t === PIN || !aw[k]) continue;
+        let x = ax[k] / aw[k], z = az[k] / aw[k];
+        if (q.t === RING) {
+          const R = rings[q.r];
+          q.a = ringProj(R, q.a, x, z, 0.6 * s);
+          [x, z] = ringAt(R, q.a);
+        } else {
+          const c = cellOf(x, z), inside = q.t === INT ? inE[c] : med[c], ft = q.t === INT ? ftE : ftM;
+          if (!inside && ft[c] >= 0) { x = cx(ft[c]); z = cz(ft[c]); }
+        }
+        const dm = Math.hypot(x - q.x, z - q.z);
+        if (dm > moved) moved = dm;
+        q.x = x; q.z = z; q.y = yAt(x, z);
+      }
+      if (moved < h * 0.25) break;
     }
-  }
-  // 兜底：补出来的点两两不到 0.35 × 间距（松弛把几个点吸进同一小片中线时会这样）只留一个
-  {
-    const keep = [], lim = (0.35 * s) ** 2;
-    for (let i = 0; i < mov.length; i += 2) {
-      let dup = false;
-      for (let k = 0; k < keep.length && !dup; k += 2) dup = (keep[k] - mov[i]) ** 2 + (keep[k + 1] - mov[i + 1]) ** 2 < lim;
-      if (!dup) keep.push(mov[i], mov[i + 1]);
+  };
+  // 10. 按管辖面积增删（见文件头第 5 条）
+  const A0 = Math.sqrt(3) / 2 * s * s, dMin2 = (DMIN_FRAC * s) ** 2, s2 = s * s;
+  // 删点的先后：内部 / 窄条点（1）→ 环点（2）→ 转角钉（3）；孤岛最低点与接缝钉（4）不删
+  const rankOf = q => (q.seed ? 4 : q.t === PIN ? 3 : q.t === RING ? 2 : 1);
+  const nearestRing = (x, z) => {
+    let best = Infinity, out = null;
+    for (let ri = 0; ri < rings.length; ri++) {
+      const R = rings[ri];
+      for (let i = 0; i < R.n; i++) {
+        const p = R.poly[i], q = R.poly[(i + 1) % R.n], dx = q[0] - p[0], dz = q[1] - p[1], L2 = dx * dx + dz * dz;
+        let u = L2 > 0 ? ((x - p[0]) * dx + (z - p[1]) * dz) / L2 : 0;
+        u = Math.max(0, Math.min(1, u));
+        const d = (p[0] + dx * u - x) ** 2 + (p[1] + dz * u - z) ** 2;
+        if (d < best) { best = d; out = { r: ri, a: R.acc[i] + u * R.seg[i] }; }
+      }
     }
-    mov.length = 0; mov.push(...keep);
+    return out;
+  };
+  const adapt = () => {
+    assign();
+    const n = S.length, area = new Float64Array(n), farI = new Int32Array(n).fill(-1), farD = new Float64Array(n);
+    for (let i = 0; i < nS; i++) {
+      const k = own[i];
+      if (k < 0) continue;
+      area[k] += SA[i];
+      if (KIND[i] === 0 && dmin[i] > farD[k]) { farD[k] = dmin[i]; farI[k] = i; }
+    }
+    const gone = new Uint8Array(n);
+    let changes = 0;
+    // ① 太近的两点删一个：按 rankOf 先删等级低的（孤岛最低点、接缝钉不删），同级删管得少的——两个轮廓的转角钉挨着时也只留一个
+    for (let k = 0; k < n; k++) {
+      if (gone[k]) continue;
+      const q = S[k], bx = bxOf(q.x), bz = bzOf(q.z);
+      for (let b = Math.max(0, bz - 1); b <= Math.min(nbz - 1, bz + 1) && !gone[k]; b++) {
+        for (let a = Math.max(0, bx - 1); a <= Math.min(nbx - 1, bx + 1) && !gone[k]; a++) {
+          for (let m = head[b * nbx + a]; m >= 0 && !gone[k]; m = nxt[m]) {
+            if (m <= k || gone[m]) continue;
+            const o = S[m];
+            if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 + (o.y - q.y) ** 2 >= dMin2) continue;
+            const rk = rankOf(q), rm = rankOf(o);
+            if (rk === 4 && rm === 4) continue;
+            gone[rk !== rm ? (rk < rm ? k : m) : (area[k] <= area[m] ? k : m)] = 1;
+            changes++;
+          }
+        }
+      }
+    }
+    // ② 管得太少的内部点删掉
+    for (let k = 0; k < n; k++) if (!gone[k] && S[k].t === INT && area[k] < DROP_AREA * A0) { gone[k] = 1; changes++; }
+    // ③ 加点。新点之间至少隔一个间距（同一片空当一轮只补一个，补完松弛再看），离已有的点至少隔最小距离
+    const adds = [];
+    const nearAdd = (x, z, y, r2) => adds.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 + (p.y - y) ** 2 < r2);
+    const roomy = (x, z, y) => { nearest(x, z, y, -1, gone); return nd2 >= dMin2 && !nearAdd(x, z, y, dMin2); };
+    // 环上的空当：每圈按弧长排序，相邻两点之间弧长中点离两边都超过最小距离就加一个环点
+    const byRing = rings.map(() => []);
+    for (let k = 0; k < n; k++) if (!gone[k] && S[k].r >= 0) byRing[S[k].r].push(S[k]);
+    for (let ri = 0; ri < rings.length; ri++) {
+      const arr = byRing[ri], R = rings[ri];
+      if (!arr.length) continue;
+      arr.sort((p, q) => p.a - q.a);
+      for (let i = 0; i < arr.length; i++) {
+        const p = arr[i], q = arr[(i + 1) % arr.length];
+        let L = q.a - p.a;
+        if (L <= 1e-9) L += R.P;
+        if (L < RING_GAP * s) continue;
+        const a = (p.a + L / 2) % R.P, [x, z] = ringAt(R, a), y = yAt(x, z);
+        if (!roomy(x, z, y)) continue;
+        adds.push({ x, z, y, t: RING, r: ri, a });
+      }
+    }
+    // 内部点管得太多：在它管辖区里离它最远的内缩区采样处加一个
+    for (let k = 0; k < n; k++) {
+      if (gone[k] || S[k].t !== INT || area[k] <= SPLIT_AREA * A0 || farI[k] < 0 || farD[k] < 0.6 * s) continue;
+      const i = farI[k];
+      if (nearAdd(SX[i], SZ[i], SY[i], s2)) continue;
+      nearest(SX[i], SZ[i], SY[i], -1, gone);
+      if (nd2 < (0.6 * s) ** 2) continue;
+      adds.push({ x: SX[i], z: SZ[i], y: SY[i], t: INT, r: -1, a: 0 });
+    }
+    // 覆盖不到的空当：按离最近站点的距离从大到小，超过各自的覆盖半径就补（内缩区 → 原地加内部点；边缘带 → 环上最近处；窄条 → 中线上最近处）
+    const holes = [];
+    for (let i = 0; i < nS; i++) if (KIND[i] < 3 && dmin[i] > THR[i]) holes.push(i);
+    holes.sort((p, q) => dmin[q] - dmin[p]);
+    for (const i of holes) {
+      if (nearAdd(SX[i], SZ[i], SY[i], s2)) continue;
+      let x = SX[i], z = SZ[i], t = INT, r = -1, a = 0;
+      if (KIND[i] === 1) {
+        const nr = nearestRing(x, z);
+        if (!nr) continue;
+        t = RING; r = nr.r; a = nr.a;
+        [x, z] = ringAt(rings[r], a);
+      } else if (KIND[i] === 2) {
+        const f = ftO[sj[i]];
+        x = cx(f); z = cz(f); t = MED;
+      }
+      const y = yAt(x, z);
+      if (Math.hypot(x - SX[i], z - SZ[i], y - SY[i]) > THR[i] || !roomy(x, z, y)) continue;
+      adds.push({ x, z, y, t, r, a });
+    }
+    if (!changes && !adds.length) return 0;
+    const keep = S.filter((_, k) => !gone[k]);
+    S.length = 0;
+    for (const q of keep) S.push(q);
+    for (const q of adds) S.push(q);
+    return changes + adds.length;
+  };
+  // 11. 收尾：太近的一对（三维 < 0.8 × 间距）里拿掉一个——只在拿掉后它管的采样仍都有别的点按覆盖半径盖着时才拿
+  //     （覆盖优先于均匀：窄尖、末端这类地方两点挨得近是为了盖住尖角）
+  const finalCull = () => {
+    assign();
+    const n = S.length, lists = Array.from({ length: n }, () => []);
+    for (let i = 0; i < nS; i++) if (own[i] >= 0) lists[own[i]].push(i);
+    const gone = new Uint8Array(n);
+    for (let k = 0; k < n; k++) {
+      if (gone[k]) continue;
+      const q = S[k], bx = bxOf(q.x), bz = bzOf(q.z);
+      for (let b = Math.max(0, bz - 1); b <= Math.min(nbz - 1, bz + 1) && !gone[k]; b++) {
+        for (let a = Math.max(0, bx - 1); a <= Math.min(nbx - 1, bx + 1) && !gone[k]; a++) {
+          for (let m = head[b * nbx + a]; m >= 0 && !gone[k]; m = nxt[m]) {
+            if (m <= k || gone[m]) continue;
+            const o = S[m];
+            if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 + (o.y - q.y) ** 2 >= dMin2) continue;
+            const cands = [k, m].filter(c => !S[c].seed).sort((u, v) => rankOf(S[u]) - rankOf(S[v]) || lists[u].length - lists[v].length);
+            for (const c of cands) {
+              let ok = true;
+              for (const i of lists[c]) {
+                if (KIND[i] === 3) continue;
+                nearest(SX[i], SZ[i], SY[i], c, gone);
+                if (nk < 0 || nd2 > THR[i] * THR[i]) { ok = false; break; }
+              }
+              if (!ok) continue;
+              gone[c] = 1;
+              for (const i of lists[c]) { nearest(SX[i], SZ[i], SY[i], c, gone); if (nk >= 0) lists[nk].push(i); }
+              lists[c] = [];
+              break;
+            }
+          }
+        }
+      }
+    }
+    const keep = S.filter((_, k) => !gone[k]);
+    S.length = 0;
+    for (const q of keep) S.push(q);
+  };
+  // 12. 松弛 → 增删 → 再松弛……直到不再增删；最后再查一遍空当与太近的一对
+  lloyd(10);
+  for (let round = 0; round < 16; round++) {
+    if (!adapt()) break;
+    lloyd(6);
   }
-  for (let i = 0; i < fix.length; i += 2) pts.push(fix[i], fix[i + 1], i / 2 < nRing ? 0 : 1);
-  for (let i = 0; i < mov.length; i += 2) pts.push(mov[i], mov[i + 1], 1);
+  if (adapt()) lloyd(4);
+  finalCull();
+  for (const q of S) {
+    if (q.seed) continue;
+    pts.push(q.x, q.z, q.t === PIN || q.t === RING ? 0 : 1);
+    if (placed) placed.push(q.x, q.y, q.z);          // 给后面的图块当接缝钉
+  }
 }
 
 export function layoutPoints(MF, charts, opts) {
   const { CrossSection } = MF;
   const e = Math.max(0, opts.edgeInset || 0), s = Math.max(0.3, opts.spacing || 3);
-  const out = [];
-  for (const tris of charts) {
+  const out = [], placed = [];                       // placed：已布好的点 [x, y, z, ...]，后面的图块拿来当接缝钉
+  for (const ch of charts) {
+    // 图块可以只给投影三角形（Float64Array，按平面算），也可以是 { t2, ty, mask, pins }（带曲面高度、禁放格与孤岛最低点）
+    const tris = ch && ch.t2 ? ch.t2 : ch, surf = ch && ch.t2 ? ch : null;
     const gc = [], pts = [];
     const K = o => { gc.push(o); return o; };
     try {
@@ -946,7 +1082,7 @@ export function layoutPoints(MF, charts, opts) {
         // 投影轮廓：三角形并集，再做一次极小的闭运算收掉相邻三角形之间的数值缝
         let fp = K(new CrossSection(polys, 'Positive'));
         fp = K(K(fp.offset(0.02, 'Round', 2, 16)).offset(-0.02, 'Round', 2, 16));
-        if (!fp.isEmpty()) layoutChart(K, fp, e, s, pts);
+        if (!fp.isEmpty()) layoutChart(K, CrossSection, fp, e, s, pts, surf, placed, placed);
       }
     } finally {
       for (const o of gc) { try { o.delete(); } catch { /* 已释放 */ } }

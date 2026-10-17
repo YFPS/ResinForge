@@ -8,9 +8,9 @@ import Button from '@/components/arc/button/button';
 import { state } from '../../../store.js';
 import { supMat, supMatAnchor } from '../../../core/scene.js';
 import { updateRaft } from '../../../core/model.js';
-import { joinPlateHeight } from '../../../core/joinPlate.js';
+import { joinLiftWanted } from '../../../core/joinPlate.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
-import { currentBaseType, doExport, setBaseChamfer, setBaseFlush, setBaseHole, setBaseType, splitModelName } from '../../actions.js';
+import { currentBaseType, doExport, onAutoPlateThickness, setBaseChamfer, setBaseFlush, setBaseHole, setBaseType, splitModelName } from '../../actions.js';
 import { STEPS, goStep, runTask, useUI } from '../../ui.js';
 import { Grid, Num, Section, SwitchRow } from '../fields.jsx';
 import { StepPanel } from '../StepPanel.jsx';
@@ -46,9 +46,9 @@ export default function ExportStep() {
 
   const { name } = splitModelName(info && info.name);
   const baseLabel = BASES.find(b => b.value === baseType).label;
-  const joinH = +joinPlateHeight(params).toFixed(2);
+  const joinH = +joinLiftWanted(params).toFixed(2);
   const bases = BASES.map(b => (b.value === 'join'
-    ? { ...b, description: `支撑塔底部收成一条立起来的连接条，模型随之抬高一个板高（当前 ${joinH} mm）` }
+    ? { ...b, description: `支撑塔底部收成一条立起来的连接条，模型随之抬高 ${joinH} mm，支撑在板顶上面` }
     : b));
 
   return (
@@ -100,10 +100,10 @@ export default function ExportStep() {
       </Section>
 
       {baseType === 'auto' ? (
-        <Section title="自动底板" desc="板形跟随支撑投影的轮廓（向外扩一段圆角边）；孔为蜂窝六边形阵，边框保持实心；没有支撑时不生成。">
+        <Section title="自动底板" desc="板形跟随支撑投影的轮廓（向外扩一段圆角边）；孔为蜂窝六边形阵，边框保持实心；没有支撑时不生成。板厚垫在支撑下面，模型按板厚抬高，支撑从底板顶面往上生成。">
           <Grid>
             <Num k="apOffset" label="外扩距离" min={0} max={30} step={0.5} unit="mm" onChange={updateRaft} />
-            <Num k="apHeight" label="板厚" min={0.4} max={10} step={0.1} unit="mm" onChange={updateRaft} />
+            <Num k="apHeight" label="板厚" min={0.4} max={10} step={0.1} unit="mm" onChange={onAutoPlateThickness} />
             <Num k="apBorder" label="边框宽" min={0} max={10} step={0.5} unit="mm" onChange={updateRaft} />
             <Num k="apHoleR" label="蜂窝孔径" min={1} max={20} step={0.5} unit="mm" onChange={updateRaft} />
             <Num k="apWall" label="孔壁厚" min={0.3} max={6} step={0.1} unit="mm" onChange={updateRaft} />

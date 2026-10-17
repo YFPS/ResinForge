@@ -5,6 +5,15 @@
 .stu { --stu-bottom: 14px; --scale-panel-place: css; position: relative; height: 100vh; overflow: hidden; background: var(--background); }
 .stuShell { position: relative; z-index: 1; height: 100vh; pointer-events: none; }
 
+/* 桌面版（Tauri 无边框窗口）：顶部一条 36px 自绘标题栏（复用 demo 的 .titlebar：拖动 + 最小化 / 最大化 / 关闭），
+   画布与浮层整体下移一条。浮动工具条的 top: 12px 相对 .stuShell，自然落在标题栏下方；
+   品牌已在标题栏里，浮动条里不再重复。浏览器打开时无 stu--desktop，布局零回归。 */
+.stu--desktop { padding-top: var(--titlebar-h); }
+.stu--desktop > .titlebar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; }
+.stu--desktop .stuShell { height: 100%; }
+.stu--desktop .stuStage { top: var(--titlebar-h); }
+.stu--desktop .stuBrand { display: none; }
+
 .stuStage {
   position: fixed; inset: 0; z-index: 0;
   width: 100vw; height: 100vh; overflow: hidden;
@@ -79,6 +88,20 @@
   pointer-events: none;
 }
 .stuPerf b { color: var(--foreground); font-weight: 500; text-align: right; }
+
+/* 左下角用量：宽屏贴着画布角（底栏坞在正中，碰不到）。坞变宽、会盖住这三行时，改停在坞上方。 */
+.stuResin {
+  position: absolute; z-index: 3; left: 16px; bottom: 6px;
+  display: flex; flex-direction: column; gap: 5px;
+  margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.2;
+  pointer-events: none; user-select: none;
+}
+@media (max-width: 1100px) {
+  .stuResin { bottom: calc(var(--stu-bottom) + 64px); }
+}
+.stuResinRow { display: flex; align-items: center; gap: 6px; }
+.stuResinRow svg { flex: none; color: var(--text-muted); }
+.stuResin b { font-weight: 500; }
 
 .stuFloatBar {
   position: absolute; z-index: 3; top: 12px; left: 50%; transform: translateX(-50%);

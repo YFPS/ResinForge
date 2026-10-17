@@ -5,7 +5,7 @@
   "identifier": "com.resinforge.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://127.0.0.1:8123/demo.html",
+    "devUrl": "http://127.0.0.1:8123/studio.html",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
@@ -14,7 +14,7 @@
       {
         "label": "main",
         "title": "ResinForge",
-        "url": "demo.html",
+        "url": "studio.html",
         "width": 1440,
         "height": 920,
         "minWidth": 1024,

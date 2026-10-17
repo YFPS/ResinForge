@@ -12,15 +12,16 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor, supMatBase, supMatGlass, supMatAnchorGlass } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, placeModelAtLift, updateRaft, localFaceOf, supportTargetPart, partAtWorld } from './model.js';
+import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, localFaceOf, supportTargetPart, partAtWorld } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
-import { joinLiftWanted } from './joinPlate.js';
+import { joinLiftWanted, joinPlateHeight } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
 import { buildEStageTowers } from './supportTower.js';
 import { layoutAsync } from './geomClient.js';
 import { mergeParts } from './supportKit.js';
 
 const PROT_R = 1.0;          // 保护面抑制半径：接触点（及模型锚点）1mm 内有任一保护面即不放
+const WALL_R = 0.8;          // 贴壁根部判据半径：水平这么远内有一面从下方竖直上来的墙，该点是悬臂根部（< 1mm 可自支撑），不放支撑
 const MAX_POINTS = 3000;     // 支撑点上限（格架会合并分支，点数可比旧的独立 pin 多）
 
 /* ---------- 状态 ---------- */
@@ -82,6 +83,7 @@ export function syncSupportView() {
     s.mesh.visible = v === 'full' ? true : (v === 'needle' ? s.part === 'needle' : false);
     applyViewMat(s, v);
   }
+  setRaftVisible(v === 'full');   // 自动底板不是支撑本体：连接体 / 接触点模式下与格架一起隐藏
   if (v !== 'point') return;
   const pts = state.supportPoints || [];
   if (!pts.length) return;
@@ -537,9 +539,13 @@ async function buildCharts(ctx, tick) {
     }
   }
   for (const ch of charts) {
-    const t2 = new Float64Array(ch.faces.length * 6);
-    ch.faces.forEach((n, j) => { const i = faces[n] * 9; t2.set([p[i], p[i + 2], p[i + 3], p[i + 5], p[i + 6], p[i + 8]], j * 6); });
-    ch.tris2 = t2;
+    const t2 = new Float64Array(ch.faces.length * 6), ty = new Float64Array(ch.faces.length * 3);
+    ch.faces.forEach((n, j) => {
+      const i = faces[n] * 9;
+      t2.set([p[i], p[i + 2], p[i + 3], p[i + 5], p[i + 6], p[i + 8]], j * 6);
+      ty.set([p[i + 1], p[i + 4], p[i + 7]], j * 3);   // 各顶点高度：布点按曲面上的三维距离与面积松弛
+    });
+    ch.tris2 = t2; ch.ty = ty;
     // 图块的边界边（只被图块里一个面用到的边，XZ 线段）：兜底补点用来量「离边多远」
     const cnt = new Map(), ek = (a, b) => (a < b ? a * 4194304 + b : b * 4194304 + a), seg = [];
     for (const n of ch.faces) for (let k = 0; k < 3; k++) { const key = ek(fv[n * 3 + k], fv[n * 3 + (k + 1) % 3]); cnt.set(key, (cnt.get(key) || 0) + 1); }
@@ -594,7 +600,7 @@ async function collectContactPoints(ctx, islandsOnly) {
   // 防粘连：相邻支撑的中心距不小于 主干直径 + 0.4 mm（净距），粗支撑即使间距按比例放大，也不能被布点挤到几乎贴在一起
   const clearD = params.esBarW + 0.4;
   const edgeInset = Math.max(0, Number.isFinite(params.edgeInset) ? params.edgeInset : 1.5);
-  const rep = { regions: 0, charts: 0, edgePts: 0, innerPts: 0, areaPruned: 0, heldFaces: 0, protFaces: 0, seeds: 0, low: 0, flush: 0, held: 0, wall: 0, prot: 0, pack: 0, filled: 0, capped: 0, islands: 0, islandsNoPoint: 0 };
+  const rep = { regions: 0, charts: 0, edgePts: 0, innerPts: 0, areaPruned: 0, heldFaces: 0, protFaces: 0, seeds: 0, low: 0, flush: 0, held: 0, wall: 0, prot: 0, pack: 0, filled: 0, capped: 0, islands: 0, islandsNoPoint: 0, maskBad: 0, seedSwap: 0 };
   const tick = makeYielder();
 
   // 1. 孤岛关键点：周界像素按 spacing 体素降采样（每体素取最低）+ 全岛最低点
@@ -657,8 +663,7 @@ async function collectContactPoints(ctx, islandsOnly) {
 
   // 2. 逐点有效性：贴面 / 已托住 / 贴壁根部 / 保护面；同时取被托面法线
   // 贴壁根部：水平 WALL_R 圆周上某列有一段实体同时覆盖 [接触点下 1.0, 接触点下 0.1]——即紧邻一面从下方竖直上来的侧壁，
-  // 该点是悬臂根部，悬臂 < 1mm 可自支撑（Formlabs 1mm 悬臂规则 / HeyGears meshAreaBoundaryOffset）。孤岛种子不适用
-  const WALL_R = 0.8;
+  // 该点是悬臂根部，悬臂 < 1mm 可自支撑（Formlabs 1mm 悬臂规则 / HeyGears meshAreaBoundaryOffset）。孤岛种子不适用。半径见文件头 WALL_R
   const colCovers = (x, z, y0, y1) => {
     const ci = Math.floor((x - ld.x0) / ld.sx), cj = Math.floor((z - ld.z0) / ld.sz);
     if (ci < 0 || cj < 0 || ci >= ld.W || cj >= ld.H) return false;
@@ -673,13 +678,20 @@ async function collectContactPoints(ctx, islandsOnly) {
     }
     return false;
   };
-  const validate = (c, isSeed) => {
-    if (c.y < groundY + 0.25) { rep.low++; return null; }
-    if (ld && ldiInside(ld, c.x, c.y - 0.15, c.z)) { rep.flush++; return null; }           // 尖端正下方已是实体
+  // 放不了点的原因（null = 可以放）：低于底板 / 贴面（尖端正下方已是实体）/ 已托住（孤岛只豁免极小间隙）/ 贴壁根部。
+  // 布点前按同一套判据给图块铺「禁放」格（第 5 步），布点绕开这些地方；布完再逐点校验一遍
+  const badReason = (c, isSeed) => {
+    if (c.y < groundY + 0.25) return 'low';
+    if (ld && ldiInside(ld, c.x, c.y - 0.15, c.z)) return 'flush';
     const hit = raycast(bvh, c.x, c.y - 0.05, c.z, 0, -1, 0, 0.1, 1e9);
     const below = Math.min(hit ? hit.t + 0.05 : c.y - groundY, ldiGapBelow(ld, c.x, c.y, c.z));
-    if (below < (isSeed ? 0.25 : 0.8)) { rep.held++; return null; }                          // 已托住（孤岛只豁免极小间隙）
-    if (!isSeed && ld && wallRoot(c)) { rep.wall++; return null; }
+    if (below < (isSeed ? 0.25 : 0.8)) return 'held';
+    if (!isSeed && ld && wallRoot(c)) return 'wall';
+    return null;
+  };
+  const validate = (c, isSeed) => {
+    const why = badReason(c, isSeed);
+    if (why) { rep[why]++; return null; }
     let f = c.f;
     if (f === undefined) { const pr = raycast(bvh, c.x, c.y + 0.05, c.z, 0, -1, 0, 0.005, 0.35); f = pr ? pr.f : -1; }
     if (f >= 0 && state.protectedFaces.has(f)) { rep.prot++; return null; }
@@ -690,8 +702,10 @@ async function collectContactPoints(ctx, islandsOnly) {
   };
 
   // 3. 最近距离（哈希格）与接受
-  // 与已放点的最近距离下限：同一图块里的点布点时已经排匀（窄带中间那排离边缘排可能不到 0.6 × 间距，卡太死又会被删掉），
-  // 只去掉几乎重合的；与孤岛种子、其他图块的点（接缝处）之间仍按 0.6 × 间距去重。三者都不低于 clearD（防粘连）
+  // 与已放点的最近距离下限：同一图块里的点布点时已经排匀（布点里任意两点 ≥ 0.8 × 间距），只去掉几乎重合的。
+  // 接缝：布点时已把先布好的图块在接缝那边的点当钉（manifoldKit），接缝两侧在布点里就排开了；这里与其他图块、孤岛种子
+  // 之间只去掉几乎重合的（0.6 × 间距）——按 0.8 × 去重会把台阶两侧各自需要的点删掉一个（实测手办左手：两面高差 1.2mm，
+  // 布点当成两片面各自排，这里却当一片删掉一个，留下空当）。都不低于 clearD（防粘连）
   const PACK = Math.max(spacing * 0.6, clearD), PACK_SAME = Math.max(spacing * 0.4, clearD);
   const HOLE = Math.max(spacing * 0.85, edgeInset + spacing * 0.5);   // 兜底补点阈值：边缘带不补，内缩不被破坏
   const out = [];
@@ -702,6 +716,11 @@ async function collectContactPoints(ctx, islandsOnly) {
   const hk = (x, y, z) => `${Math.floor(x / hCell)},${Math.floor(y / hCell)},${Math.floor(z / hCell)}`;
   // 哈希里存 { x, y, z, ch }：ch = 来自哪个图块的布点（孤岛种子、已有点、兜底补点为 -1）
   const regPt = (pt, ch = -1) => { const k = hk(pt.x, pt.y, pt.z); let a = hash.get(k); if (!a) hash.set(k, a = []); a.push({ x: pt.x, y: pt.y, z: pt.z, ch }); };
+  const unregPt = pt => {
+    const a = hash.get(hk(pt.x, pt.y, pt.z));
+    const i = a ? a.findIndex(q => q.x === pt.x && q.y === pt.y && q.z === pt.z) : -1;
+    if (i >= 0) a.splice(i, 1);
+  };
   let nearSame = Infinity;                         // closestD 顺带给出：同一图块（ch ≥ 0 且相同）里最近的距离
   const closestD = (pt, ch = -1) => {
     const i = Math.floor(pt.x / hCell), j = Math.floor(pt.y / hCell), k = Math.floor(pt.z / hCell);
@@ -711,11 +730,15 @@ async function collectContactPoints(ctx, islandsOnly) {
       const arr = hash.get(`${i + a},${j + b},${k + c}`);
       if (!arr) continue;
       for (const q of arr) {
-        const d = Math.hypot(q.x - pt.x, q.y - pt.y, q.z - pt.z);
-        if (ch >= 0 && q.ch === ch) { if (d < nearSame) nearSame = d; } else if (d < best) best = d;
+        const dxz = Math.hypot(q.x - pt.x, q.z - pt.z), dy = Math.abs(q.y - pt.y), d = Math.hypot(dxz, dy);
+        if (ch >= 0 && q.ch === ch) { if (d < nearSame) nearSame = d; continue; }
+        // 连线比 45° 还陡的两点是上下叠着的两层曲面（支撑区域的坡度不超过 45°，同一片曲面上相邻两点的连线不会更陡）：
+        // 各要各的支撑，只防粘连（clearD），不按间距去重——按 0.8 × 间距去重会把下面那层的点删掉（实测手办左手两层手指之间留空当）
+        const eff = dy > dxz ? (d < clearD ? 0 : Infinity) : d;
+        if (eff < best) best = eff;
       }
     }
-    return best;                                   // 不含同一图块的点
+    return best;                                   // 不含同一图块的点；上下叠着的另一层只在近于 clearD 时算
   };
   for (const q of existing) regPt(q);
   // 孤岛种子落到支撑附近时，把孤岛编号记到这个点上（结构失败才能报「该孤岛将悬空」）
@@ -757,20 +780,69 @@ async function collectContactPoints(ctx, islandsOnly) {
     return false;
   };
 
-  // 4. 孤岛关键点放到布点之后（第 7、8 步）：先放的话，小平底孤岛正中的最低点会把四周边缘环的点全挤掉（离它都不到去重距离），
+  // 4. 孤岛关键点放到布点之后（第 6、8 步）：先放的话，小平底孤岛正中的最低点会把四周边缘环的点全挤掉（离它都不到去重距离），
   //    角上只好再补贴边的点（实测 6mm 见方的立柱底）
 
+  let cb = null, masks = null;
   if (!islandsOnly) {
-    // 5. 支撑区域 → 图块 → 布点（后台线程：边缘环 + 内部按覆盖补点）→ 抬回曲面
+    // 5. 支撑区域 → 图块 → 布点（后台线程：边缘环与内部点一起松弛，按曲面上的三维距离与面积）→ 抬回曲面
     setProgress(0.3, '支撑区域与图块…');
-    const cb = await buildCharts(ctx, tick);
+    cb = await buildCharts(ctx, tick);
     Object.assign(rep, cb.rep);
+    // 禁放格：图块投影上按 ≈ 间距/8 铺格，格心抬到曲面上，按逐点校验的判据（低于底板 / 贴面 / 已托住 / 贴壁根部 / 保护面附近）判一遍，
+    // 放不了的格子交给布点从区域里减掉——布点绕开它们，在它们周围照样留边缘距离，不再布完点再删出空当。
+    // 原先布完才逐点校验：模板边缘距离 0.5 < 贴壁根部 0.8，贴墙那段边缘环整排被删（2026-10-17 实测戒指 / 手办臀部每次 8～10 个），
+    // 兜底补点又在墙边反复试；大三角形扇面盖住的已托住区域（双层平台的立柱顶）先铺满点再整片删掉，留下一块不规则的空当
+    const maskOf = ch => {
+      const t2 = ch.tris2, ty = ch.ty;
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, area = 0;
+      for (let k = 0; k + 5 < t2.length; k += 6) {
+        for (let v = 0; v < 6; v += 2) { x0 = Math.min(x0, t2[k + v]); x1 = Math.max(x1, t2[k + v]); z0 = Math.min(z0, t2[k + v + 1]); z1 = Math.max(z1, t2[k + v + 1]); }
+        area += Math.abs((t2[k + 2] - t2[k]) * (t2[k + 5] - t2[k + 1]) - (t2[k + 4] - t2[k]) * (t2[k + 3] - t2[k + 1])) / 2;
+      }
+      const g = Math.max(0.2, spacing / 8, Math.sqrt(area / 60000));
+      const nx = Math.max(1, Math.ceil((x1 - x0) / g) + 1), nz = Math.max(1, Math.ceil((z1 - z0) / g) + 1);
+      const bits = new Uint8Array(nx * nz), done = new Uint8Array(nx * nz);
+      let bad = 0;
+      for (let k = 0, m = 0; k + 5 < t2.length; k += 6, m += 3) {
+        const ax = t2[k], az = t2[k + 1], bx = t2[k + 2], bz = t2[k + 3], qx = t2[k + 4], qz = t2[k + 5];
+        const d = (bx - ax) * (qz - az) - (qx - ax) * (bz - az);
+        if (Math.abs(d) < 1e-12) continue;
+        const c0 = Math.max(0, Math.ceil((Math.min(ax, bx, qx) - x0) / g)), c1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx, qx) - x0) / g));
+        const r0 = Math.max(0, Math.ceil((Math.min(az, bz, qz) - z0) / g)), r1 = Math.min(nz - 1, Math.floor((Math.max(az, bz, qz) - z0) / g));
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+          const j = r * nx + c;
+          if (done[j]) continue;
+          const x = x0 + c * g, z = z0 + r * g;
+          const w1 = ((x - ax) * (qz - az) - (qx - ax) * (z - az)) / d, w2 = ((bx - ax) * (z - az) - (x - ax) * (bz - az)) / d, w0 = 1 - w1 - w2;
+          if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
+          done[j] = 1;
+          const c3 = { x, y: w0 * ty[m] + w1 * ty[m + 1] + w2 * ty[m + 2], z };
+          if (badReason(c3, false) || (protNear && protNear(c3))) { bits[j] = 1; bad++; }
+        }
+      }
+      rep.maskBad += bad * g * g;
+      return { x0, z0, g, nx, nz, bits };
+    };
+    masks = [];
+    for (const ch of cb.charts) { masks.push(maskOf(ch)); await tick(); }
+    // 孤岛最低点落在哪个图块的曲面上，就先交给那个图块的布点当「钉」：布点绕着它排开，旁边不会再挤出一对
+    // （布点后再放最低点，最近的一两个布点离它常只有 0.4～0.75 × 间距，换掉一个、第二个仍挨着）。最低点本身仍由第 6 步放
+    const lifters = cb.charts.map(ch => makeLifter(cb.faces, ch));
+    const pinsOf = cb.charts.map(() => []);
+    for (const sd of seeds) {
+      if (!sd.low) continue;
+      for (let ci = 0; ci < cb.charts.length; ci++) {
+        const at = lifters[ci](sd.x, sd.z);
+        if (at && Math.abs(at.y - sd.y) <= 0.5) { pinsOf[ci].push(sd.x, sd.z); sd.pinned = true; break; }
+      }
+    }
     setProgress(0.45, '布点（后台线程）…');
-    const rings = cb.charts.length ? await layoutAsync(cb.charts.map(ch => ch.tris2), { edgeInset, spacing }) : [];
+    const rings = cb.charts.length ? await layoutAsync(cb.charts.map((ch, ci) => ({ t2: ch.tris2, ty: ch.ty, mask: masks[ci], pins: Float64Array.from(pinsOf[ci]) })), { edgeInset, spacing }) : [];
     setProgress(0.55, '抬回曲面、逐点校验…');
     const cand = [];
     cb.charts.forEach((ch, ci) => {
-      const lift = makeLifter(cb.faces, ch), r = rings[ci];
+      const lift = lifters[ci], r = rings[ci];
       for (let i = 0; i + 2 < r.length; i += 3) {
         const at = lift(r[i], r[i + 1]);
         if (!at) continue;
@@ -784,7 +856,36 @@ async function collectContactPoints(ctx, islandsOnly) {
       if ((i & 255) === 0) await tick();
       tryPlace(cand[i], false, false);
     }
-    // 6. 兜底补点：区域面上的采样（面重心 + 大三角形 Halton 细分），离所有支撑都超过 HOLE 才补
+  }
+  // 6. 孤岛最低点（最先打印的就是这一点，必须托住）：这片最低区（一样低的那些像素）里已经有支撑点（平底孤岛的边缘环 / 内部点）就不放；
+  //    否则放（尖底、锥尖、薄沿）。附近 0.8 × 间距内已有布点时，用最低点替换最近的那一个，而不是再加一个——两者都留就挤成一对
+  //    （2026-10-17 实测真实件近点对约一半来自这里：旁边 1.2mm、几乎同高的布点因为不在「最低区」像素里不算数）。
+  //    只换最近的一个：一次换掉几个，窄条上会少一个点、留下空当（实测手办左手）。放在兜底补点之前：替换后若留下空当，兜底补点会补上
+  const gx0 = A.grid.x0, gz0 = A.grid.z0, gsx = A.grid.sx, gsz = A.grid.sz, GWd = A.grid.W;
+  const lowTouched = sd => {
+    const tolY = Math.max(A.grid.layerH, 0.05) + 0.3;
+    for (const q of out) {
+      if (Math.abs(q.y - sd.y) > tolY) continue;
+      const ci = Math.floor((q.x - gx0) / gsx), cj = Math.floor((q.z - gz0) / gsz);
+      if (ci >= 0 && ci < GWd && sd.lowSet.has(cj * GWd + ci)) return true;
+    }
+    return false;
+  };
+  for (const sd of seeds.filter(q => q.low).sort((a, b) => a.y - b.y)) {
+    // 布点时当过「钉」的最低点：旁边的布点已经让开，直接放（不再看最低区里有没有点——那个位置是给它留的）
+    if (sd.pinned) { if (tryPlace(sd, true, false, Math.max(spacing * 0.3, clearD))) out[out.length - 1].seed = true; continue; }
+    if (lowTouched(sd)) continue;
+    let near = null, nd = 0.8 * spacing;
+    for (const q of out) { if (q.seed) continue; const d = Math.hypot(q.x - sd.x, q.y - sd.y, q.z - sd.z); if (d < nd) { nd = d; near = q; } }
+    near = near ? [near] : [];
+    for (const q of near) { out.splice(out.indexOf(q), 1); unregPt(q); }
+    if (tryPlace(sd, true, false, Math.max(spacing * 0.3, clearD))) {
+      out[out.length - 1].seed = true;
+      rep.seedSwap += near.length;
+    } else for (const q of near) { out.push(q); regPt(q); }   // 最低点放不下（贴面 / 保护面）：原来的布点放回去（此后的种子与兜底补点都按「其他图块」口径查距离，图块号不再要紧）
+  }
+  if (!islandsOnly) {
+    // 7. 兜底补点：区域面上的采样（面重心 + 大三角形 Halton 细分），离所有支撑都超过 HOLE 才补
     const p = A.p, maxA = spacing * spacing * 0.5, probes = [];
     for (const f of cb.faces) {
       const i = f * 9;
@@ -821,6 +922,13 @@ async function collectContactPoints(ctx, islandsOnly) {
     // 探针离所在图块边界的投影距离（边界边按 2mm 格分桶，查到边缘距离为止）
     const faceChart = new Map();
     cb.charts.forEach((ch, ci) => { for (const n of ch.faces) faceChart.set(cb.faces[n], ci); });
+    // 落在禁放格里的探针不试：布点有意绕开了那里（贴壁根部 / 已托住 / 贴面 / 保护面附近），试了也是被逐点校验拒掉
+    const inMask = q => {
+      const ci = faceChart.get(q.f), m = ci === undefined ? null : masks[ci];
+      if (!m) return false;
+      const c = Math.round((q.x - m.x0) / m.g), r = Math.round((q.z - m.z0) / m.g);
+      return c >= 0 && r >= 0 && c < m.nx && r < m.nz && m.bits[r * m.nx + c] === 1;
+    };
     const BB = 2, segBins = cb.charts.map(ch => {
       const m = new Map(), b = ch.bnd;
       for (let i = 0; i + 3 < b.length; i += 4) {
@@ -861,12 +969,12 @@ async function collectContactPoints(ctx, islandsOnly) {
       if (tried.has(c)) continue;
       // 触发线放宽 10%：边缘带里刚过阈值的空当布点那一步（后台线程，守边缘距离）已经按 0.98 × 阈值补过，这里只管明显的漏洞——
       // 两边一个按 0.2mm 采样格量、一个按精确位置量，卡同一条线会为了超出零点几毫米补一个贴边的点（实测手办部件 2.91～3.05mm）
-      if (!keptFace.has(c.f) || holeD(c) <= HOLE * 1.1) continue;
+      if (!keptFace.has(c.f) || inMask(c) || holeD(c) <= HOLE * 1.1) continue;
       const gap = [];
       const bi = Math.floor(c.x / PB), bj = Math.floor(c.y / PB), bk = Math.floor(c.z / PB);
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let d = -1; d <= 1; d++) {
         const arr = pbin.get(`${bi + a},${bj + b},${bk + d}`);
-        if (arr) for (const q of arr) if ((q.x - c.x) ** 2 + (q.y - c.y) ** 2 + (q.z - c.z) ** 2 <= HOLE * HOLE && holeD(q) > HOLE) gap.push(q);
+        if (arr) for (const q of arr) if ((q.x - c.x) ** 2 + (q.y - c.y) ** 2 + (q.z - c.z) ** 2 <= HOLE * HOLE && !inMask(q) && holeD(q) > HOLE) gap.push(q);
       }
       let gx = 0, gy = 0, gz = 0;
       for (const q of gap) { gx += q.x; gy += q.y; gz += q.z; }
@@ -885,21 +993,6 @@ async function collectContactPoints(ctx, islandsOnly) {
       }
       if (!placed && n < FILL_TRIES) { for (const q of gap) tried.add(q); tried.add(c); }
     }
-  }
-  // 7. 孤岛最低点：这片最低区（一样低的那些像素）里已经有支撑点（平底孤岛的边缘环 / 六角格）就不放；否则放（尖底、锥尖、薄沿），
-  //    与已放的点只按 0.3 × 间距去重——最先打印的就是这一点，宁可近一些也要托住
-  const gx0 = A.grid.x0, gz0 = A.grid.z0, gsx = A.grid.sx, gsz = A.grid.sz, GWd = A.grid.W;
-  const lowTouched = sd => {
-    const tolY = Math.max(A.grid.layerH, 0.05) + 0.3;
-    for (const q of out) {
-      if (Math.abs(q.y - sd.y) > tolY) continue;
-      const ci = Math.floor((q.x - gx0) / gsx), cj = Math.floor((q.z - gz0) / gsz);
-      if (ci >= 0 && ci < GWd && sd.lowSet.has(cj * GWd + ci)) return true;
-    }
-    return false;
-  };
-  for (const sd of seeds.filter(q => q.low).sort((a, b) => a.y - b.y)) {
-    if (!lowTouched(sd)) tryPlace(sd, true, false, Math.max(spacing * 0.3, clearD));
   }
   // 8. 孤岛周界点：同一高度附近（水平 HOLE 内、不高于它 0.3mm）已有支撑就不放——平底孤岛（雕像底座）的边由边缘环按
   //    「边缘距离」负责，不再贴边放一圈；薄沿孤岛（伞缘）的布点都在它上方，周界点照放（最先打印的就是这一圈）
@@ -951,9 +1044,10 @@ const disposeResult = res => {
   for (const k of ['geomGround', 'geomGround2', 'geomAnchor', 'geomBase']) if (res[k]) res[k].dispose();
 };
 
-/* 连接底板要求的模型抬高（joinPlate.js）变了——开 / 关连接底板、切换结构、模板或菱形宽等改了板高：
-   提交新抬高（state.joinLift，model.js 的 raiseH 读它），模型挪过去，已有支撑点（含手动加的点与锚点）同步平移，
-   重跑逐层分析（BVH / LDI 都在世界系）。相对模型一切不变，所以支撑点不必重新布。返回是否有变化 */
+/* 底板要求的模型抬高（joinPlate.js 的 joinLiftWanted：连接底板高 / 自动底板厚）变了——切换连接底板 / 自动底板、改自动底板板厚、切换结构、模板或格宽等改了板高：
+   提交新抬高（state.joinLift，model.js 的 raiseH 读它），模型挪过去，已有支撑点（含手动加的点与锚点）同步平移。
+   分析结果与世界系只差一个 y 平移，逐字段平移，不重跑逐层分析。相对模型一切不变，所以支撑点不必重新布。返回是否有变化。
+   自动底板的抬高等于板厚：支撑落点在底板顶面（baseY），板厚垫在支撑下面。 */
 let liftSync = null;
 export async function syncModelLift() {
   while (liftSync) await liftSync;                    // 正在同步：等它做完再判断
@@ -964,9 +1058,12 @@ export async function syncModelLift() {
     state.joinLift = want;
     placeModelAtLift();
     for (const p of state.supportPoints || []) { p.y += dy; if (p.ay !== undefined) p.ay += dy; }
+    const auto = !!params.autoPlateOn && !params.baseJoin;
     log(want
-      ? `连接底板：模型随之抬高 ${+want.toFixed(2)}mm（模型底面离平台 ${+raiseH().toFixed(2)}mm），板上的支撑与不开底板时相同`
-      : `连接底板已撤：模型回到离平台 ${+raiseH().toFixed(2)}mm`, 'ok');
+      ? (auto
+        ? `自动底板：模型按板厚抬高 ${+want.toFixed(2)}mm（底面离平台 ${+raiseH().toFixed(2)}mm，离底板顶面 ${+(raiseH() - want).toFixed(2)}mm，即最短支撑），支撑从底板顶面往上生成`
+        : `连接底板：模型随之抬高 ${+want.toFixed(2)}mm（底面离平台 ${+raiseH().toFixed(2)}mm，离板顶 ${+(raiseH() - joinPlateHeight(params)).toFixed(2)}mm，即最短支撑），支撑从板顶往上生成`)
+      : `底板抬高已撤：模型回到离平台 ${+raiseH().toFixed(2)}mm`, 'ok');
     // 分析结果与世界系只差一个 y 平移（模型整体挪 dy）：逐字段平移，不重跑逐层分析（约 0.6s 主线程）
     if (state.analysis && state.mesh) shiftAnalysisY(dy);
   })();
@@ -1072,14 +1169,16 @@ export async function runGenSup(opts = {}) {
   log(islandsOnly
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
-      + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.5}mm）`, 'ok');
+      + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.5}mm`
+      + `${rep.maskBad >= 0.5 ? `，布点前避开放不了点的地方 ${rep.maskBad.toFixed(0)}mm²（贴壁根部 / 已托住 / 贴面 / 保护面附近）` : ''}${rep.seedSwap ? `，孤岛最低点替换了 ${rep.seedSwap} 个挨着的布点` : ''}）`, 'ok');
   const al = (s.needlesV || 0) + (s.needlesP || 0);
   if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}）· 自由直针 ${s.needlesFree || 0} 根${s.needlesNear ? `（其中就近接格架 ${s.needlesNear} 根）` : ''}；同向针的支撑点已挪到接触点（平均 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）；针尖沿法线折向 ${s.tipBent || 0} 根；球头 ${params.tipBall !== false ? (s.balls || 0) : 0} 个；顶端长度 ${(params.esTaper || 1.5).toFixed(2)} mm`, 'ok');
   // 连不上格架的点：就近接格架 / 分叉 / 十字短杆之后仍接不上的，标红、不生成结构
   const plateOn = !!params.shortSup;   // 十字短杆（贴面短连接）
   const fb = !s.fallback ? '全部连上格架'
-    : (plateOn ? `连不上格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}${s.shortBent ? `，针尖沿法线折向 ${s.shortBent} 处${s.shortBentFoot ? `（底部 ${s.shortBentFoot} 处）` : ''}` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `连不上格架的 ${s.fallback} 点未生成（标红）`);
-  log(`支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，连同基础带的连接条共 ${s.stripH}mm）${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
+    : (plateOn ? `未接格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}${s.shortBent ? `，针尖沿法线折向 ${s.shortBent} 处${s.shortBentFoot ? `（底部 ${s.shortBentFoot} 处）` : ''}` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `未接格架的 ${s.fallback} 点未生成（标红）`);
+  log(`支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，支撑从板顶往上，基础带到格架起步 ${s.stripH}mm）${s.pads ? `，短杆下补立板 ${s.pads} 块` : ''}${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
+  if (s.lowSpace) log(`低空间单杆：${s.lowSpace} 个点离格架起步面不足一个柱高，不接格架，各自单杆直落到底板 / 平台（最短支撑 = 模型抬高）`, 'ok');
   if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   const bad = (s.noHead || 0) + (s.unroutable || 0);
   if (bad) log(`⚠ 支撑塔结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');

@@ -415,8 +415,9 @@ const RING_GAP = 1.6;                                // 环上相邻两点之间
 const LAT_INIT = 0.55;                               // 初值六角格只铺在离 E 轮廓 ≥ 0.55 × 间距的地方（再往外是环点的地盘）
 const PIN = 0, RING = 1, INT = 2, MED = 3;           // 站点类别：转角钉 / 环点 / 内部点 / 窄条点
 
-/** E 的轮廓 → 环结构与初始环点。每个闭合轮廓记顶点、各边长、累计弧长；初始点：真正的凸角钉住（沿轮廓 2mm 内累计左转 ≥ 60°——
- *  内缩后轮廓锯齿留下的小尖点被开运算磨成半径 0.3 × 间距的小圆弧，转不够这个角度），转角之间按弧长均分；没有转角的整圈均分；
+/** E 的轮廓 → 环结构与初始环点。每个闭合轮廓记顶点、各边长、累计弧长；初始点：真正的凸角钉住
+ * （前后各 1mm 累计左转 ≥ 60°，且前后各 3mm 累计仍 ≥ 45°——台阶尖在 1mm 里够尖，大尺度上左转右转抵消，不再钉死；
+ *  开运算磨成的小圆弧转不够 60°；带子端头这类真转角两个尺度都朝同一方向转）。转角之间按弧长均分；没有转角的整圈均分；
  *  很小的一圈只在圈心放一个钉。转角不钉的话，环点可能正好错开转角，尖角离最近的点超过兜底补点阈值，兜底补点就补在尖角里、贴着边 */
 function ringSetup(cs, sp) {
   const rings = [], init = [];
@@ -441,8 +442,9 @@ function ringSetup(cs, sp) {
       const a = poly[(i + n - 1) % n], b = poly[i], c = poly[(i + 1) % n];
       turn[i] = Math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]));
     }
-    // 以每个顶点为中心、前后各 1mm 弧长内的累计转角；取 ≥ 60° 的局部极大当转角
-    const WIN = 1, need = Math.PI / 3, sum = new Float64Array(n);
+    // 以每个顶点为中心、前后各 1mm 弧长内的累计转角；取 ≥ 60° 的局部极大当转角。
+    // 再要求前后各 3mm 累计仍 ≥ 45°：三角面台阶的尖在小尺度上够尖，大尺度上左转右转抵消，不再钉死
+    const WIN = 1, WIDE = 3, need = Math.PI / 3, wideNeed = Math.PI / 4, sum = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       let t = turn[i];
       for (let j = 1, d = 0; j < n; j++) { d += seg[(i - j + n) % n]; if (d > WIN) break; t += turn[(i - j + n) % n]; }
@@ -452,6 +454,10 @@ function ringSetup(cs, sp) {
     let corners = [];
     for (let i = 0; i < n; i++) {
       if (sum[i] < need) continue;
+      let tw = turn[i];
+      for (let j = 1, d = 0; j < n; j++) { d += seg[(i - j + n) % n]; if (d > WIDE) break; tw += turn[(i - j + n) % n]; }
+      for (let j = 1, d = 0; j < n; j++) { d += seg[(i + j - 1) % n]; if (d > WIDE) break; tw += turn[(i + j) % n]; }
+      if (tw < wideNeed) continue;
       let peak = true;
       for (let j = 1, d = 0; j < n && peak; j++) { d += seg[(i - j + n) % n]; if (d > WIN) break; if (sum[(i - j + n) % n] > sum[i]) peak = false; }
       for (let j = 1, d = 0; j < n && peak; j++) { d += seg[(i + j - 1) % n]; if (d > WIN) break; if (sum[(i + j) % n] >= sum[i]) peak = false; }

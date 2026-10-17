@@ -390,8 +390,8 @@ function halton(i, b) { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % 
    覆盖锥按高差吃掉一片候选，曲面上忽多忽少（用户截图：环面结底面「边缘不够均匀」「整体不够均匀」）。
    第二版（等距环，环距死按间距）边缘齐了，但条带宽度不是环距整数倍时中间那一排出不来（用户截图「内部又没支撑了」）。
    现在：
-   1. 支撑区域 = 需要支撑的朝下面（分析时收集的 steepPts：法线朝下超出自支撑角），去掉保护面与「已托住」面
-      （正下方 0.8mm 内有材料），按共享顶点连成片；投影面积小于「最小悬空面积」的片不布点（孤岛另有关键点）。
+   1. 支撑区域 = 顶点法线越过自支撑角的那一片，沿等值线切开（不再整张三角面；尖棱两侧法线不平均），去掉保护面与「已托住」面
+      （切开后那一块的重心正下方 0.8mm 内有材料），悬空的顶点连成片；投影面积小于「最小悬空面积」的片不布点（孤岛另有关键点）。
    2. 图块：每片再按投影拆开——自下而上生长，若新面落在图块已占的 XZ 格子上、高差超过 1.5mm（同一片曲面在投影里绕回来
       压到自己，例如环面结管底带的交叉处），就另起图块。每个图块在同一 XZ 位置只有一层曲面。
    3. 布点在几何后台线程里算（manifoldKit.layoutPoints）：图块投影轮廓内缩「边缘距离」（默认 1.5mm）得到边缘环，沿环按弧长
@@ -407,6 +407,91 @@ function halton(i, b) { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % 
 ================================================================ */
 const CHART_CELL = 0.5;          // 图块投影栅格（mm）
 const CHART_DY = 1.5;            // 同一 XZ 格子上高差超过它，视为曲面在投影里绕回来压到自己
+const CREASE_COS = Math.cos(50 * Math.PI / 180);   // 相邻面法线夹角小于 50° 才并成同一顶点法线；平底对侧壁约 90°，不平均
+
+/** 每个角的悬空标量 s = −ny − cos(自支撑角)。ny 来自「同一位置、法线够接近」的那些面，按面积加权。
+ *  同一条边上两侧用的是同一个数，等值线交点才对得齐。s > 0 需要支撑。 */
+function overhangScalars(p, nrm, area, cosv) {
+  const nf = area.length, Q = 1e4;
+  const vmap = new Map(), cornerVid = new Int32Array(nf * 3);
+  let nvid = 0;
+  for (let f = 0; f < nf; f++) {
+    const i = f * 9;
+    for (let k = 0; k < 3; k++) {
+      const o = i + k * 3;
+      const key = `${Math.round(p[o] * Q)},${Math.round(p[o + 1] * Q)},${Math.round(p[o + 2] * Q)}`;
+      let id = vmap.get(key);
+      if (id === undefined) { id = nvid++; vmap.set(key, id); }
+      cornerVid[f * 3 + k] = id;
+    }
+  }
+  const vFaces = Array.from({ length: nvid }, () => []);
+  for (let c = 0; c < nf * 3; c++) vFaces[cornerVid[c]].push(c);
+  const s = new Float64Array(nf * 3);
+  const find = (par, a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  for (let v = 0; v < nvid; v++) {
+    const list = vFaces[v], m = list.length;
+    const par = new Int32Array(m);
+    for (let i = 0; i < m; i++) par[i] = i;
+    for (let i = 0; i < m; i++) for (let j = i + 1; j < m; j++) {
+      const a = (list[i] / 3) | 0, b = (list[j] / 3) | 0;
+      const d = nrm[a * 3] * nrm[b * 3] + nrm[a * 3 + 1] * nrm[b * 3 + 1] + nrm[a * 3 + 2] * nrm[b * 3 + 2];
+      if (d < CREASE_COS) continue;
+      const ra = find(par, i), rb = find(par, j);
+      if (ra !== rb) par[rb] = ra;
+    }
+    const acc = new Map();
+    for (let i = 0; i < m; i++) {
+      const r = find(par, i), f = (list[i] / 3) | 0;
+      let g = acc.get(r);
+      if (!g) acc.set(r, g = [0, 0, 0]);
+      const w = area[f] || 0;
+      g[0] += nrm[f * 3] * w; g[1] += nrm[f * 3 + 1] * w; g[2] += nrm[f * 3 + 2] * w;
+    }
+    for (let i = 0; i < m; i++) {
+      const g = acc.get(find(par, i));
+      const len = Math.hypot(g[0], g[1], g[2]) || 1;
+      s[list[i]] = -(g[1] / len) - cosv;
+    }
+  }
+  return s;
+}
+
+/** 三角形裁到 s ≥ 0。全在内侧原样返回，全在外侧返回空，被等值线切开时返回 1 或 2 个三角形（每个 9 个数 xyz）。 */
+function clipOverhangTri(xyz, ss) {
+  const EPS = 1e-6;
+  let any = false, all = true;
+  for (let k = 0; k < 3; k++) { if (ss[k] > EPS) any = true; if (ss[k] < -EPS) all = false; }
+  if (!any) return [];
+  if (all) return [xyz.slice()];
+  const poly = [];
+  for (let k = 0; k < 3; k++) poly.push({ x: xyz[k * 3], y: xyz[k * 3 + 1], z: xyz[k * 3 + 2], s: ss[k] });
+  const out = [];
+  for (let i = 0; i < 3; i++) {
+    const a = poly[i], b = poly[(i + 1) % 3];
+    const ain = a.s >= -EPS, bin = b.s >= -EPS;
+    if (ain && bin) out.push(b);
+    else if (ain !== bin) {
+      const t = a.s / (a.s - b.s);
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, s: 0 });
+      if (bin) out.push(b);
+    }
+  }
+  if (out.length < 3) return [];
+  const tris = [];
+  const pack = (i, j, k) => {
+    const tri = [out[i].x, out[i].y, out[i].z, out[j].x, out[j].y, out[j].z, out[k].x, out[k].y, out[k].z];
+    const area = Math.abs((tri[3] - tri[0]) * (tri[8] - tri[2]) - (tri[6] - tri[0]) * (tri[5] - tri[2])) * 0.5;
+    if (area > 1e-8) tris.push(tri);
+  };
+  pack(0, 1, 2);
+  if (out.length >= 4) pack(0, 2, 3);
+  return tris;
+}
+
+function triXZArea(t) {
+  return Math.abs((t[3] - t[0]) * (t[8] - t[2]) - (t[6] - t[0]) * (t[5] - t[2])) * 0.5;
+}
 
 /* LDI 列里离 (x, y, z) 最近的下方材料顶面有多远（并集语义；下方没有材料返回 Infinity，交给射线 / 板面判断）。
    射线法从接触点下 0.15mm 才开始找（跳过自身所在的面），拼装件之间不到 0.15mm 的缝里，下面那个零件的顶面被跳过，
@@ -462,70 +547,100 @@ function islandOnTarget(nd, A, bvh, targetId) {
 async function buildCharts(ctx, tick) {
   const A = state.analysis, p = A.p, { bvh, groundY } = ctx;
   const rep = { heldFaces: 0, protFaces: 0, regions: 0, charts: 0, areaPruned: 0 };
-  // 1. 候选面：朝下超出自支撑角，去掉保护面与已托住面
-  const faces = [];
-  const seen = new Set();
+  // 1. 候选面：顶点法线越过自支撑角的部分，沿等值线切开。整张三角面收进来时，斜边界就变成台阶。
+  const faces = [], clips = [], cyArr = [], areaArr = [], cutArr = [];
   const targetId = supportTargetId();
-  for (const sp of A.steepPts) {
-    const f = sp.f;
-    if (f === undefined || seen.has(f)) continue;
-    if (targetId != null && facePartId(f) !== targetId) continue;
-    seen.add(f);
-    if (state.protectedFaces.has(f)) { rep.protFaces++; continue; }
-    const i = f * 9;
-    const cx = (p[i] + p[i + 3] + p[i + 6]) / 3, cy = (p[i + 1] + p[i + 4] + p[i + 7]) / 3, cz = (p[i + 2] + p[i + 5] + p[i + 8]) / 3;
+  const nf = p.length / 9;
+  const fd = state.faces;
+  const cosv = Math.cos((Number.isFinite(params.selfAngle) ? params.selfAngle : 45) * Math.PI / 180);
+  const scalars = fd && fd.nrm && fd.nrm.length / 3 === nf && fd.area && fd.area.length === nf
+    ? overhangScalars(p, fd.nrm, fd.area, cosv) : null;
+  const consider = (f, parts, cut) => {
+    if (!parts.length) return;
+    if (targetId != null && facePartId(f) !== targetId) return;
+    if (state.protectedFaces.has(f)) { rep.protFaces++; return; }
+    let cx = 0, cy = 0, cz = 0, n = 0, area = 0;
+    for (const t of parts) {
+      area += triXZArea(t);
+      for (let k = 0; k < 9; k += 3) { cx += t[k]; cy += t[k + 1]; cz += t[k + 2]; n++; }
+    }
+    cx /= n; cy /= n; cz /= n;
     const hit = raycast(bvh, cx, cy - 0.05, cz, 0, -1, 0, 0.1, 1e9);
-    if (Math.min(hit ? hit.t + 0.05 : cy - groundY, ldiGapBelow(A.ld, cx, cy, cz)) < 0.8) { rep.heldFaces++; continue; }
-    faces.push(f);
-    if ((faces.length & 511) === 0) await tick();
+    if (Math.min(hit ? hit.t + 0.05 : cy - groundY, ldiGapBelow(A.ld, cx, cy, cz)) < 0.8) { rep.heldFaces++; return; }
+    faces.push(f); clips.push(parts); cyArr.push(cy); areaArr.push(area); cutArr.push(cut ? 1 : 0);
+  };
+  if (scalars) {
+    for (let f = 0; f < nf; f++) {
+      if ((f & 1023) === 0) await tick();
+      const ss = [scalars[f * 3], scalars[f * 3 + 1], scalars[f * 3 + 2]];
+      if (ss[0] <= 1e-4 && ss[1] <= 1e-4 && ss[2] <= 1e-4) continue;
+      const i = f * 9;
+      consider(f, clipOverhangTri(
+        [p[i], p[i + 1], p[i + 2], p[i + 3], p[i + 4], p[i + 5], p[i + 6], p[i + 7], p[i + 8]], ss),
+      ss[0] < 1e-4 || ss[1] < 1e-4 || ss[2] < 1e-4);
+    }
+  } else if (A.steepPts) {
+    const seen = new Set();
+    for (const sp of A.steepPts) {
+      const f = sp.f;
+      if (f === undefined || seen.has(f)) continue;
+      seen.add(f);
+      const i = f * 9;
+      consider(f, [[p[i], p[i + 1], p[i + 2], p[i + 3], p[i + 4], p[i + 5], p[i + 6], p[i + 7], p[i + 8]]], false);
+    }
   }
-  // 2. 共享顶点连成片
-  const Q = 1e4, vmap = new Map(), fv = new Int32Array(faces.length * 3);
+  // 2. 共享顶点连成片。只焊悬空那一侧的角：安全侧的顶点要是也拿来连，一张大半在安全区的三角形会把两块不相连的悬空粘成一片
+  const Q = 1e4, vmap = new Map(), fv = new Int32Array(faces.length * 3).fill(-1);
   for (let n = 0; n < faces.length; n++) {
-    const i = faces[n] * 9;
+    const f = faces[n], i = f * 9;
     for (let k = 0; k < 3; k++) {
-      const key = `${Math.round(p[i + k * 3] * Q)},${Math.round(p[i + k * 3 + 1] * Q)},${Math.round(p[i + k * 3 + 2] * Q)}`;
+      if (scalars && scalars[f * 3 + k] < -1e-4) continue;
+      const o = i + k * 3;
+      const key = `${Math.round(p[o] * Q)},${Math.round(p[o + 1] * Q)},${Math.round(p[o + 2] * Q)}`;
       let id = vmap.get(key);
       if (id === undefined) { id = vmap.size; vmap.set(key, id); }
       fv[n * 3 + k] = id;
     }
   }
   const vFaces = Array.from({ length: vmap.size }, () => []);
-  for (let n = 0; n < faces.length; n++) for (let k = 0; k < 3; k++) vFaces[fv[n * 3 + k]].push(n);
+  for (let n = 0; n < faces.length; n++) for (let k = 0; k < 3; k++) if (fv[n * 3 + k] >= 0) vFaces[fv[n * 3 + k]].push(n);
   const par = new Int32Array(faces.length);
   for (let n = 0; n < par.length; n++) par[n] = n;
   const find = a => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
   for (const list of vFaces) for (let j = 1; j < list.length; j++) { const a = find(list[0]), b = find(list[j]); if (a !== b) par[b] = a; }
-  const cyOf = n => { const i = faces[n] * 9; return (p[i + 1] + p[i + 4] + p[i + 7]) / 3; };
+  const cyOf = n => cyArr[n];
   const regionOf = new Map(), regions = [];
   for (let n = 0; n < faces.length; n++) {
     const r = find(n);
     let reg = regionOf.get(r);
     if (!reg) { reg = { id: regions.length, faces: [], area: 0 }; regionOf.set(r, reg); regions.push(reg); }
     reg.faces.push(n);
-    const i = faces[n] * 9;
-    reg.area += Math.abs((p[i + 3] - p[i]) * (p[i + 8] - p[i + 2]) - (p[i + 6] - p[i]) * (p[i + 5] - p[i + 2])) / 2;   // XZ 投影面积
+    reg.area += areaArr[n];   // 切开之后的 XZ 投影面积
   }
   rep.regions = regions.length;
   // 3. 图块：自下而上生长，投影里绕回来压到自己的面另起图块
   const minA = Math.max(0.1, params.minSupArea || 2);
   const raster = new Map();                        // 格子键 → [图块号, y, 图块号, y, ...]
   const cellsOf = n => {
-    const i = faces[n] * 9, g = CHART_CELL;
-    const ax = p[i], az = p[i + 2], bx = p[i + 3], bz = p[i + 5], cx = p[i + 6], cz = p[i + 8];
-    const d = (bx - ax) * (cz - az) - (cx - ax) * (bz - az), out = [];
-    const gi0 = Math.floor(Math.min(ax, bx, cx) / g), gi1 = Math.floor(Math.max(ax, bx, cx) / g);
-    const gj0 = Math.floor(Math.min(az, bz, cz) / g), gj1 = Math.floor(Math.max(az, bz, cz) / g);
-    for (let gi = gi0; gi <= gi1; gi++) for (let gj = gj0; gj <= gj1; gj++) {
-      if (Math.abs(d) > 1e-12) {
-        const px = (gi + 0.5) * g, pz = (gj + 0.5) * g;
-        const w1 = ((px - ax) * (cz - az) - (cx - ax) * (pz - az)) / d, w2 = ((bx - ax) * (pz - az) - (px - ax) * (bz - az)) / d;
-        if (w1 < -1e-9 || w2 < -1e-9 || w1 + w2 > 1 + 1e-9) continue;
+    const g = CHART_CELL, out = [], seen = new Set();
+    const add = (ax, az, bx, bz, cx, cz) => {
+      const d = (bx - ax) * (cz - az) - (cx - ax) * (bz - az);
+      const gi0 = Math.floor(Math.min(ax, bx, cx) / g), gi1 = Math.floor(Math.max(ax, bx, cx) / g);
+      const gj0 = Math.floor(Math.min(az, bz, cz) / g), gj1 = Math.floor(Math.max(az, bz, cz) / g);
+      for (let gi = gi0; gi <= gi1; gi++) for (let gj = gj0; gj <= gj1; gj++) {
+        if (Math.abs(d) > 1e-12) {
+          const px = (gi + 0.5) * g, pz = (gj + 0.5) * g;
+          const w1 = ((px - ax) * (cz - az) - (cx - ax) * (pz - az)) / d, w2 = ((bx - ax) * (pz - az) - (px - ax) * (bz - az)) / d;
+          if (w1 < -1e-9 || w2 < -1e-9 || w1 + w2 > 1 + 1e-9) continue;
+        }
+        const key = `${gi},${gj}`;
+        if (seen.has(key)) continue;
+        seen.add(key); out.push(key);
       }
-      out.push(`${gi},${gj}`);
-    }
-    const ci = `${Math.floor((ax + bx + cx) / 3 / g)},${Math.floor((az + bz + cz) / 3 / g)}`;
-    if (!out.includes(ci)) out.push(ci);           // 小三角形至少占一格
+      const ci = `${Math.floor((ax + bx + cx) / 3 / g)},${Math.floor((az + bz + cz) / 3 / g)}`;
+      if (!seen.has(ci)) { seen.add(ci); out.push(ci); }   // 小三角形至少占一格
+    };
+    for (const t of clips[n]) add(t[0], t[2], t[3], t[5], t[6], t[8]);
     return out;
   };
   const charts = [], chartOf = new Int32Array(faces.length).fill(-1);
@@ -550,35 +665,57 @@ async function buildCharts(ctx, tick) {
       const stack = [seed];
       while (stack.length) {
         const n = stack.pop();
-        for (let k = 0; k < 3; k++) for (const m of vFaces[fv[n * 3 + k]]) {
-          if (chartOf[m] >= 0 || find(m) !== find(seed)) continue;
-          if (tryAdd(m)) stack.push(m);
+        for (let k = 0; k < 3; k++) {
+          const id = fv[n * 3 + k];
+          if (id < 0) continue;
+          for (const m of vFaces[id]) {
+            if (chartOf[m] >= 0 || find(m) !== find(seed)) continue;
+            if (tryAdd(m)) stack.push(m);
+          }
         }
       }
       await tick();
     }
   }
   for (const ch of charts) {
-    const t2 = new Float64Array(ch.faces.length * 6), ty = new Float64Array(ch.faces.length * 3);
-    ch.faces.forEach((n, j) => {
-      const i = faces[n] * 9;
-      t2.set([p[i], p[i + 2], p[i + 3], p[i + 5], p[i + 6], p[i + 8]], j * 6);
-      ty.set([p[i + 1], p[i + 4], p[i + 7]], j * 3);   // 各顶点高度：布点按曲面上的三维距离与面积松弛
-    });
-    ch.tris2 = t2; ch.ty = ty;
-    // 图块的边界边（只被图块里一个面用到的边，XZ 线段）：兜底补点用来量「离边多远」
-    const cnt = new Map(), ek = (a, b) => (a < b ? a * 4194304 + b : b * 4194304 + a), seg = [];
-    for (const n of ch.faces) for (let k = 0; k < 3; k++) { const key = ek(fv[n * 3 + k], fv[n * 3 + (k + 1) % 3]); cnt.set(key, (cnt.get(key) || 0) + 1); }
-    for (const n of ch.faces) {
-      const i = faces[n] * 9;
-      for (let k = 0; k < 3; k++) {
-        const k1 = (k + 1) % 3;
-        if (cnt.get(ek(fv[n * 3 + k], fv[n * 3 + k1])) === 1) seg.push(p[i + k * 3], p[i + k * 3 + 2], p[i + k1 * 3], p[i + k1 * 3 + 2]);
-      }
+    let nTri = 0;
+    for (const n of ch.faces) nTri += clips[n].length;
+    const t2 = new Float64Array(nTri * 6), ty = new Float64Array(nTri * 3), src = new Int32Array(nTri);
+    let j = 0;
+    for (const n of ch.faces) for (const t of clips[n]) {
+      t2[j * 6] = t[0]; t2[j * 6 + 1] = t[2];
+      t2[j * 6 + 2] = t[3]; t2[j * 6 + 3] = t[5];
+      t2[j * 6 + 4] = t[6]; t2[j * 6 + 5] = t[8];
+      ty[j * 3] = t[1]; ty[j * 3 + 1] = t[4]; ty[j * 3 + 2] = t[7];   // 各顶点高度：布点按曲面上的三维距离与面积松弛
+      src[j] = faces[n];
+      j++;
     }
-    ch.bnd = Float64Array.from(seg);
+    ch.tris2 = t2; ch.ty = ty; ch.src = src;
+    // 图块的边界边（切开后只出现一次的边，含 45° 等值线）：兜底补点用来量「离边多远」
+    const cnt = new Map(), seg = [];
+    const pk = (x, y, z) => `${Math.round(x * Q)},${Math.round(y * Q)},${Math.round(z * Q)}`;
+    const addEdge = (ax, ay, az, bx, by, bz) => {
+      const ka = pk(ax, ay, az), kb = pk(bx, by, bz);
+      const key = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+      cnt.set(key, (cnt.get(key) || 0) + 1);
+      if (cnt.get(key) === 1) seg.push(key, ax, az, bx, bz);
+    };
+    for (let t = 0; t < nTri; t++) {
+      const o = t * 6, m = t * 3;
+      const xyz = [
+        t2[o], ty[m], t2[o + 1], t2[o + 2], ty[m + 1], t2[o + 3], t2[o + 4], ty[m + 2], t2[o + 5],
+      ];
+      addEdge(xyz[0], xyz[1], xyz[2], xyz[3], xyz[4], xyz[5]);
+      addEdge(xyz[3], xyz[4], xyz[5], xyz[6], xyz[7], xyz[8]);
+      addEdge(xyz[6], xyz[7], xyz[8], xyz[0], xyz[1], xyz[2]);
+    }
+    const bnd = [];
+    for (let i = 0; i < seg.length; i += 5) if (cnt.get(seg[i]) === 1) bnd.push(seg[i + 1], seg[i + 2], seg[i + 3], seg[i + 4]);
+    ch.bnd = Float64Array.from(bnd);
   }
   rep.charts = charts.length;
+  rep.cutFaces = 0;
+  for (const ch of charts) for (const n of ch.faces) rep.cutFaces += cutArr[n] || 0;
   return { faces, charts, rep };
 }
 
@@ -906,15 +1043,27 @@ async function collectContactPoints(ctx, islandsOnly) {
   }
   if (!islandsOnly) {
     // 7. 兜底补点：区域面上的采样（面重心 + 大三角形 Halton 细分），离所有支撑都超过 HOLE 才补
-    const p = A.p, maxA = spacing * spacing * 0.5, probes = [];
-    for (const f of cb.faces) {
-      const i = f * 9;
-      const a2 = Math.abs((p[i + 3] - p[i]) * (p[i + 8] - p[i + 2]) - (p[i + 6] - p[i]) * (p[i + 5] - p[i + 2])) / 2;
-      const nS = Math.min(64, Math.max(1, Math.ceil(a2 / maxA)));
-      for (let k = 0; k < nS; k++) {
-        let u = k ? halton(k, 2) : 1 / 3, v = k ? halton(k, 3) : 1 / 3;
-        if (u + v > 1) { u = 1 - u; v = 1 - v; }
-        probes.push({ x: p[i] + u * (p[i + 3] - p[i]) + v * (p[i + 6] - p[i]), y: p[i + 1] + u * (p[i + 4] - p[i + 1]) + v * (p[i + 7] - p[i + 1]), z: p[i + 2] + u * (p[i + 5] - p[i + 2]) + v * (p[i + 8] - p[i + 2]), f });
+    const maxA = spacing * spacing * 0.5, probes = [];
+    // 探针打在切开后的三角形上。打在整张原面上的话，等值线外侧（本来能自支撑的那一截）会被当成空当补上点
+    for (const ch of cb.charts) {
+      const t2 = ch.tris2, ty = ch.ty, src = ch.src;
+      for (let j = 0; j < src.length; j++) {
+        const f = src[j], o = j * 6, m = j * 3;
+        const x0 = t2[o], z0 = t2[o + 1], y0 = ty[m];
+        const x1 = t2[o + 2], z1 = t2[o + 3], y1 = ty[m + 1];
+        const x2 = t2[o + 4], z2 = t2[o + 5], y2 = ty[m + 2];
+        const a2 = Math.abs((x1 - x0) * (z2 - z0) - (x2 - x0) * (z1 - z0)) / 2;
+        const nS = Math.min(64, Math.max(1, Math.ceil(a2 / maxA)));
+        for (let k = 0; k < nS; k++) {
+          let u = k ? halton(k, 2) : 1 / 3, v = k ? halton(k, 3) : 1 / 3;
+          if (u + v > 1) { u = 1 - u; v = 1 - v; }
+          probes.push({
+            x: x0 + u * (x1 - x0) + v * (x2 - x0),
+            y: y0 + u * (y1 - y0) + v * (y2 - y0),
+            z: z0 + u * (z1 - z0) + v * (z2 - z0),
+            f,
+          });
+        }
       }
     }
     // 区域面积过滤过的片不补
@@ -1194,6 +1343,7 @@ export async function runGenSup(opts = {}) {
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
       + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.5}mm`
+      + `${rep.cutFaces ? `，等值线切开 ${rep.cutFaces} 个三角面` : ''}`
       + `${rep.maskBad >= 0.5 ? `，布点前避开放不了点的地方 ${rep.maskBad.toFixed(0)}mm²（贴壁根部 / 已托住 / 贴面 / 保护面附近）` : ''}${rep.seedSwap ? `，孤岛最低点替换了 ${rep.seedSwap} 个挨着的布点` : ''}）`, 'ok');
   const al = (s.needlesV || 0) + (s.needlesP || 0);
   if (s.needles) log(`十字针：格架同向 ${al} 根（竖直 ${s.needlesV || 0} · 墙面内斜向 ${s.needlesP || 0}）· 自由直针 ${s.needlesFree || 0} 根${s.needlesNear ? `（其中就近接格架 ${s.needlesNear} 根）` : ''}；同向针的支撑点已挪到接触点（平均 ${al ? (s.shiftSum / al).toFixed(2) : 0}mm、最大 ${(s.shiftMax || 0).toFixed(2)}mm）；针尖沿法线折向 ${s.tipBent || 0} 根；球头 ${params.tipBall !== false ? (s.balls || 0) : 0} 个；顶端长度 ${(params.esTaper || 1.5).toFixed(2)} mm`, 'ok');

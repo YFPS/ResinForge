@@ -39,6 +39,7 @@ export default function ModelCard() {
         <Button onClick={() => loadDemo('mushroom')}>蘑菇</Button>
         <Button onClick={() => loadDemo('tier')}>双层平台</Button>
         <Button onClick={() => loadDemo('statue')}>悬臂雕像</Button>
+        <Button onClick={() => loadDemo('cube')}>正方体</Button>
       </div>
       {info ? (
         <div className="kvbox">

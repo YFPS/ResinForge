@@ -96,8 +96,8 @@ export function BottomProgress() {
 
 const I = { size: 18, strokeWidth: 1.75 };
 
-/* 四个演示模型各配一个形状对得上的图标：托盘里只露图标，名字在悬停提示里 */
-const DEMO_ICONS = { knot: Donut, mushroom: Umbrella, platform: Layers, statue: PersonStanding };
+/* 演示模型各配一个形状对得上的图标：托盘里只露图标，名字在悬停提示里 */
+const DEMO_ICONS = { knot: Donut, mushroom: Umbrella, platform: Layers, statue: PersonStanding, cube: Box };
 const demoIcon = kind => {
   const Shape = DEMO_ICONS[kind] || Shapes;
   return <Shape {...I} />;

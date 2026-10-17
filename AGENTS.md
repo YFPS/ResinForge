@@ -6,7 +6,7 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 
 核心能力：
 
-- 载入用户 `.stl` 模型或内置演示模型（环面结、蘑菇、双层平台、悬臂雕像）
+- 载入用户 `.stl` 模型或内置演示模型（环面结、蘑菇、双层平台、悬臂雕像、正方体）
 - 像素级光栅化切片引擎
 - 多目标自动朝向优化
 - 孤岛检测与层检查器
@@ -50,7 +50,7 @@ resin-support-web/
 │   ├── store.js        # params（全部工艺参数默认值）+ state + bus（迷你 pub/sub）
 │   ├── core/           # 框架无关算法层（不得 import React 组件）
 │   │   ├── scene.js    # 渲染器/相机/OrbitControls/灯光/平台网格/材质/指针交互/拖放
-│   │   ├── model.js    # setGeometry、内置 demo×4、STL 载入、自动底板显示
+│   │   ├── model.js    # setGeometry、内置 demo×5、STL 载入、自动底板显示
 │   │   ├── slicer.js   # rasterizeSection、analyze、buildLDI、sampleLDILayer、steepFaces 等
 │   │   ├── orient.js   # 朝向候选采样、评分、缩略图（离屏渲染 → dataURL）
 │   │   ├── inspect.js  # 逐层分析、层检查器绘制

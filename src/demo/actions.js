@@ -17,6 +17,7 @@ export const DEMOS = [
   { kind: 'mushroom', label: '蘑菇', hint: '伞盖悬垂' },
   { kind: 'tier', label: '双层平台', hint: '2mm 窄间隙' },
   { kind: 'statue', label: '悬臂雕像', hint: '悬臂与球顶' },
+  { kind: 'cube', label: '正方体', hint: '平底整面悬空' },
 ];
 
 /** core 给演示模型起的名字带「(演示)」后缀，界面上拆成名字 + 标记 */

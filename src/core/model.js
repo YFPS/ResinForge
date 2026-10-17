@@ -1,5 +1,5 @@
 /* ================================================================
-   模型载入：setGeometry / loadDemo（4 个内置 demo）/ loadSTLBuffer(s) / mergeGeoms /
+   模型载入：setGeometry / loadDemo（5 个内置 demo）/ loadSTLBuffer(s) / mergeGeoms /
    updateRaft / 参数辅助（raiseH）。
    多个模型文件（STL / OBJ / 3MF）进同一块板：每个零件保留自己的局部几何（底面 y=0、XZ 居中），
    摆放是 ox/oy/oz 加绕自身中心的四元数 q；显示与分析用的 state.mesh 是按这个变换拼起来的一份。
@@ -1365,6 +1365,8 @@ export function loadDemo(kind) {
       { g: new THREE.CylinderGeometry(13, 13, 3, 32), y: 21.5 },      // 下层平台
       { g: new THREE.CylinderGeometry(10, 10, 3, 32), y: 26.5 },       // 上层平台（悬空 2mm）
     ]);
+  } else if (kind === 'cube') {
+    g = new THREE.BoxGeometry(40, 40, 40);   // 底面由 normalizeGeom 落到 y=0
   } else {
     g = mergeGeoms([
       { g: new THREE.BoxGeometry(30, 5, 30), y: 2.5 },
@@ -1374,7 +1376,7 @@ export function loadDemo(kind) {
       { g: new THREE.BoxGeometry(1.5, 28, 2.5), x: 14, y: 54 },
     ]);
   }
-  setGeometry(g, { knot: '环面结(演示)', mushroom: '蘑菇(演示)', tier: '双层平台(演示)', statue: '悬臂雕像(演示)' }[kind]);
+  setGeometry(g, { knot: '环面结(演示)', mushroom: '蘑菇(演示)', tier: '双层平台(演示)', statue: '悬臂雕像(演示)', cube: '正方体(演示)' }[kind]);
 }
 
 /* 把局部顶点变到和显示网格一样的位置（不含 raiseH），给导出用。 */

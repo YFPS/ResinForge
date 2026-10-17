@@ -89,10 +89,11 @@
 }
 .stuPerf b { color: var(--foreground); font-weight: 500; text-align: right; }
 
-/* 左下角用量：宽屏贴着画布角（底栏坞在正中，碰不到）。坞变宽、会盖住这三行时，改停在坞上方。 */
+/* 左下角用量：左边和底边都用左侧卡片同一套 14px 边距（--stu-bottom）。
+   坞变宽、会盖住这三行时，改停在坞上方。 */
 .stuResin {
-  position: absolute; z-index: 3; left: 16px; bottom: 6px;
-  display: flex; flex-direction: column; gap: 5px;
+  position: absolute; z-index: 3; left: 14px; bottom: var(--stu-bottom);
+  display: flex; flex-direction: column; gap: 6px;
   margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.2;
   pointer-events: none; user-select: none;
 }

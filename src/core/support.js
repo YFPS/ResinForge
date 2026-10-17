@@ -394,7 +394,7 @@ function halton(i, b) { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % 
       （切开后那一块的重心正下方 0.8mm 内有材料），悬空的顶点连成片；投影面积小于「最小悬空面积」的片不布点（孤岛另有关键点）。
    2. 图块：每片再按投影拆开——自下而上生长，若新面落在图块已占的 XZ 格子上、高差超过 1.5mm（同一片曲面在投影里绕回来
       压到自己，例如环面结管底带的交叉处），就另起图块。每个图块在同一 XZ 位置只有一层曲面。
-   3. 布点在几何后台线程里算（manifoldKit.layoutPoints）：图块投影轮廓内缩「边缘距离」（默认 1.5mm）得到边缘环，沿环按弧长
+   3. 布点在几何后台线程里算（manifoldKit.layoutPoints）：图块投影轮廓内缩「边缘距离」（默认 1.0mm）得到边缘环，沿环按弧长
       均分放点；内部按覆盖补点——任一处离最近支撑点不超过 0.6 × 间距，哪里最空先补哪里，再 Lloyd 松弛到均匀。
       点数由覆盖决定，条带宽度不是行距整数倍时内部各排自动收紧，不死按间距；窄条点吸到中线上。
    4. 二维点抬回所在图块的曲面（XZ 内找到所在三角形、按重心插值高度），逐点校验（贴面 / 已托住 / 贴壁根部 / 保护面），
@@ -756,7 +756,7 @@ async function collectContactPoints(ctx, islandsOnly) {
   const spacing = Math.max(0.5, params.spacing);
   // 防粘连：相邻支撑的中心距不小于 主干直径 + 0.4 mm（净距），粗支撑即使间距按比例放大，也不能被布点挤到几乎贴在一起
   const clearD = params.esBarW + 0.4;
-  const edgeInset = Math.max(0, Number.isFinite(params.edgeInset) ? params.edgeInset : 1.5);
+  const edgeInset = Math.max(0, Number.isFinite(params.edgeInset) ? params.edgeInset : 1.0);
   const rep = { regions: 0, charts: 0, edgePts: 0, innerPts: 0, areaPruned: 0, heldFaces: 0, protFaces: 0, seeds: 0, low: 0, flush: 0, held: 0, wall: 0, prot: 0, pack: 0, filled: 0, capped: 0, islands: 0, islandsNoPoint: 0, maskBad: 0, seedSwap: 0 };
   const tick = makeYielder();
 
@@ -1342,7 +1342,7 @@ export async function runGenSup(opts = {}) {
   log(islandsOnly
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
-      + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.5}mm`
+      + `距离过近去重 ${rep.pack}，已托住 ${rep.held}（面 ${rep.heldFaces}），贴壁根部 ${rep.wall}，贴面 ${rep.flush}，保护面 ${rep.prot}；边缘距离 ${params.edgeInset ?? 1.0}mm`
       + `${rep.cutFaces ? `，等值线切开 ${rep.cutFaces} 个三角面` : ''}`
       + `${rep.maskBad >= 0.5 ? `，布点前避开放不了点的地方 ${rep.maskBad.toFixed(0)}mm²（贴壁根部 / 已托住 / 贴面 / 保护面附近）` : ''}${rep.seedSwap ? `，孤岛最低点替换了 ${rep.seedSwap} 个挨着的布点` : ''}）`, 'ok');
   const al = (s.needlesV || 0) + (s.needlesP || 0);

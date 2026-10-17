@@ -300,14 +300,14 @@ export async function buildEStageTowers(ctx, points, P) {
   const foundH = Math.max(0, P.esFoundH);
   const join = !!P.baseJoin;
   // 连接底板是垫在整套支撑下面的立板，板高 plateH（joinPlate.js）。开孔只在立板里，到不了板顶。
-  // 板顶之上先是一截实心肩（joinShoulder：至少基础带高，杆更粗时加到两倍杆宽），格架从肩顶才开孔。
-  // 肩只有基础带那么薄、又比杆细时，圆形接头和斜杆下沿会贴进开孔上沿，近看整排支撑都挤在连接板里
-  // （2026-10-16 粗支撑：杆宽 1.5、基础带 1，肩只剩 1，孔顶离圆头不到 1 mm）。
+  // 板顶之上的实心肩 = 基础带高（joinShoulder），格架从肩顶才开孔。
+  // 开孔上沿离板顶 max(0.4, 杆宽)，粗杆圆形接头不会贴进孔里。2026-10-16 曾把肩加到两倍杆宽来躲开孔沿，
+  // 肩算在模型抬高之内，粗档格架起步离模型只剩约 1 mm。
   // 模型只抬板高 plateH；实心肩与基础带都在板顶之上，算在最短 4 mm 之内，最低的单杆正好从板顶落下、长 4 mm。
   // 自动底板：groundY 已是底板顶面，plateH 为 0，格架从「板顶 + 基础带」起步，不加这截肩。
   const plateH = join ? joinPlateHeight(P) : 0;
   const floorY = groundY + plateH;                                       // 支撑落地高度：连接底板顶 / 自动底板顶 / 平台
-  const shoulder = join && plateH > 0 ? joinShoulder(P) : foundH;        // 板顶到格架起步的实心高度
+  const shoulder = join && plateH > 0 ? joinShoulder(P) : foundH;        // 板顶到格架起步的实心高度（= 基础带高）
   const baseTop = floorY + shoulder;                                     // 格架起步
   const tiltMax = Math.PI / 2 - crit, tanT = Math.tan(tiltMax);
   // 十字针（e-Stage Top connection，自格架节点直通接触点）：连接宽 → 过渡段渐缩 → 接触宽（接触边距段）→ 沿针轴扎入渗透长度
@@ -1167,7 +1167,8 @@ export async function buildEStageTowers(ctx, points, P) {
     const x0 = r.s0 * ws - half, x1 = r.s1 * ws + half;
     const chH = 0.6;
     const chamfer = P.baseChamfer ? Math.min(chH * ws / Math.max(hs, 0.2), Math.max(0, (x1 - x0 - 0.8) / 2)) : 0;
-    const yLo = 0.45, yHi = plateH - 0.4;
+    // 上沿离板顶至少一个杆宽：肩只有基础带高，粗杆圆头靠孔让位，不再把肩加到两倍杆宽
+    const yLo = 0.45, yHi = plateH - Math.max(0.4, b);
     const hh = (yHi - yLo) / 2, cy = groundY + (yLo + yHi) / 2;
     const hw = Math.min(w * 0.42, Math.max(0.35, hh * 1.05));
     const out = [];
@@ -1579,8 +1580,8 @@ export async function buildEStageTowers(ctx, points, P) {
       spec.slabs.push({ pl, c: r.line * ws, half, polys: [poly.map(([s, y]) => [s, groundY + y])] });
       // 板内的墙面杆件减掉，开孔才不露杆。减到板顶下 0.05：基础带从这里接上去，重叠而不是贴面
       wallOf(pl, r.line).sub.push([[x0 + 0.05, groundY - 0.1], [x1 - 0.05, groundY - 0.1], [x1 - 0.05, floorY - 0.05], [x0 + 0.05, floorY - 0.05]]);
-      // 补在短杆下面的小立板不再往上加实心肩，短杆自己从板顶长上去。
-      // 肩向板里只叠 0.05：视口不做三维并，贴齐会闪一条缝；再深就会进到开孔上沿（孔顶在板顶下 0.4）。
+      // 墙线上的基础带加到肩顶。短杆脚下的垫块不在这条墙线上，顶面在后面的 padTop 段与这里齐平；杆仍从板顶长起。
+      // 肩向板里只叠 0.05：视口不做三维并，贴齐会闪一条缝；再深就会进到开孔上沿（孔顶离板顶 max(0.4, 杆宽)）。
       if (!r.pad && shoulder > 0.05) {
         wallOf(pl, r.line).web.push([[x0, floorY - 0.05], [x1, floorY - 0.05], [x1, baseTop], [x0, baseTop]]);
         st.foundRuns++;
@@ -1956,12 +1957,15 @@ export async function buildEStageTowers(ctx, points, P) {
     st.unconnected = fallbackIdx.length;
     st.fallback = fallbackIdx.length;
   }
-  // 短杆落在底座顶、正下方却没有底座时，补一块到底座顶为止的小垫块，再用细条接到墙线上的底座（连接底板 / 基础带）上。
-  // 底座顶：连接底板时是板顶；不开底板时是基础带顶；自动底板的杆落在自动底板上，它本身已覆盖杆脚，不补。
+  // 短杆落在底座顶、正下方却没有底座时，补一块小垫块，再用细条接到墙线上的底座（连接底板 / 基础带）上。
+  // 连接底板时垫块与细条顶提到板顶 + 实心肩，与墙线上的基础带顶齐平；杆仍从板顶长起，下段埋在垫块里，最短支撑仍按板顶算。
+  // 不开底板时顶面仍是基础带顶。自动底板的杆落在自动底板上，它本身已覆盖杆脚，不补。
   // 只补真正落到底座顶的点，不给后来接到模型上的点空垫一块。
   const padTop = join && plateH > 0 ? floorY : (!P.autoPlateOn && foundH > 0.05 ? foundH : null);
   if (padTop !== null) {
-    const floorY = padTop;   // 本段的落地高度（遮住外层的 floorY：不开底板时取基础带顶）
+    const floorY = padTop;   // 本段的落地高度（遮住外层的 floorY：不开底板时取基础带顶）。杆脚仍按这个高度认
+    // 连接底板档顶面升到肩顶，和墙线基础带齐平；不开底板时 padTop 已是基础带顶，不再加高
+    const slabTop = join && plateH > 0 ? padTop + shoulder : floorY;
     // 杆身半宽要整个落在立板顶面上。只按墙线外包框量，中心擦到板边也会判成有板，杆其实悬在外面。
     const onSlab = (x, z) => wallRuns.some(r => {
       const need = shortW / 2;
@@ -1975,7 +1979,10 @@ export async function buildEStageTowers(ctx, points, P) {
       if (!(y <= floorY + 0.15) || !Number.isFinite(x) || onSlab(x, z)) return;
       if (lands.some(p => Math.hypot(p.x - x, p.z - z) < 0.35)) return;
       const need = half + 0.15;
-      for (const yy of [groundY + 0.25, groundY + plateH * 0.5, floorY - 0.08]) {
+      // 垫块加到肩顶后，顶部那一截也要离模。墙线上的实心肩本来就在同一高度、不另做离模检查
+      const ys = [groundY + 0.25, groundY + plateH * 0.5, floorY - 0.08];
+      if (join && plateH > 0) ys.push(padTop + shoulder - 0.08);
+      for (const yy of ys) {
         if (ld && ldiInside(ld, x, yy, z)) return;
         if (pointDist(bvh, x, yy, z, need + 0.2) < need) return;
       }
@@ -1988,10 +1995,10 @@ export async function buildEStageTowers(ctx, points, P) {
       const padHalf = Math.max(shortW / 2 + 0.05, half - 0.01);
       const pads = lands.map(p => {
         const x0 = p.x - padHalf, x1 = p.x + padHalf;
-        return { pl: 0, c: p.z, half: padHalf, polys: [[[x0, groundY], [x1, groundY], [x1, floorY], [x0, floorY]]] };
+        return { pl: 0, c: p.z, half: padHalf, polys: [[[x0, groundY], [x1, groundY], [x1, slabTop], [x0, slabTop]]] };
       });
       // 连通（用户 2026-10-16：底部没连接）：墙线条（各座格架的基础带 / 连接底板条）与垫块要接成一块，不能各自悬着。
-      // 按「两者最近距离」依次接入（Prim），接法为 L 形细条（先沿 x 再沿 z），细条只占底座高度之内，不碰模型。
+      // 按「两者最近距离」依次接入（Prim），接法为 L 形细条（先沿 x 再沿 z）。细条顶与垫块同一高度（连接底板时齐到墙线基础带顶）。
       const rectOf = r => (r.dir === 'x'
         ? { x0: r.s0 * ws, x1: r.s1 * ws, z0: r.line * ws, z1: r.line * ws }
         : { x0: r.line * ws, x1: r.line * ws, z0: r.s0 * ws, z1: r.s1 * ws });
@@ -2019,11 +2026,11 @@ export async function buildEStageTowers(ctx, points, P) {
           const p = clampTo(r.rc, l.cx, l.cz), q = clampTo(l.rc, p.x, p.z);
           if (Math.abs(p.x - q.x) > 1e-3) {   // x 向细条：沿 z = p.z，自 p 到 q 的 x 方向
             const xa = Math.min(p.x, q.x) - padHalf, xb = Math.max(p.x, q.x) + padHalf;
-            legs.push({ pl: 0, c: p.z, half: padHalf, polys: [[[xa, groundY], [xb, groundY], [xb, floorY], [xa, floorY]]] });
+            legs.push({ pl: 0, c: p.z, half: padHalf, polys: [[[xa, groundY], [xb, groundY], [xb, slabTop], [xa, slabTop]]] });
           }
           if (Math.abs(p.z - q.z) > 1e-3) {   // z 向细条：沿 x = q.x，自 p 到 q 的 z 方向
             const za = Math.min(p.z, q.z) - padHalf, zb = Math.max(p.z, q.z) + padHalf;
-            legs.push({ pl: 1, c: q.x, half: padHalf, polys: [[[za, groundY], [zb, groundY], [zb, floorY], [za, floorY]]] });
+            legs.push({ pl: 1, c: q.x, half: padHalf, polys: [[[za, groundY], [zb, groundY], [zb, slabTop], [za, slabTop]]] });
           }
           linkedEls.push(r);
         }

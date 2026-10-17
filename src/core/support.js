@@ -1178,7 +1178,7 @@ export async function runGenSup(opts = {}) {
   const fb = !s.fallback ? '全部连上格架'
     : (plateOn ? `未接格架的 ${s.fallback} 点里，短杆 ${s.plates || 0} 点${s.forks ? `（分叉 ${s.forks} 对：一主干两头）` : ''}${s.shortBent ? `，针尖沿法线折向 ${s.shortBent} 处${s.shortBentFoot ? `（底部 ${s.shortBentFoot} 处）` : ''}` : ''}，其余 ${s.unconnected || 0} 点未生成（标红）` : `未接格架的 ${s.fallback} 点未生成（标红）`);
   log(`支撑塔：十字针 ${s.needles} 根接入格架，塔块 ${s.towers} 座（格架节点 ${s.nodes}，杆件 ${s.bars}，基础带 ${s.foundRuns} 段${s.bandH ? `，连接底板高 ${s.bandH}mm（模型同步抬高，支撑从板顶往上，基础带到格架起步 ${s.stripH}mm）${s.pads ? `，短杆下补立板 ${s.pads} 块` : ''}${s.slabCuts ? `，立板在模型下方断开 ${s.slabCuts} 处` : ''}` : ''}）；${fb}，${state.supportStats.ms}ms`, 'ok');
-  if (s.lowSpace) log(`低空间单杆：${s.lowSpace} 个点离格架起步面不足一个柱高，不接格架，各自单杆直落到底板 / 平台（最短支撑 = 模型抬高）`, 'ok');
+  if (s.lowSpace || s.lowBack) log(`低空间单杆：${s.lowSpace || 0} 个点离格架起步面不足一个柱高，不接格架，各自单杆直落到底板 / 平台（最短支撑 = 模型抬高）${s.lowBack ? `；另有 ${s.lowBack} 个低空间点单杆落不下去，改走常规接入` : ''}`, 'ok');
   if (s.capped) log('⚠ 格架节点 / 杆件数达到上限，已截断（可增大菱形宽）', 'warn');
   const bad = (s.noHead || 0) + (s.unroutable || 0);
   if (bad) log(`⚠ 支撑塔结构：${s.noHead || 0} 个点头部无法放置（锥内全部方向碰撞），${s.unroutable || 0} 个点无法落地/锚定——已剔除，不生成悬空几何`, 'warn');

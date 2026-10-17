@@ -832,12 +832,24 @@ export async function buildEStageTowers(ctx, points, P) {
   const needles = [];
   const fallbackIdx = [];
   const lowIdx = [];                                 // 低空间点：格架立不起来，改成单杆直落到底板（不参与分叉）
+  const lowSpans = new Map();                        // 低空间单杆的落地方案（这里判定、步骤 7 出几何，同一份结果）
+  // 十字短杆 / 低空间单杆的落地：竖直优先、再在接触锥里斜着试，落到下方朝上的模型面或底座顶（floorY）；接触端半径 0.2
+  const shortSpan = (p, maxLen) => bridgeToSurface(bvh, ctx.faces, p, {
+    rTip: 0.2, maxLen, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax, groundY: floorY,
+  });
   for (let pi = 0; pi < points.length; pi++) {
     if (tick) await tick();
     const p = points[pi], g = plan[pi];
     // 最短 4 mm（2026-10-16 用户定）：接触点离格架起步面不足一个柱高时，格架压成扁块，改用单杆直落到底板 / 平台 /
-    // 自动底板顶面——每根单杆长度 = 模型抬高（默认 4 mm），不再两两配成分叉。与「短小支撑」开关无关（关了也照生成）。
-    if (p.y - baseTop < Dcol) { lowIdx.push(pi); fallbackIdx.push(pi); continue; }
+    // 自动底板顶面——最短的单杆 = 模型抬高（默认 4 mm），不再两两配成分叉。与「短小支撑」开关无关（关了也照生成）。
+    // 限长按该点到底座的高度给足：低空间判的是「离格架起步面不足一个柱高」，粗档柱高 17.4 mm，离底座可到 20 mm；
+    // 原先沿用十字短杆的 12 mm，判成单杆却落不下去（环面结粗档 21 点标红、1 处孤岛悬空）。
+    // 仍落不下去（正下方被模型挡住等）就回到下面的常规接入（格架针 → 就近接格架 → 分叉 → 十字短杆），不直接标红
+    if (p.y - baseTop < Dcol) {
+      const s = shortSpan(p, Math.max(12, (p.y - floorY) / Math.cos(tiltMax) + 1));
+      if (s) { lowIdx.push(pi); lowSpans.set(pi, s); fallbackIdx.push(pi); continue; }
+      st.lowBack = (st.lowBack || 0) + 1;
+    }
     let hook = null;
     if (g && G.has(k3(g.top.a, g.top.b, g.top.n)) && (g.top.kind === 'free' || moveTo(p, g.top.C))) hook = g.top;   // 挪不动（与其它点挤在一起）就改走下面的兜底
     if (!hook) {                                     // 格架同向针接已保留节点
@@ -1840,8 +1852,6 @@ export async function buildEStageTowers(ctx, points, P) {
   if (fallbackIdx.length && (P.shortSup || lowIdx.length)) {
     const plates = [];
     const rest = [];
-    const rTip = 0.2;   // 短连接接触端半径（原取树状前端球直径的一半，固定为 0.2）
-    const tiltMax = Math.PI / 2 - Math.max(10, Math.min(80, P.selfAngle)) * Math.PI / 180;
     const gBuf = new TriBuf();
     const gBufG = new TriBuf();   // 落到平台的短杆 / 分叉：属落板支撑，归入黑灰那一组（落到模型上的才是红色的短小支撑）
     /* ---- 分叉短杆（一主干两头，2026-10-12 用户提议）：相邻的两个兜底点共用一根主干，在 F 处分叉成两个接触头 ----
@@ -1912,9 +1922,8 @@ export async function buildEStageTowers(ctx, points, P) {
       if (paired.has(pi)) continue;
       // 「短小支撑」关闭时普通兜底点不生成（标红）；低空间单杆仍照生成（它是格架在矮空间里的替代形态，不是可选兜底件）
       if (!P.shortSup && !(lowSet && lowSet.has(pi))) { rest.push(pi); continue; }
-      const s = bridgeToSurface(ctx.bvh, ctx.faces, points[pi], {
-        rTip, maxLen: 12, pen: P.pen, protNear: ctx.protNear, sinkTop: true, tiltMax, groundY: floorY,
-      });
+      // 低空间单杆用步骤 4 判定时的落地方案（限长按到底座的高度）；普通兜底点按十字短杆的 12 mm 限长
+      const s = lowSpans.get(pi) || shortSpan(points[pi], 12);
       const em = s && emitMember(s.ground ? gBufG : gBuf, s.lower, s.upper, !s.ground, true, s.ground ? 0 : pen, pen, s.ground, points[pi], s.ground ? null : s.landN);
       if (em) {
         pointState[pi] = s.ground ? 'ground' : 'mesh';

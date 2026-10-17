@@ -1,18 +1,36 @@
 /* 侧栏参数面板的公共积木：分区、两列数值栅格、开关行、分段选择。
    控件全部是 Arc 组件，这里只负责排布，让五个步骤面板长得一模一样。 */
 import React, { useId } from 'react';
+import { CircleHelp } from 'lucide-react';
 import { NumberField } from '@/components/arc/number-field/number-field';
 import { Switch } from '@/components/arc/switch/switch';
 import SegmentedControl from '@/components/arc/segmented-control/segmented-control';
+import { Tooltip } from '@/components/arc/tooltip/tooltip';
 import { useParams } from '../bridge.js';
 
-/** 一个分区：标题（可带右侧附注）+ 可选说明 + 内容。分区之间由发丝线分隔。 */
-export function Section({ title, aside, desc, children }) {
+/** 圆圈问号。说明先藏起来，停在图标上才展开。 */
+export function HelpTip({ text, label }) {
+  if (!text) return null;
+  return (
+    <Tooltip content={text} side="top">
+      <button type="button" className="helpTip" aria-label={`${label || '这项'}的说明`}>
+        <CircleHelp size={13} strokeWidth={1.75} />
+      </button>
+    </Tooltip>
+  );
+}
+
+/** 一个分区：标题（可带右侧附注）+ 可选说明 + 内容。分区之间由发丝线分隔。
+    help 把说明收进标题旁的问号，不再占一行正文。 */
+export function Section({ title, aside, desc, help, children }) {
   const id = useId();
   return (
     <section className="sec" aria-labelledby={id}>
       <div className="secHead">
-        <h3 id={id} className="secTitle">{title}</h3>
+        <h3 id={id} className="secTitle">
+          {title}
+          {help ? <HelpTip text={help} label={title} /> : null}
+        </h3>
         {aside ? <div className="secAside">{aside}</div> : null}
       </div>
       {desc ? <p className="secDesc">{desc}</p> : null}
@@ -47,13 +65,16 @@ export function Num({ k, label, min, max, step, unit = '', onChange }) {
   );
 }
 
-/** 设置行：左侧标题与说明，右侧开关（开关即时生效） */
-export function SwitchRow({ label, desc, checked, onChange, disabled }) {
+/** 设置行：左侧标题与说明，右侧开关（开关即时生效）。help 把说明收进问号。 */
+export function SwitchRow({ label, desc, help, checked, onChange, disabled }) {
   const id = useId();
   return (
     <div className="setRow">
       <div className="setText">
-        <span id={`${id}-l`} className="setLabel">{label}</span>
+        <span id={`${id}-l`} className="setLabel">
+          {label}
+          {help ? <HelpTip text={help} label={label} /> : null}
+        </span>
         {desc ? <span id={`${id}-d`} className="setDesc">{desc}</span> : null}
       </div>
       <Switch

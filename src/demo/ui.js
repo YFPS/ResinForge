@@ -9,8 +9,8 @@ import { pushToast } from './bridge.js';
 
 export const STEPS = [
   { id: 'model', label: '模型', title: '载入模型', desc: '打开 STL、OBJ 或 3MF 文件，或先用演示模型试一试。' },
-  { id: 'orient', label: '朝向', title: '优化朝向', desc: '找一个支撑更少、孤岛更少的摆放方向。可以跳过。' },
-  { id: 'analyze', label: '分析', title: '逐层分析', desc: '逐层切片，找出孤岛和需要支撑的悬空。' },
+  { id: 'orient', label: '朝向', title: '优化朝向', help: '找一个支撑更少、孤岛更少的摆放方向。可以跳过。' },
+  { id: 'analyze', label: '分析', title: '逐层分析', help: '逐层切片，找出孤岛和需要支撑的悬空。' },
   { id: 'support', label: '支撑', title: '生成支撑' },
   { id: 'export', label: '导出', title: '导出 STL', desc: '选择底板，导出给切片软件。' },
 ];

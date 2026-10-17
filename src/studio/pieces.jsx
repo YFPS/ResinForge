@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import Button from '@/components/arc/button/button';
 import { NumberField } from '@/components/arc/number-field/number-field';
-import { Slider } from '@/components/arc/slider/slider';
+
 import { Tooltip } from '@/components/arc/tooltip/tooltip';
 import { DropdownMenu } from '@/components/arc/dropdown-menu/dropdown-menu';
 import { Dock } from '@/components/arc/dock/dock';
@@ -22,12 +22,16 @@ import { STEPS, runTask, useDone } from '../demo/ui.js';
 import { NextButton } from '../demo/components/StepPanel.jsx';
 import { switchThemeWithTransition, useTheme } from '../demo/theme.js';
 import Simplifier from '../demo/components/Simplifier.jsx';
-import { Grid, Num, SwitchRow } from '../demo/components/fields.jsx';
+import { Switch } from '@/components/arc/switch/switch';
 import {
   AddIcon, BoxesIcon, DelIcon, DotIcon, FrameIcon, GaugeIcon, MoveIcon, PolyIcon,
   OrbitIcon, RotateIcon, ScaleIcon, ShrinkIcon, SplineIcon, WandIcon,
 } from './toolIcons.jsx';
 import { fmt1, fmtInt } from './kit.js';
+
+/* 底栏上方留给工具提示的空：提示距栏顶 8px，提示本身约 28px，再留 8px 缝。
+   缩放 / 旋转面板和简化浮层都按这个高度让开，提示才不会被切掉。 */
+const DOCK_TIP_BAND = 44;
 
 export function OpenModelButton() {
   return (
@@ -105,34 +109,18 @@ const demoIcon = kind => {
 
 /* 保护面的开关与笔刷参数：参数卡里这一节和工具栏的保护面格重复，
    改挂在保护面格上方的浮层里（和简化条同一处，内容按当前打开的那一格切换）。 */
-/* 多线段的接触点间距。选中多线段时浮在这一格上方。 */
-function PolyGapIcon() {
-  return (
-    <svg className="polyGapIcon" viewBox="0 0 28 28" aria-hidden="true">
-      <rect x="1" y="1" width="26" height="26" rx="6" fill="none" stroke="currentColor" strokeWidth="1.25" />
-      {[8, 14, 20].map(x => (
-        <g key={x}>
-          <line x1={x} y1="19" x2={x} y2="11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <circle cx={x} cy="8.2" r="1.7" fill="#3ee06a" />
-        </g>
-      ))}
-    </svg>
-  );
-}
-
+/* 多线段的接触点间距。和保护面同一套横条，居中放在底栏上方。 */
 function PolyGapPanel() {
   const [p, setParam] = useParams();
   const value = Math.min(10, Math.max(0.1, Number(p.polySpacing) || 2));
   const set = n => setParam('polySpacing', Math.round(Math.min(10, Math.max(0.1, Number(n) || 0)) * 10) / 10);
   return (
-    <div className="polyGap">
-      <PolyGapIcon />
-      <span className="polyGapLabel">接触点间距</span>
-      <div className="polyGapNum">
-        <NumberField label="接触点间距" value={value} min={0.1} max={10} step={0.1} suffix="mm" size="sm" onValueChange={set} />
-      </div>
-      <div className="polyGapSlider">
-        <Slider label="接触点间距" showValue={false} min={0.1} max={10} step={0.1} value={value} onValueChange={set} />
+    <div className="stuBrush stuBrushPoly">
+      <span className="stuBrushBrand">接触点间距</span>
+      <span className="stuBrushSep" aria-hidden="true" />
+      <span className="stuBrushLabel">间距</span>
+      <div className="stuBrushNum">
+        <NumberField label="接触点间距" value={value} min={0.1} max={10} step={0.1} suffix="mm" size="sm" scrub onValueChange={set} />
       </div>
       <Tooltip content="接触点之间的距离。数值越大，点与点隔得越开。">
         <button type="button" className="polyGapHelp" aria-label="接触点间距说明">
@@ -145,18 +133,31 @@ function PolyGapPanel() {
 
 function BrushPanel() {
   const mode = useBusLatest('mode', 'orbit');
+  const [p, setParam] = useParams();
+  const radius = Math.min(12, Math.max(0.5, Number(p.brushR) || 0.5));
+  const weight = Math.min(30, Math.max(0, Number(p.protW) || 0));
   return (
     <div className="stuBrush">
-      <SwitchRow
-        label="涂画保护面"
-        desc="在模型上按住拖动。涂过的面不长支撑，朝向评分也会避开它。"
+      <span className="stuBrushBrand">涂画保护面</span>
+      <Switch
         checked={mode === 'paint'}
-        onChange={on => setMode(on ? 'paint' : 'orbit')}
+        onCheckedChange={on => setMode(on ? 'paint' : 'orbit')}
+        aria-label="涂画保护面"
       />
-      <Grid>
-        <Num k="brushR" label="笔刷半径" min={0.5} max={12} step={0.5} unit="mm" />
-        <Num k="protW" label="评分权重" min={0} max={30} step={1} unit="×" />
-      </Grid>
+      <span className="stuBrushSep" aria-hidden="true" />
+      <span className="stuBrushLabel" data-field="r">笔刷半径</span>
+      <div className="stuBrushNum" data-field="r">
+        <NumberField label="笔刷半径" value={radius} min={0.5} max={12} step={0.5} suffix="mm" size="sm" scrub onValueChange={n => setParam('brushR', n)} />
+      </div>
+      <span className="stuBrushLabel" data-field="w">评分权重</span>
+      <div className="stuBrushNum" data-field="w">
+        <NumberField label="评分权重" value={weight} min={0} max={30} step={1} suffix="×" size="sm" scrub onValueChange={n => setParam('protW', n)} />
+      </div>
+      <Tooltip content="在模型上按住拖动。涂过的面不长支撑，朝向评分也会避开它。">
+        <button type="button" className="polyGapHelp" aria-label="保护面说明">
+          <CircleHelp size={16} strokeWidth={1.75} />
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -173,14 +174,85 @@ export function ViewportDock({ trailing }) {
   const { name: modelName, demo: isDemo } = splitModelName(info && info.name);
   const demoKind = isDemo ? ((DEMOS.find(d => d.label === modelName) || {}).kind || null) : null;
   const tool = (sel && sel.tool) || null;
-  /* 浮层同一时间只开一个：'simplify' 简化条，'brush' 保护面，'poly' 多线段接触点间距 */
+  /* 浮层同一时间只开一个：'simplify' 简化条，'brush' 保护面，'poly' 多线段接触点间距。
+     关掉时 pop 先变成空，退出动画还在播。内容不能跟着掉进简化条，否则会闪一下简化对话框。 */
   const [pop, setPop] = React.useState(null);
+  const popFace = React.useRef(null);
+  if (pop) popFace.current = pop;
+  const face = pop || popFace.current;
   /* 浮层要落在对应那一格正上方：量出这一格相对坞中心的偏移 */
-  const [brushShift, setBrushShift] = React.useState(0);
+
   const [tray, setTray] = React.useState(null);
   const [pulse, setPulse] = React.useState(0);
   const [live, setLive] = React.useState(false);
   React.useEffect(() => { setLive(true); }, []);
+  /* 变换托盘会从底栏上沿长出来。量底板轮廓的最上沿，让缩放 / 旋转面板停在它上面，托盘开合时跟着让。 */
+  React.useEffect(() => {
+    const root = document.querySelector('.stu');
+    const row = document.querySelector('.stuToolsRow');
+    if (!root || !row) return undefined;
+    let raf = 0;
+    const measure = () => {
+      const anchor = row.querySelector('.stuDockAnchor > div');
+      const plate = anchor && anchor.firstElementChild;
+      let top = row.getBoundingClientRect().top;
+      if (plate) {
+        const box = plate.getBoundingClientRect();
+        if (box.height > 8 && box.top < top) top = box.top;
+      }
+      root.style.setProperty('--dock-clear', `${Math.ceil(window.innerHeight - top + DOCK_TIP_BAND)}px`);
+    };
+    const kick = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    kick();
+    const obs = new ResizeObserver(kick);
+    obs.observe(row);
+    const plate = row.querySelector('.stuDockAnchor > div');
+    const plateEl = plate && plate.firstElementChild;
+    if (plateEl) obs.observe(plateEl);
+    window.addEventListener('resize', kick);
+    return () => {
+      cancelAnimationFrame(raf);
+      obs.disconnect();
+      window.removeEventListener('resize', kick);
+      root.style.removeProperty('--dock-clear');
+    };
+  }, []);
+  /* 简化 / 笔刷 / 多线段浮层和缩放、旋转面板都贴在底栏上方。浮层开着时把变换面板再抬一截，避免叠在一起。 */
+  React.useEffect(() => {
+    const root = document.querySelector('.stu');
+    if (!root) return undefined;
+    if (!pop) {
+      root.style.setProperty('--dock-pop-lift', '0px');
+      return undefined;
+    }
+    let raf = 0;
+    const measure = () => {
+      const el = document.querySelector('.stuPop');
+      const h = el ? el.getBoundingClientRect().height : 0;
+      root.style.setProperty('--dock-pop-lift', `${Math.ceil(h + 12)}px`);
+    };
+    const kick = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    kick();
+    const obs = new ResizeObserver(kick);
+    const watch = () => {
+      const el = document.querySelector('.stuPop');
+      if (el) obs.observe(el);
+    };
+    watch();
+    const later = window.setTimeout(watch, 60);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(later);
+      obs.disconnect();
+      root.style.setProperty('--dock-pop-lift', '0px');
+    };
+  }, [pop]);
   const tip = { ...I, live };
   const dockValue = tool || mode;
   const view = supView || 'full';
@@ -230,9 +302,9 @@ export function ViewportDock({ trailing }) {
       label: '变换',
       icon: transformIcon,
       items: [
-        { id: 'move', label: '移动', icon: <MoveIcon {...tip} state={tool === 'move'} /> },
-        { id: 'rotate', label: '旋转', icon: <RotateIcon {...tip} state={tool === 'rotate'} /> },
-        { id: 'scale', label: '缩放', icon: <ScaleIcon {...tip} state={tool === 'scale'} /> },
+        { id: 'move', label: '移动  M', icon: <MoveIcon {...tip} state={tool === 'move'} /> },
+        { id: 'rotate', label: '旋转  R', icon: <RotateIcon {...tip} state={tool === 'rotate'} /> },
+        { id: 'scale', label: '缩放  S', icon: <ScaleIcon {...tip} state={tool === 'scale'} /> },
       ],
     },
     { id: 'simplify', label: '简化', icon: <ShrinkIcon {...I} state={pop === 'simplify'} /> },
@@ -254,44 +326,35 @@ export function ViewportDock({ trailing }) {
     setPop(null);
   };
 
-  /* 量出某一格相对坞中心的偏移，浮层落在这一格正上方。贴边时拉回视口内。 */
-  const measureShift = (label, popW) => {
-    const bar = document.querySelector('[role=toolbar]');
-    const btn = bar && [...bar.querySelectorAll('button')].find(x => (x.getAttribute('aria-label') || '').startsWith(label));
-    if (!bar || !btn) return;
-    const br = bar.getBoundingClientRect(), gr = btn.getBoundingClientRect();
-    const half = popW / 2;
-    const keep = Math.max(half + 12, Math.min(window.innerWidth - half - 12, gr.left + gr.width / 2));
-    const next = keep - (br.left + br.width / 2);
-    setBrushShift(prev => (Math.abs(prev - next) < 0.5 ? prev : next));
-  };
-  const measurePaintShift = () => measureShift('保护面', Math.min(window.innerWidth <= 860 ? 320 : 400, window.innerWidth - 24));
-  const measurePolyShift = () => measureShift('手动支撑', Math.min(420, window.innerWidth - 24));
-
-  /* 窗口尺寸变了，这一格的位置也跟着变 */
-  React.useEffect(() => {
-    if (pop !== 'brush' && pop !== 'poly') return undefined;
-    const measure = pop === 'poly' ? measurePolyShift : measurePaintShift;
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [pop]);
-
   const onPick = id => {
+    {
+      const parent = { add: 'manual', del: 'manual', poly: 'manual', full: 'supview', needle: 'supview', point: 'supview', move: 'xform', rotate: 'xform', scale: 'xform' }[id];
+      if (parent) tabAt.current = parent;
+      else if (['orbit', 'paint', 'manual', 'supview', 'xform', 'simplify', 'frame'].includes(id)) tabAt.current = id;
+    }
     /* 托盘里的演示模型：点了就换模型，重复点当前这一个不做任何事 */
     if (id.startsWith('demo:')) {
       const kind = id.slice(5);
       if (kind !== demoKind) runTask('demo', () => doLoadDemo(kind));
       return;
     }
-    if (id === 'full' || id === 'needle' || id === 'point') { doSetSupView(id); return; }
-    if (id === 'move' || id === 'rotate' || id === 'scale') { setTransformTool(id); return; }
-    /* 保护面：进模式的同时把笔刷设置摊在这一格上方，再点一次（或点别处）一起收起 */
+    if (id === 'full' || id === 'needle' || id === 'point') {
+      if (pop) setPop(null);
+      doSetSupView(id);
+      return;
+    }
+    if (id === 'move' || id === 'rotate' || id === 'scale') {
+      if (pop) setPop(null);
+      setTransformTool(id);
+      return;
+    }
+    /* 保护面：进模式的同时把笔刷设置摊在这一格上方。再点一次或换别的工具才收起；
+       在模型上移动、按住涂画不算点到外面，否则一动手面板就没了。 */
     if (id === 'paint') {
       if (pop === 'brush') { closePop(); return; }
       if (tool) setTransformTool(tool);
       setMode('paint');
-      measurePaintShift();
+      setRevealTray(null);
       setPop('brush');
       return;
     }
@@ -299,12 +362,12 @@ export function ViewportDock({ trailing }) {
       if (pop === 'poly') { closePop(); return; }
       if (tool) setTransformTool(tool);
       setMode('poly');
-      measurePolyShift();
+      setRevealTray(null);
       setPop('poly');
       return;
     }
     if (id === 'orbit' || id === 'add' || id === 'del') {
-      if (tool && id !== 'orbit') setTransformTool(tool);
+      if (tool) setTransformTool(tool);
       setMode(id);
       if (pop) setPop(null);
       return;
@@ -312,15 +375,70 @@ export function ViewportDock({ trailing }) {
     /* 简化外观演示打开时，底栏不再叠出原来的白卡片 */
     if (id === 'simplify') {
       if (document.documentElement.dataset.simpProto) return;
+      setRevealTray(null);
       setPop(open => (open === 'simplify' ? null : 'simplify'));
       return;
     }
     if (id === 'heat') { setHeat(!heat); return; }
     if (id === 'frame') {
+      if (pop) setPop(null);
       setPulse(n => n + 1);
       frameParts(state.parts, { animate: true });
     }
   };
+
+  /* Tab / Shift+Tab 只在底栏这一排上走。落到有二级菜单的格子时，直接把菜单展开，不改里面当前的功能。
+     热力图和演示模型仍跳过。输入框里、以及工具浮层以外的对话框里不抢。 */
+  const tabAt = React.useRef(null);
+  const [tabSlot, setTabSlot] = React.useState(null);
+  const [revealTray, setRevealTray] = React.useState(null);
+  const popRef = React.useRef(pop);
+  popRef.current = pop;
+  const pickRef = React.useRef(onPick);
+  pickRef.current = onPick;
+  React.useEffect(() => {
+    const order = ['orbit', 'paint', 'manual', 'supview', 'xform', 'simplify', 'frame'];
+    const parentOf = { add: 'manual', del: 'manual', poly: 'manual', full: 'supview', needle: 'supview', point: 'supview', move: 'xform', rotate: 'xform', scale: 'xform' };
+    const onKey = (e) => {
+      if (e.key !== 'Tab' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      const dialog = el && el.closest && el.closest('dialog[open], [role="dialog"]');
+      if (dialog && !dialog.classList.contains('stuPop') && !dialog.classList.contains('scalePanel')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const popNow = popRef.current;
+      const toolNow = state.transformTool;
+      const modeNow = state.mode;
+      const inferredRaw = popNow === 'simplify' ? 'simplify'
+        : (toolNow || (modeNow === 'paint' || modeNow === 'add' || modeNow === 'del' || modeNow === 'poly' ? modeNow : 'orbit'));
+      const inferred = parentOf[inferredRaw] || inferredRaw;
+      const marked = tabAt.current ? (parentOf[tabAt.current] || tabAt.current) : null;
+      const cur = marked && order.includes(marked) ? marked : inferred;
+      const dir = e.shiftKey ? -1 : 1;
+      let i = order.indexOf(cur);
+      if (i < 0) i = dir > 0 ? -1 : 0;
+      const activate = (id) => {
+        if (id === 'manual' || id === 'supview' || id === 'xform') {
+          setTabSlot(null);
+          if (popNow) setPop(null);
+          setRevealTray(id);
+          tabAt.current = id;
+          return true;
+        }
+        setRevealTray(null);
+        setTabSlot(id === 'frame' ? 'frame' : null);
+        pickRef.current(id);
+        return true;
+      };
+      for (let n = 0; n < order.length; n++) {
+        i = (i + dir + order.length) % order.length;
+        if (activate(order[i])) return;
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   return (
     <Popover open={!!pop} onOpenChange={open => { if (!open) closePop(); }}>
@@ -331,22 +449,24 @@ export function ViewportDock({ trailing }) {
             items={items}
             value={tool || mode}
             trailing={trailing}
-            expandedId={pop === 'simplify' ? 'simplify' : pop === 'brush' ? 'paint' : pop === 'poly' ? 'manual' : null}
+            trayClosed={!!pop}
+            revealTray={revealTray}
+            expandedId={tabSlot === 'supview' || tabSlot === 'frame' ? tabSlot : pop === 'simplify' ? 'simplify' : pop === 'brush' ? 'paint' : null}
             onOpenChange={id => { setTray(id); if (id && pop) closePop(); }}
             onValueChange={onPick}
           />
         </div>
       </PopoverAnchor>
       <PopoverContent
-        className={'stuPop' + (pop === 'brush' ? ' stuPopBrush' : pop === 'poly' ? ' stuPopPoly' : '')}
+        className={'stuPop' + (face === 'brush' ? ' stuPopBrush' : face === 'poly' ? ' stuPopPoly' : '')}
         side="top"
         align="center"
-        style={pop === 'brush' || pop === 'poly' ? { '--stu-brush-shift': `${brushShift}px` } : undefined}
-        sideOffset={14}
-        onOpenAutoFocus={event => { if (pop === 'poly') event.preventDefault(); }}
-        onInteractOutside={event => { if (pop === 'poly') event.preventDefault(); }}
+
+        sideOffset={DOCK_TIP_BAND}
+        onOpenAutoFocus={event => { if (face === 'poly' || face === 'brush') event.preventDefault(); }}
+        onInteractOutside={event => { if (face === 'poly' || face === 'brush') event.preventDefault(); }}
       >
-        {pop === 'brush' ? <BrushPanel /> : pop === 'poly' ? <PolyGapPanel /> : <Simplifier compact />}
+        {face === 'brush' ? <BrushPanel /> : face === 'poly' ? <PolyGapPanel /> : face === 'simplify' ? <Simplifier compact /> : null}
       </PopoverContent>
     </Popover>
   );

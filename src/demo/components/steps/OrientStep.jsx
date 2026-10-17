@@ -94,7 +94,7 @@ export default function OrientStep({ hideQuality = false, protectInToolbar = fal
       {!hideQuality && (
         <Section
           title="优化"
-          desc={info && info.parts && info.parts.length > 1
+          help={info && info.parts && info.parts.length > 1
             ? `只优化当前模型「${splitModelName(info.parts.find(p => p.id === info.activeId) || info.parts[0]).name}」。采样越多越慢。`
             : '采样越多越可能找到好朝向，也越慢。'}
         >
@@ -112,7 +112,7 @@ export default function OrientStep({ hideQuality = false, protectInToolbar = fal
           <>
             <SwitchRow
               label="涂画保护面"
-              desc="在模型上按住拖动。涂过的面不长支撑，朝向评分也会避开它。"
+              help="在模型上按住拖动。涂过的面不长支撑，朝向评分也会避开它。"
               checked={mode === 'paint'}
               onChange={on => setMode(on ? 'paint' : 'orbit')}
             />

@@ -89,20 +89,46 @@
 }
 .stuPerf b { color: var(--foreground); font-weight: 500; text-align: right; }
 
-/* 左下角用量：左边和底边都用左侧卡片同一套 14px 边距（--stu-bottom）。
-   坞变宽、会盖住这三行时，改停在坞上方。 */
+/* 左下角摘要卡。展开是横卡片；收起是一条竖着的矩形，只留层数和体积。
+   左边和底边都用左侧卡片同一套 14px 边距。坞变宽、会盖住卡片时，改停在坞上方。 */
 .stuResin {
-  position: absolute; z-index: 3; left: 14px; bottom: var(--stu-bottom);
-  display: flex; flex-direction: column; gap: 6px;
-  margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.2;
-  pointer-events: none; user-select: none;
+  position: absolute; z-index: 4; left: 14px; bottom: var(--stu-bottom);
+  margin: 0; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--stu-card-bg); backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary); font-size: 12px; line-height: 1.2;
+  pointer-events: auto; user-select: none;
 }
+.stuResinFace[data-open="1"] { width: 232px; padding: 10px 12px 12px; }
+.stuResinFace[data-open="0"] { width: 46px; padding: 8px 0 10px; }
 @media (max-width: 1100px) {
   .stuResin { bottom: calc(var(--stu-bottom) + 64px); }
 }
-.stuResinRow { display: flex; align-items: center; gap: 6px; }
-.stuResinRow svg { flex: none; color: var(--text-muted); }
-.stuResin b { font-weight: 500; }
+.stuSumHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stuSumTitle { font-weight: 500; color: var(--foreground); }
+.stuSumFold {
+  margin-left: auto; display: grid; place-items: center;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.stuSumFold:hover { background: var(--background-hover, color-mix(in oklab, var(--foreground) 8%, transparent)); color: var(--foreground); }
+.stuSumBody { display: flex; flex-direction: column; gap: 7px; }
+.stuSumRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stuSumRow.sub { padding-left: 22px; color: var(--text-muted); }
+.stuSumLabel { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.stuSumIco { display: grid; place-items: center; width: 14px; flex: none; color: var(--text-muted); }
+.stuSumRow b { margin-left: auto; font-weight: 500; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.stuSumRow.sub b { font-weight: 400; color: var(--text-secondary); }
+.stuSumRow b.accent { color: var(--accent); }
+.stuResinSpine {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 100%; padding: 0; border: 0; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 11px; line-height: 1.15;
+  cursor: pointer;
+}
+.stuResinSpine svg { color: var(--text-muted); margin-bottom: 4px; }
+.stuResinSpine .tnum { color: var(--foreground); font-weight: 500; font-size: 12px; }
 
 .stuFloatBar {
   position: absolute; z-index: 3; top: 12px; left: 50%; transform: translateX(-50%);
@@ -180,6 +206,25 @@
 
 /* 工具栏的简化浮层：底栏正上方一条横条。双类名压过 Popover 内容区 22rem 的最大宽度。
    卡片按缩放对话框那套玻璃来：半透明底 + 背景模糊 + 描边 + 抬升阴影，圆角用同一个面板 token。 */
+/* 底栏浮层的出现和收起。用 scale / opacity，不碰 Radix 用来定位的 transform。 */
+@keyframes stu-pop-in {
+  from { opacity: 0; scale: 0.96; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes stu-pop-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.98; }
+}
+.stuPop.stuPop[data-state="open"] {
+  animation: stu-pop-in var(--duration-standard, 240ms) var(--ease-enter, cubic-bezier(.16, 1, .3, 1)) both;
+}
+.stuPop.stuPop[data-state="closed"] {
+  animation: stu-pop-out var(--duration-fast, 160ms) var(--ease-standard, cubic-bezier(.22, 1, .36, 1)) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stuPop.stuPop[data-state="open"],
+  .stuPop.stuPop[data-state="closed"] { animation: none; }
+}
 .stuPop.stuPop {
   width: min(600px, calc(100vw - 48px));
   max-width: calc(100vw - 24px);
@@ -196,35 +241,38 @@
 @media (prefers-reduced-transparency: reduce) {
   .stuPop.stuPop { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
-/* 笔刷浮层（保护面）：比简化条窄，一行开关 + 两列数值框。
-   横向位置由 --stu-brush-shift 从整条坞的中心挪到保护面格正上方——用 translate 而不是 margin，
-   浮层的定位是布局层面的，margin 会被父容器分掉一半。 */
-.stuPop.stuPopBrush,
+
+/* 保护面跟简化条同一套横条：标题、开关、两个数值、说明。 */
+.stuPop.stuPopBrush {
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px 8px 16px;
+}
 .stuPop.stuPopPoly {
-  width: min(400px, calc(100vw - 24px)); padding: 14px 16px;
-  translate: var(--stu-brush-shift, 0px) 0;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px 8px 16px;
 }
-.stuPop.stuPopPoly { width: min(420px, calc(100vw - 24px)); padding: 10px 12px; }
-.polyGap {
-  display: grid; align-items: center; column-gap: 10px; row-gap: 6px;
-  grid-template-columns: 28px auto auto minmax(120px, 1fr) 28px;
-  grid-template-areas: "icon label num slider help";
-}
-.polyGapIcon { grid-area: icon; width: 28px; height: 28px; color: var(--foreground); }
-.polyGapLabel { grid-area: label; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.polyGapNum { grid-area: num; --number-field-width: 128px; }
-.polyGapNum > div > div:first-child,
-.polyGapSlider > div > div:first-child {
-  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
-  clip: rect(0 0 0 0); white-space: nowrap;
-}
-.polyGapSlider { grid-area: slider; min-width: 0; }
+.stuBrush.stuBrushPoly { grid-template-columns: auto 1px auto 132px 28px; }
 .polyGapHelp {
-  grid-area: help; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
   border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); cursor: pointer;
 }
 .polyGapHelp:hover { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
-.stuBrush { display: flex; flex-direction: column; gap: 12px; }
+.stuBrush {
+  display: grid; align-items: center; column-gap: 10px;
+  grid-template-columns: auto auto 1px auto auto auto auto auto;
+}
+.stuBrushBrand { font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.stuBrushSep { width: 1px; height: 20px; background: var(--border-strong); }
+.stuBrushLabel { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+.stuBrush > button[role="switch"] { min-height: 0; }
+.stuBrushNum { width: 132px; --number-field-width: 132px; }
+.stuBrushNum > div { width: 100%; }
+.stuBrushNum > div > div:first-child {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
 .simpBar {
   display: grid; align-items: center; column-gap: 12px;
   grid-template-columns: auto auto minmax(180px, 1fr) auto auto;
@@ -251,7 +299,20 @@
 .simpBarGo:disabled { opacity: .45; cursor: not-allowed; }
 @media (max-width: 860px) {
   .stuPop.stuPop { width: min(340px, calc(100vw - 24px)); padding: 12px; }
-  .stuPop.stuPopBrush { width: min(320px, calc(100vw - 24px)); }
+  .stuPop.stuPopBrush { width: min(320px, calc(100vw - 24px)); padding: 12px; }
+  .stuBrush {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "brand switch help" "rlabel rnum rnum" "wlabel wnum wnum";
+    row-gap: 8px;
+  }
+  .stuBrushBrand { grid-area: brand; }
+  .stuBrush > button[role="switch"] { grid-area: switch; justify-self: start; }
+  .stuBrushSep { display: none; }
+  .stuBrushLabel[data-field="r"] { grid-area: rlabel; }
+  .stuBrushNum[data-field="r"] { grid-area: rnum; }
+  .stuBrushLabel[data-field="w"] { grid-area: wlabel; }
+  .stuBrushNum[data-field="w"] { grid-area: wnum; }
+  .stuBrush > .polyGapHelp { grid-area: help; }
   .simpBar {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "brand modes" "slider slider" "stat go";
@@ -265,17 +326,18 @@
 }
 .stuTool[data-state="open"] { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
 
-/* 缩放面板挂在 .stu 上（高于左右卡片和底栏），始终在底栏正上方居中。宽屏横排，窄屏收成竖卡片。 */
+/* 缩放面板挂在 .stu 上（高于左右卡片和底栏），始终在底栏正上方居中。
+   --dock-clear 是底栏含变换托盘的上沿，再加一道够放下工具提示的空。浮层另加 --dock-pop-lift。宽屏横排，窄屏收成竖卡片。 */
 .stu .scalePanel {
   z-index: 6;
   top: auto;
   left: 50%;
   right: auto;
-  bottom: calc(var(--stu-bottom, 14px) + 68px);
+  bottom: calc(var(--dock-clear, calc(var(--stu-bottom, 14px) + 68px)) + var(--dock-pop-lift, 0px));
   transform: translateX(-50%);
   width: min(320px, calc(100% - 760px));
   max-width: calc(100% - 760px);
-  max-height: calc(100% - var(--stu-bottom, 14px) - 96px);
+  max-height: calc(100% - var(--dock-clear, 96px) - var(--dock-pop-lift, 0px) - 16px);
 }
 .stu .scalePanel[hidden] { display: none; }
 @media (min-width: 1500px) {
@@ -294,6 +356,16 @@
   .stu .scaleRow { grid-template-columns: 26px 100px 88px; gap: 4px; width: max-content; }
   .stu .scaleActs { display: flex; justify-content: center; gap: 8px; }
   .stu .scaleAction { padding: 0 12px; }
+  /* 旋转跟缩放同一条横条：标题在左、复位在右，三轴并排，不再单独收成竖卡片。 */
+  .stu .rotPanel.scalePanel {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand icons" "axes axes";
+    width: max-content;
+    max-width: calc(100% - 760px);
+  }
+  .stu .rotAxes { flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 12px; }
+  .stu .rotRow { grid-template-columns: 26px 108px auto auto; gap: 4px; width: max-content; }
+  .stu .rotNudge { padding: 0 10px; }
 }
 
 /* 顶栏变宽、伸到右上角时，方块改到顶栏下面，右栏再跟着往下，避免被挡住。 */

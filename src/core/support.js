@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor, supMatBase, supMatGlass, supMatAnchorGlass } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, localFaceOf, supportTargetPart, partAtWorld } from './model.js';
+import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, localFaceOf, supportScopeIds, supportScopeNote, partAtWorld } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
 import { joinLiftWanted, joinPlateHeight } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
@@ -317,10 +317,24 @@ export function updateSupStats() {
   bus.emit('supStats', s ? { ...s, prot: state.protectedFaces.size } : { mode: 'tower', points: state.supportPoints.length, prot: state.protectedFaces.size });
 }
 
+/* 换选中后，统计卡上的「仍悬空孤岛」只数当前这些模型，不把别的模型上的孤岛算进去。 */
+function publishIslandCoverage() {
+  if (!state.supportStats || !state.analysis) return;
+  const cov = islandCoverage();
+  state.supportStats.islFail = cov.fail;
+  state.supportStats.islNoPoint = cov.noPoint;
+  state.supportStats.islOpen = cov.open;
+  updateSupStats();
+}
+bus.on('selection', () => { publishIslandCoverage(); });
+
 /** 孤岛有没有被托住。图上标了孤岛的节点：有支撑点且至少一点生成了结构（ground / mesh / micro）算托住；
  *  有点但全失败记 fail，一个点都没有记 noPoint。open 是两者之和，统计卡用它决定还要不要警告。 */
 function islandCoverage() {
-  const nodes = (state.analysis && state.analysis.graph && state.analysis.graph.nodes) || [];
+  const A = state.analysis;
+  const nodes = (A && A.graph && A.graph.nodes) || [];
+  const scope = supportScopeIds();
+  const bvh = A && A.p ? (A._bvh || (A._bvh = buildBVH(A.p))) : null;
   const ok = new Set(), any = new Set();
   for (const p of state.supportPoints || []) {
     if (p.island == null) continue;
@@ -330,6 +344,7 @@ function islandCoverage() {
   let fail = 0, noPoint = 0;
   for (const nd of nodes) {
     if (!nd.island) continue;
+    if (scope && bvh && !islandInScope(nd, A, bvh, scope)) continue;
     if (ok.has(nd.id)) continue;
     if (any.has(nd.id)) fail++;
     else noPoint++;
@@ -506,15 +521,40 @@ function ldiGapBelow(ld, x, y, z) {
   return top === -Infinity ? Infinity : Math.max(0, y - top);
 }
 
-/* 多模型时只支撑选中的那一件。只有一个模型时返回 null，表示不按零件过滤。 */
-function supportTargetId() {
-  const t = supportTargetPart();
-  if (!t || state.parts.length <= 1) return null;
-  return t.id;
-}
 function facePartId(f) {
   const loc = localFaceOf(f);
   return loc ? loc.part.id : null;
+}
+function faceInScope(f, scope) {
+  if (!scope) return true;
+  const id = facePartId(f);
+  return id != null && scope.has(id);
+}
+/* 孤岛属于哪个零件。分析时已经记过 owner 就直接用。 */
+function islandOwner(nd, A, bvh) {
+  if (nd.owner !== undefined) return nd.owner;
+  const pix = nd.pixels;
+  let x = nd.cx, z = nd.cz;
+  if (pix && pix.length) {
+    const { W: GW } = A.grid;
+    const cc = pix[0];
+    x = A.grid.x0 + (cc % GW + 0.5) * A.grid.sx;
+    z = A.grid.z0 + (((cc / GW) | 0) + 0.5) * A.grid.sz;
+  }
+  const hit = raycast(bvh, x, nd.y + 0.8, z, 0, -1, 0, 0, 4);
+  let id = null;
+  if (hit && hit.f >= 0) id = facePartId(hit.f);
+  if (id == null) {
+    const part = partAtWorld(x, z);
+    id = part ? part.id : null;
+  }
+  nd.owner = id;
+  return id;
+}
+function islandInScope(nd, A, bvh, scope) {
+  if (!scope) return true;
+  const id = islandOwner(nd, A, bvh);
+  return id != null && scope.has(id);
 }
 function partIdOfPoint(p) {
   if (p.partId != null) return p.partId;
@@ -529,27 +569,13 @@ function partIdOfPoint(p) {
   const part = partAtWorld(p.x, p.z);
   return part ? part.id : null;
 }
-function islandOnTarget(nd, A, bvh, targetId) {
-  const pix = nd.pixels;
-  if (!pix || !pix.length) return false;
-  const { W: GW } = A.grid;
-  const cc = pix[0];
-  const ci = cc % GW, cj = (cc / GW) | 0;
-  const x = A.grid.x0 + (ci + 0.5) * A.grid.sx;
-  const z = A.grid.z0 + (cj + 0.5) * A.grid.sz;
-  const hit = raycast(bvh, x, nd.y + 0.8, z, 0, -1, 0, 0, 4);
-  if (hit && hit.f >= 0) return facePartId(hit.f) === targetId;
-  const part = partAtWorld(x, z);
-  return !!(part && part.id === targetId);
-}
-
 /** 支撑区域 → 图块。返回 { faces（候选面的全局面号）, charts: [{ reg, faces（候选序号）, tris2 }], rep } */
 async function buildCharts(ctx, tick) {
   const A = state.analysis, p = A.p, { bvh, groundY } = ctx;
   const rep = { heldFaces: 0, protFaces: 0, regions: 0, charts: 0, areaPruned: 0 };
   // 1. 候选面：顶点法线越过自支撑角的部分，沿等值线切开。整张三角面收进来时，斜边界就变成台阶。
   const faces = [], clips = [], cyArr = [], areaArr = [], cutArr = [];
-  const targetId = supportTargetId();
+  const scope = supportScopeIds();
   const nf = p.length / 9;
   const fd = state.faces;
   const cosv = Math.cos((Number.isFinite(params.selfAngle) ? params.selfAngle : 45) * Math.PI / 180);
@@ -557,7 +583,7 @@ async function buildCharts(ctx, tick) {
     ? overhangScalars(p, fd.nrm, fd.area, cosv) : null;
   const consider = (f, parts, cut) => {
     if (!parts.length) return;
-    if (targetId != null && facePartId(f) !== targetId) return;
+    if (!faceInScope(f, scope)) return;
     if (state.protectedFaces.has(f)) { rep.protFaces++; return; }
     let cx = 0, cy = 0, cz = 0, n = 0, area = 0;
     for (const t of parts) {
@@ -765,10 +791,10 @@ async function collectContactPoints(ctx, islandsOnly) {
   if (A.graph && ld) {
     const floorY = A.grid.minY - A.raiseH, { W: GW, H: GH, layerH } = A.grid;
     const vkey = (x, y, z) => `${Math.floor(x / spacing)},${Math.floor(y / spacing)},${Math.floor(z / spacing)}`;
-    const targetId = supportTargetId();
+    const scope = supportScopeIds();
     for (const nd of A.graph.nodes) {
       if (!nd.island || !nd.pixels) continue;
-      if (targetId != null && !islandOnTarget(nd, A, bvh, targetId)) continue;
+      if (!islandInScope(nd, A, bvh, scope)) continue;
       rep.islands++;
       const pix = new Set(nd.pixels);
       const peri = new Map(), cells = new Map();          // 像素号 → 点
@@ -854,7 +880,13 @@ async function collectContactPoints(ctx, islandsOnly) {
     if (f >= 0 && state.protectedFaces.has(f)) { rep.prot++; return null; }
     if (protNear && protNear(c)) { rep.prot++; return null; }
     const n = f >= 0 ? [faces.nrm[f * 3], faces.nrm[f * 3 + 1], faces.nrm[f * 3 + 2]] : [0, -1, 0];
-    const partId = f >= 0 ? facePartId(f) : supportTargetId();
+    let partId = f >= 0 ? facePartId(f) : null;
+    if (partId == null) {
+      const part = partAtWorld(c.x, c.z);
+      partId = part ? part.id : null;
+    }
+    const scope = supportScopeIds();
+    if (scope && (partId == null || !scope.has(partId))) return null;
     return { x: c.x, y: c.y, z: c.z, n, island: c.island !== undefined ? c.island : null, reg: c.reg, partId };
   };
 
@@ -1303,18 +1335,17 @@ export async function rebuildStructure() {
 export async function runGenSup(opts = {}) {
   const islandsOnly = !!opts.islandsOnly;
   if (!state.analysis) return toast('请先运行逐层分析');
-  const target = supportTargetPart();
-  if (state.parts.length > 1 && !target) return toast('先选中一个模型，再生成支撑');
+  const scope = supportScopeIds();
+  if (scope && scope.size === 0) return toast('先选中模型，再生成支撑');
   await syncModelLift();                              // 先按连接底板挪好模型（已有点同步平移），再布点
-  const onlyId = target && state.parts.length > 1 ? target.id : null;
   if (state.analysis && !state.analysis._bvh) state.analysis._bvh = buildBVH(state.analysis.p);
-  // 别的模型上已经有的支撑留下。这一件上的手动点在换参数重布时保留。
+  // 没选中的模型上已经有的支撑留下。选中模型上的手动点在换参数重布时保留。
   const foreign = [];
   const keep = [];
   if (!islandsOnly) {
     for (const p of state.supportPoints || []) {
       const id = partIdOfPoint(p);
-      if (onlyId != null && id !== onlyId) foreign.push(p);
+      if (scope && !scope.has(id)) foreign.push(p);
       else if (opts.keepManual && p.manual) keep.push(p);
     }
   }
@@ -1337,8 +1368,8 @@ export async function runGenSup(opts = {}) {
   const res = await rebuildStructure();
   if (!res) return;                                   // 计算期间又发起了新的重建，日志交给那一次
   const s = res.stats;
-  const scope = onlyId != null && target ? `（只给「${target.name}」）` : '';
-  const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点${scope}` : `支撑点 ${state.supportPoints.length} 个${scope}`;
+  const scopeNote = supportScopeNote('只给');
+  const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点${scopeNote}` : `支撑点 ${state.supportPoints.length} 个${scopeNote}`;
   log(islandsOnly
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
@@ -1368,7 +1399,7 @@ export async function runGenSup(opts = {}) {
 export async function addSupportPoint(p, n, partId) {
   if (!state.analysis) { toast('请先运行逐层分析'); return; }
   if (!state.supportPoints) state.supportPoints = [];
-  const pt = { x: p.x, y: p.y, z: p.z, n: n || [0, -1, 0], manual: true, island: null, partId: partId != null ? partId : state.manualPartId };
+  const pt = { x: p.x, y: p.y, z: p.z, n: n || [0, -1, 0], manual: true, island: null, partId: partId != null ? partId : null };
   state.supportPoints.push(pt);
   if (!(await rebuildStructure())) return;            // 被更新的重建取代（连点加点时只有最后一次出日志）
   log(`手动支撑点 @ (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) → ${STATE_TEXT[pt.state] || '未生成'}`, pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro' ? 'ok' : 'warn');
@@ -1381,7 +1412,7 @@ export async function addSupportPoints(list) {
   if (!state.supportPoints) state.supportPoints = [];
   for (const p of list) {
     state.supportPoints.push({
-      x: p.x, y: p.y, z: p.z, n: p.n || [0, -1, 0], manual: true, island: null, partId: state.manualPartId,
+      x: p.x, y: p.y, z: p.z, n: p.n || [0, -1, 0], manual: true, island: null, partId: p.partId != null ? p.partId : null,
     });
   }
   if (!(await rebuildStructure())) return;

@@ -26,11 +26,12 @@ import { hideInspector } from './inspect.js';
 
 /* 打印工艺参数：世界系 = 打印系（平台顶面 y=0，模型底面抬高 raiseH） */
 let raftMesh = null;          // 自动底板显示 Mesh
-// 模型抬高（mm）= 用户设的抬高（默认 4）+ 底板额外抬高（连接底板的板高，或自动底板的板厚，见 joinPlate.js）。
+// 模型抬高（mm）= 已生效的用户抬高（默认 4，但要进过支撑步骤才生效，此前为 0、底面贴平台）
+//   + 底板额外抬高（连接底板的板高，或自动底板的板厚，见 joinPlate.js）。
 // 额外抬高取「已提交」的值 state.joinLift：只在生成 / 重建支撑（或切换底板类型 / 改板厚 / 结构 / 模板）时由 support.js 的 syncModelLift 更新，
 // 改了格宽等参数但还没重建时，模型、分析与已有支撑仍在同一高度上，导出不会错位
-export const raiseH = () => Math.max(0, params.raiseH || 0) + (state.joinLift || 0);
-export const baseRaiseH = () => Math.max(0, params.raiseH || 0);   // 用户设的抬高（不含连接底板）
+export const baseRaiseH = () => Math.max(0, params.raiseH || 0);   // 用户设的抬高（不含连接底板，未进支撑步骤时还不作用到模型上）
+export const raiseH = () => (state.supportLiftOn ? baseRaiseH() : 0) + (state.joinLift || 0);
 
 const ARRANGE_MARGIN = 3;   // 排版距板边（mm）
 
@@ -48,7 +49,7 @@ export function activePart() {
   return state.parts.find(p => p.id === state.activePartId) || state.parts[0] || null;
 }
 
-/* 自动支撑 / 手动加点只作用于这一件。多模型没选中时不退回「全部」，避免给每件都长支撑。 */
+/* 朝向预览仍跟着当前这一件。分析、热力图和支撑的范围用 supportScopeIds。 */
 export function supportTargetPart() {
   if (state.manualPartId) {
     const locked = state.parts.find(p => p.id === state.manualPartId);
@@ -61,6 +62,37 @@ export function supportTargetPart() {
   }
   if (state.parts.length <= 1) return state.parts[0] || null;
   return null;
+}
+
+/** 分析、热力图、自动支撑和手动加点的作用范围。
+ *  板上只有一个模型时返回 null，表示不过滤。
+ *  多个模型时返回视口选中的 id；一个都没选中则返回空集合，调用方提示、不整盘处理。 */
+export function supportScopeIds() {
+  if ((state.parts || []).length <= 1) return null;
+  const set = new Set();
+  for (const id of state.selectedIds || []) {
+    if (state.parts.some(p => p.id === id)) set.add(id);
+  }
+  return set;
+}
+
+/** 日志里的范围说明。没有过滤时返回空串。verb 例如「只分析」「只给」。 */
+export function supportScopeNote(verb) {
+  const scope = supportScopeIds();
+  if (!scope || !scope.size) return '';
+  const names = [];
+  for (const p of state.parts) if (scope.has(p.id)) names.push(`「${p.name}」`);
+  return names.length ? `（${verb}${names.join('、')}）` : '';
+}
+
+/** 手动加点 / 多线段：点到的面必须落在当前范围内。不通过时提示并返回 false。 */
+export function acceptSupportFace(faceIndex) {
+  const scope = supportScopeIds();
+  if (!scope) return true;
+  if (!scope.size) { toast('先选中模型，再添加支撑'); return false; }
+  const loc = localFaceOf(faceIndex);
+  if (!loc || !scope.has(loc.part.id)) { toast('只能给选中的模型添加支撑'); return false; }
+  return true;
 }
 
 /* 热力图开着时顶点色归热力图，这里不盖。heat.js 在关掉热力图之后会再调一次。 */
@@ -240,6 +272,24 @@ export function clampPartsToPrintZ(parts) {
 /** 单件版本：底面不低于平台（切片 Z 不为负）。 */
 export function liftPartOntoPlate(part) {
   clampPartsToPrintZ([part]);
+}
+
+/** 每件模型的最低点落到平台上（世界 y = 0）。悬空的落下去，扎进平台的抬上来。
+ *  用真实顶点，不用外接盒的八个角：转过之后角会比曲面更低，按角来放会让模型还悬着。 */
+export function seatPartsOnPlate(parts) {
+  if (!parts || !parts.length) return;
+  const floor = -raiseH();
+  for (const p of parts) {
+    const src = p.geom.attributes.position.array;
+    let minY = Infinity;
+    for (let i = 0; i < src.length; i += 3) {
+      xformCorner(p, src[i], src[i + 1], src[i + 2], _corner);
+      if (_corner.y < minY) minY = _corner.y;
+    }
+    if (minY === Infinity) continue;
+    const dy = floor - minY;
+    if (Math.abs(dy) > 1e-4) p.oy = (p.oy || 0) + dy;
+  }
 }
 
 /** 整组一起挪，使最靠外的那个模型也不进入机器负 Y（世界 z 的板外一侧）。返回实际补回的距离。 */
@@ -436,6 +486,7 @@ export function scalePartTo(part, target = {}, { uniform = false, changed = null
     applyPartScale(part, fx, fy, fz, src, base);
     finishPartScale(part);
     clampPartsToPrintZ([part]);
+    seatPartsOnPlate([part]);
     discardStaleWork('模型尺寸已变，分析结果与支撑已清除，请重新分析');
   } else if (state.orientResult) {
     state.orientResult = null;
@@ -511,12 +562,14 @@ export function scalePartToFit(part) {
     y: part.size.z * factor,
     z: part.size.y * factor,
   }, { uniform: true, changed: 'x', space: 'world', history: false });
-  if (tuckPartOntoPlate(part)) commitPartEdit(false);
+  seatPartsOnPlate([part]);
+  tuckPartOntoPlate(part);
+  commitPartEdit(false);
   if (before) commitGeomHistory('缩放到适合机型', before);
   return out;
 }
 
-/** 只选中一件，或板上只有一件时，这件可以改尺寸。多选不缩放。 */
+/** 选中正好一件时返回它。多选时各件尺寸可能不同，这里返回 null。缩放面板改的是选中的全部零件。 */
 export function scaleTargetPart() {
   const parts = state.parts;
   if (!parts.length) return null;
@@ -540,6 +593,8 @@ function syncPreview(part) {
 
 function resetWork() {
   clearSupports(false);
+  state.joinLift = 0;   // 换模型后不再悬在上一块底板的高度上，底面回到平台
+  state.supportLiftOn = false;   // 新模型先贴平台，进支撑步骤再按「模型抬高」抬起来
   state.protectedFaces.clear();
   for (const p of state.parts) p.protected.clear();
   state.analysis = null;
@@ -793,10 +848,8 @@ export function setSelection(ids) {
   for (const id of ids || []) {
     if (state.parts.some(p => p.id === id) && !valid.includes(id)) valid.push(id);
   }
-  const prev = state.selectedIds || [];
-  const same = valid.length === prev.length && valid.every((id, i) => id === prev[i]);
   state.selectedIds = valid;
-  if (!same || valid.length !== 1) state.transformTool = null;
+  if (!valid.length) state.transformTool = null;
   const primary = valid.length ? state.parts.find(p => p.id === valid[valid.length - 1]) : null;
   if (primary && primary.id !== state.activePartId) {
     state.activePartId = primary.id;
@@ -911,7 +964,7 @@ function restoreSel(sel) {
     syncPreview(state.parts.find(p => p.id === sel.active));
   }
   if (sel.focus && state.parts.some(p => p.id === sel.focus)) state.focusId = sel.focus;
-  if (sel.tool && (state.selectedIds || []).length === 1) state.transformTool = sel.tool;
+  if (sel.tool && (state.selectedIds || []).length >= 1) state.transformTool = sel.tool;
   emitModelInfo();
   bus.emit('selection', { ids: (state.selectedIds || []).slice(), tool: state.transformTool });
 }
@@ -929,6 +982,12 @@ function rewriteNormals(part) {
   else part.geom.computeVertexNormals();
   part.geom.computeBoundingBox();
   part.geom.computeBoundingSphere();
+}
+
+/** 把一份几何快照写回这件模型。旋转面板用它回到「角度为 0」的姿势再重放。 */
+export function restorePartSnap(part, snap) {
+  if (!part || !snap) return;
+  writeSnap(part, snap);
 }
 
 function writeSnap(part, snap) {

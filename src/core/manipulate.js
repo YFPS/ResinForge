@@ -1,26 +1,28 @@
 /* ================================================================
    视口里选中并摆放模型。
    - 单击选中一个模型。已经选中的模型上按住左键拖动，是在板面上移动（多选一起动）
+   - 移动 / 旋转 / 缩放工具作用于当前全部选中：同一位移、绕整组中心转、从整组中心按同一比例缩放
    - 从空白处或未选中的模型上按住左键拖动，出现框线，松开后选中框到的模型
    - Ctrl/⌘ 再点是加减选中，再框是追加；Ctrl/⌘ A 全选，不选中网页文字
    - Delete 删除当前选中的模型。Ctrl/⌘ Z 撤回，Ctrl/⌘ Shift Z 或 Ctrl/⌘ Y 重做
+   - M 开启移动，R 开启旋转，S 开启缩放。再按一次同一个键关掉。输入框里打字时不抢
    - 中键拖动平移视角，右键拖动旋转视角；右键点在单个模型上（没有拖开）弹出菜单
    - 菜单：沿坐标轴移动 / 拖圆环旋转 / 放大缩小
-   - 放大缩小在视口左侧打开面板：毫米和百分比、锁定等比、还原、适应机型。拖拽时三色方块沿轴拉，角标标出包围盒
+   - 放大缩小打开面板：毫米和百分比、锁定等比、还原、适应机型。选中多件时面板仍在，数值作用在全部选中上。拖拽时三色方块沿轴拉，每件各画一个包围盒
    - 切片 Z 是高度：沿 Z 下移或旋转扫进平台时，底面停在 Z = 0，不能为负
    - 缩放烤进局部顶点。切片 X = 局部 x，切片 Y = 局部 z，切片 Z（高度）= 局部 y，从底面向上长
    涂保护面、加支撑、删支撑仍占用左键，这里不抢。
 ================================================================ */
 import * as THREE from 'three';
-import { state, bus, log, toast } from '../store.js';
+import { state, params, bus, log, toast } from '../store.js';
 import { scene, camera, pointerRay, setMode } from './scene.js';
 import {
   raiseH, localFaceOf, setSelection, syncPlateMesh, commitPartEdit, removeParts, previewPartPose, meshPick, scheduleMeshBVH,
-  partBounds, clampPartsToPrintZ, bakePartRotation, applyPartScale, finishPartScale, discardStaleWork, uniformScaleFactor,
-  scalePartAxis, resetPartScale, scalePartToFit,
-  capturePoses, capturePartSnaps, releaseSnaps, commitPoseHistory, commitGeomHistory,
+  partBounds, clampPartsToPrintZ, seatPartsOnPlate, bakePartRotation, applyPartScale, finishPartScale, discardStaleWork, uniformScaleFactor,
+  scalePartTo, scalePartToFit,
+  capturePoses, capturePartSnaps, restorePartSnap, releaseSnaps, commitPoseHistory, commitGeomHistory,
 } from './model.js';
-import { undo, redo } from './history.js';
+import { undo, redo, pushHistory } from './history.js';
 import { clearSupports, updateSupStats } from './support.js';
 import { hideInspector } from './inspect.js';
 
@@ -44,6 +46,11 @@ let scaleCage = null;
 let selGroup = null;
 let menuEl = null;
 let scaleEl = null;
+let rotEl = null;
+let rotBasis = null;
+let rotEuler = { x: 0, y: 0, z: 0 };
+let rotKey = '';
+let rotHold = false;
 let scaleUniform = true;
 let scaleDrag = true;
 let scaleSpace = 'world';
@@ -230,9 +237,50 @@ function pivotOf(part, out) {
   return out.set(part.ox, raiseH() + (part.oy || 0) + part.base.y / 2, part.oz);
 }
 
-function scalePartNow() {
-  if (!scalingTool() || (state.selectedIds || []).length !== 1) return null;
-  return state.parts.find(p => p.id === state.selectedIds[0]) || null;
+/* 缩放工具开着时，当前选中的全部模型。面板和包围盒都跟着这份名单。 */
+function scalePartsNow() {
+  if (!scalingTool()) return [];
+  const out = [];
+  for (const id of state.selectedIds || []) {
+    const p = state.parts.find(x => x.id === id);
+    if (p) out.push(p);
+  }
+  return out;
+}
+
+/* 选中件的包围盒中心。一件时就是它自己的枢轴，多件时手柄落在整组中间。 */
+function selectionPivot(parts, out) {
+  if (!parts.length) return out.set(0, raiseH(), 0);
+  if (parts.length === 1) return pivotOf(parts[0], out);
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  const lift = raiseH();
+  for (const p of parts) {
+    const b = partBounds(p);
+    if (b.min.x < minX) minX = b.min.x;
+    if (b.max.x > maxX) maxX = b.max.x;
+    const y0 = b.min.y + lift, y1 = b.max.y + lift;
+    if (y0 < minY) minY = y0;
+    if (y1 > maxY) maxY = y1;
+    if (b.min.z < minZ) minZ = b.min.z;
+    if (b.max.z > maxZ) maxZ = b.max.z;
+  }
+  return out.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+}
+
+function selectionHalf(parts) {
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (const p of parts) {
+    const b = partBounds(p);
+    if (b.min.x < minX) minX = b.min.x;
+    if (b.max.x > maxX) maxX = b.max.x;
+    if (b.min.y < minY) minY = b.min.y;
+    if (b.max.y > maxY) maxY = b.max.y;
+    if (b.min.z < minZ) minZ = b.min.z;
+    if (b.max.z > maxZ) maxZ = b.max.z;
+  }
+  return Math.max((maxX - minX) / 2, (maxY - minY) / 2, (maxZ - minZ) / 2, 0.5);
 }
 
 function pxScale(at) {
@@ -273,49 +321,56 @@ function gizmoRotateRadius(part) {
 
 function placeGizmo() {
   if (!gizmo) return;
-  const part = scalePartNow() || (state.transformTool && (state.selectedIds || []).length === 1
-    ? state.parts.find(p => p.id === state.selectedIds[0]) : null);
-  const single = state.transformTool && (state.selectedIds || []).length === 1 ? part : null;
-  moveRoot.visible = !!single && state.transformTool === 'move';
-  rotRoot.visible = !!single && state.transformTool === 'rotate';
-  scaleRoot.visible = !!scalePartNow() && scaleDrag;
+  const parts = state.transformTool ? liveSelected() : [];
+  const single = parts.length === 1 ? parts[0] : null;
+  moveRoot.visible = parts.length > 0 && state.transformTool === 'move';
+  rotRoot.visible = parts.length > 0 && state.transformTool === 'rotate';
+  scaleRoot.visible = parts.length > 0 && state.transformTool === 'scale' && scaleDrag;
   gizmo.visible = moveRoot.visible || rotRoot.visible || scaleRoot.visible;
-  // 模型坐标系时手柄跟着零件旋转。q 为单位时与世界轴重合，两种模式看起来一样。
-  if (scalePartNow() && scaleSpace === 'object') gizmo.quaternion.copy(scalePartNow().q);
+  // 一件且是模型坐标系时，缩放手柄跟着它转。多件各有各的朝向，用世界轴。
+  if (single && state.transformTool === 'scale' && scaleSpace === 'object') gizmo.quaternion.copy(single.q);
   else gizmo.quaternion.identity();
-  if (!single || !gizmo.visible) return;
-  if (gesture && gesture.kind === 'scale') gizmo.position.copy(gesture.origin);
-  else pivotOf(single, gizmo.position);
+  if (!parts.length || !gizmo.visible) return;
+  if (gesture && gesture.origin && gesture.kind !== 'move') gizmo.position.copy(gesture.origin);
+  else selectionPivot(parts, gizmo.position);
   gizmo.scale.set(1, 1, 1);
-  // 移动箭头保持屏幕上约 120px。旋转圈按模型最长边。缩放轴仍按三维对角。
+  // 移动箭头保持屏幕上约 120px。旋转圈按整组最长边。缩放轴按整组对角。
   moveRoot.scale.setScalar((120 * pxScale(gizmo.position)) / 18);
-  const scaleFit = (gizmoModelRadius(single) * 1.08) / 16;
-  const rotFit = gizmoRotateRadius(single) / 16;
-  rotRoot.scale.setScalar(rotFit);
-  scaleRoot.scale.setScalar(scaleFit);
+  const radius = single ? gizmoModelRadius(single) : selectionHalf(parts) * Math.SQRT2;
+  const rotR = single ? gizmoRotateRadius(single) : selectionHalf(parts) * 0.62;
+  rotRoot.scale.setScalar(rotR / 16);
+  scaleRoot.scale.setScalar((radius * 1.08) / 16);
   gizmo.updateMatrixWorld(true);
   if (rotRoot.visible) aimRotateRings();
 }
 
 /* 缩放时画完整线框，深色视口用浅色，浅色视口用深色。 */
-function syncScaleCage() {
-  if (!scaleCage) return;
-  const part = scalePartNow();
-  scaleCage.visible = !!part;
-  if (!part) return;
-  const b = partBounds(part);
-  const lift = raiseH();
+function pushBoxEdges(b, lift, out) {
   const x0 = b.min.x, y0 = b.min.y + lift, z0 = b.min.z;
   const x1 = b.max.x, y1 = b.max.y + lift, z1 = b.max.z;
-  const edges = [
+  out.push(
     x0, y0, z0, x1, y0, z0, x1, y0, z0, x1, y0, z1, x1, y0, z1, x0, y0, z1, x0, y0, z1, x0, y0, z0,
     x0, y1, z0, x1, y1, z0, x1, y1, z0, x1, y1, z1, x1, y1, z1, x0, y1, z1, x0, y1, z1, x0, y1, z0,
     x0, y0, z0, x0, y1, z0, x1, y0, z0, x1, y1, z0, x1, y0, z1, x1, y1, z1, x0, y0, z1, x0, y1, z1,
-  ];
-  const pos = scaleCage.geometry.attributes.position.array;
-  for (let i = 0; i < edges.length; i++) pos[i] = edges[i];
-  scaleCage.geometry.setDrawRange(0, 24);
-  scaleCage.geometry.attributes.position.needsUpdate = true;
+  );
+}
+
+function syncScaleCage() {
+  if (!scaleCage) return;
+  const parts = scalePartsNow();
+  scaleCage.visible = parts.length > 0;
+  if (!parts.length) return;
+  const lift = raiseH();
+  const edges = [];
+  for (const part of parts) pushBoxEdges(partBounds(part), lift, edges);
+  const attr = scaleCage.geometry.attributes.position;
+  if (attr.array.length < edges.length) {
+    scaleCage.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(edges.length), 3));
+  }
+  const pos = scaleCage.geometry.attributes.position;
+  pos.array.set(edges);
+  pos.needsUpdate = true;
+  scaleCage.geometry.setDrawRange(0, edges.length / 3);
   scaleCage.geometry.computeBoundingSphere();
   const bg = scene.background;
   const lum = bg && bg.isColor ? bg.r * 0.2126 + bg.g * 0.7152 + bg.b * 0.0722 : 0;
@@ -488,7 +543,14 @@ function applyGesture(e) {
     const ang = Math.atan2(g.dir.dot(cross), g.startVec.dot(_tmp));
     _quat.setFromAxisAngle(g.dir, ang);
     writeFromSnapshot(g.snaps);
+    const lift = raiseH();
     for (const s of g.snaps) {
+      const cy = lift + s.oy + s.part.base.y / 2;
+      _local.set(s.ox - g.origin.x, cy - g.origin.y, s.oz - g.origin.z);
+      _local.applyQuaternion(_quat);
+      s.part.ox = g.origin.x + _local.x;
+      s.part.oz = g.origin.z + _local.z;
+      s.part.oy = g.origin.y + _local.y - lift - s.part.base.y / 2;
       s.part.q.copy(s.q).premultiply(_quat).normalize();
     }
     clampPartsToPrintZ(partsOf(g));
@@ -529,27 +591,43 @@ function scaleFactor(g, ray) {
   return axisParam(ray, g.origin, g.dir) / g.startParam;
 }
 
+function placeScaled(it, origin, fx, fy, fz) {
+  const lift = raiseH();
+  const oldCy = lift + it.oy + it.base.y / 2;
+  it.part.ox = origin.x + (it.ox - origin.x) * fx;
+  it.part.oz = origin.z + (it.oz - origin.z) * fz;
+  const cy = origin.y + (oldCy - origin.y) * fy;
+  it.part.oy = cy - lift - it.part.base.y / 2;
+}
+
 function applyScaleGesture(g, e, ray) {
-  const part = g.snaps[0].part;
   writeFromSnapshot(g.snaps);
-  let factor = scaleFactor(g, ray);
-  let fx = 1;
-  let fy = 1;
-  let fz = 1;
-  if (g.uniform) {
-    factor = uniformScaleFactor(factor, g.base);
-    fx = fy = fz = factor;
-  } else if (g.axis === 'x') fx = factor;
-  else if (g.axis === 'y') fz = factor;   // 切片 Y = 局部 z
-  else if (g.axis === 'z') fy = factor;   // 切片 Z = 局部 y，从底面乘
-  const applied = applyPartScale(part, fx, fy, fz, g.src, g.base, g.srcSource);
-  if (!applied) return;
-  g.fx = applied.fx;
-  g.fy = applied.fy;
-  g.fz = applied.fz;
-  const delta = Math.max(Math.abs(g.fx - 1), Math.abs(g.fy - 1), Math.abs(g.fz - 1));
-  if (delta <= 0.002 && !g.moved) {
-    applyPartScale(part, 1, 1, 1, g.src, g.base, g.srcSource);
+  const factor = scaleFactor(g, ray);
+  let any = false;
+  let maxDelta = 0;
+  for (const it of g.items) {
+    let f = factor;
+    let fx = 1;
+    let fy = 1;
+    let fz = 1;
+    if (g.uniform) {
+      f = uniformScaleFactor(f, it.base);
+      fx = fy = fz = f;
+    } else if (g.axis === 'x') fx = f;
+    else if (g.axis === 'y') fz = f;   // 切片 Y = 局部 z
+    else if (g.axis === 'z') fy = f;   // 切片 Z = 局部 y，从底面乘
+    const applied = applyPartScale(it.part, fx, fy, fz, it.src, it.base, it.srcSource);
+    if (!applied) continue;
+    any = true;
+    placeScaled(it, g.origin, applied.fx, applied.fy, applied.fz);
+    g.fx = applied.fx;
+    g.fy = applied.fy;
+    g.fz = applied.fz;
+    maxDelta = Math.max(maxDelta, Math.abs(applied.fx - 1), Math.abs(applied.fy - 1), Math.abs(applied.fz - 1));
+  }
+  if (!any) return;
+  if (maxDelta <= 0.002 && !g.moved) {
+    for (const it of g.items) applyPartScale(it.part, 1, 1, 1, it.src, it.base, it.srcSource);
     writeFromSnapshot(g.snaps);
     return;
   }
@@ -557,7 +635,7 @@ function applyScaleGesture(g, e, ray) {
     g.moved = true;
     discardStaleWork('模型尺寸已变，分析结果与支撑已清除，请重新分析');
   }
-  clampPartsToPrintZ([part]);
+  clampPartsToPrintZ(g.items.map(it => it.part));
   syncPlateMesh({ faces: false });
   syncSelectionBoxes();
   syncScaleCage();
@@ -565,19 +643,20 @@ function applyScaleGesture(g, e, ray) {
   canvas.style.cursor = 'grabbing';
 }
 
-function beginScale(part, group, e) {
-  const before = capturePartSnaps([part]);
-  const objectSpace = scaleSpace === 'object';
+function beginScale(parts, group, e) {
+  const list = Array.isArray(parts) ? parts : [parts];
+  const before = capturePartSnaps(list);
+  const objectSpace = list.length === 1 && scaleSpace === 'object';
   let baked = false;
   if (!objectSpace) {
-    baked = bakePartRotation(part);
+    for (const part of list) if (bakePartRotation(part)) baked = true;
     if (baked) syncPlateMesh({ faces: false });
   }
-  const origin = pivotOf(part, new THREE.Vector3());
+  const origin = selectionPivot(list, new THREE.Vector3());
   const axis = group.userData.axis;
   const dir = AXIS[axis].clone();
   // 绕世界 Y 转 90° 时，切片 Y（世界 +Z）应转到世界 +X。q 为单位时方向就是 AXIS。
-  if (objectSpace) dir.applyQuaternion(part.q);
+  if (objectSpace) dir.applyQuaternion(list[0].q);
   let startParam = axisParam(pointerRay(e).ray, origin, dir);
   if (!(Math.abs(startParam) > 1)) {
     startParam = (group.userData.sign || 1) * 16 * (scaleRoot?.scale.x || 1) * (gizmo.scale.x || 1);
@@ -594,10 +673,16 @@ function beginScale(part, group, e) {
     axis,
     uniform: scaleUniform,
     startParam,
-    src: new Float32Array(part.geom.attributes.position.array),
-    srcSource: part.source ? new Float32Array(part.source) : null,
-    base: { x: part.base.x, y: part.base.y, z: part.base.z },
-    snaps: snapshot([part]),
+    items: list.map(part => ({
+      part,
+      src: new Float32Array(part.geom.attributes.position.array),
+      srcSource: part.source ? new Float32Array(part.source) : null,
+      base: { x: part.base.x, y: part.base.y, z: part.base.z },
+      ox: part.ox,
+      oy: part.oy || 0,
+      oz: part.oz,
+    })),
+    snaps: snapshot(list),
     before,
     hist: 'geom',
     handle: group,
@@ -610,13 +695,12 @@ function beginScale(part, group, e) {
 
 function beginGizmo(group, e) {
   const parts = liveSelected();
-  if (parts.length !== 1) return;
-  const part = parts[0];
+  if (!parts.length) return;
   if (group.userData.tool === 'scale') {
-    beginScale(part, group, e);
+    beginScale(parts, group, e);
     return;
   }
-  const origin = pivotOf(part, new THREE.Vector3());
+  const origin = selectionPivot(parts, new THREE.Vector3());
   const dir = group.userData.axis === 'e'
     ? camera.position.clone().sub(origin).normalize()
     : AXIS[group.userData.axis];
@@ -653,10 +737,13 @@ function endGesture() {
       releaseSnaps(g.before);
       return;
     }
-    finishPartScale(g.snaps[0].part);
+    for (const it of g.items) finishPartScale(it.part);
+    if (g.moved) seatPartsOnPlate(g.items.map(it => it.part));
     if (g.moved) {
-      const p = g.snaps[0].part;
-      log(`模型已缩放：X ${p.size.x.toFixed(1)} × Y ${p.size.z.toFixed(1)} × Z ${p.size.y.toFixed(1)} mm`, 'ok');
+      if (g.items.length === 1) {
+        const p = g.items[0].part;
+        log(`模型已缩放：X ${p.size.x.toFixed(1)} × Y ${p.size.z.toFixed(1)} × Z ${p.size.y.toFixed(1)} mm`, 'ok');
+      } else log(`已缩放 ${g.items.length} 个模型`, 'ok');
     }
     commitPartEdit(!g.moved && !!g.baked);
     syncSelectionBoxes();
@@ -668,6 +755,7 @@ function endGesture() {
     if (g.hist === 'geom') releaseSnaps(g.before);
     return;
   }
+  if (g.kind === 'rotate') seatPartsOnPlate(partsOf(g));
   commitPartEdit(g.kind === 'rotate');
   syncSelectionBoxes();
   if (g.kind === 'rotate') commitGeomHistory('旋转模型', g.before);
@@ -696,17 +784,124 @@ function logScale(part, prefix) {
   log(`${prefix}：X ${part.size.x.toFixed(1)} × Y ${part.size.z.toFixed(1)} × Z ${part.size.y.toFixed(1)} mm`, 'ok');
 }
 
-function applyScaleInput(axis, kind, raw) {
-  const part = scalePartNow();
-  if (!part) return;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) { syncScalePanel(); return; }
-  const before = part.size.x + part.size.y + part.size.z;
-  const born = sliceBorn(part);
-  const mm = kind === 'pct' ? born[axis] * n / 100 : n;
-  scalePartAxis(part, axis, mm, scaleUniform, scaleSpace);
+/* 各件尺寸一致时返回这个数，否则返回 null（面板留空，不假装它们一样大）。 */
+function sameMeasure(vals) {
+  if (!vals.length) return null;
+  const a = vals[0];
+  for (let i = 1; i < vals.length; i++) if (Math.abs(vals[i] - a) > 0.015) return null;
+  return a;
+}
+
+/* 一次改全部选中，只记一条撤回。scalePartTo 自己不再记历史。 */
+function scaleSelection(parts, label, each) {
+  if (!parts.length) return false;
+  const before = capturePartSnaps(parts);
+  for (const part of parts) each(part);
+  seatPartsOnPlate(parts);
+  syncPlateMesh({ faces: false });
+  const changed = commitGeomHistory(label, before);
+  syncScaleCage();
+  syncSelectionBoxes();
   syncScalePanel();
-  if (Math.abs(part.size.x + part.size.y + part.size.z - before) > 1e-3) logScale(part, '模型已缩放');
+  if (!changed) return false;
+  if (parts.length === 1) logScale(parts[0], label);
+  else log(`已缩放 ${parts.length} 个模型`, 'ok');
+  return true;
+}
+
+function targetMm(part, axis, kind, raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const born = sliceBorn(part);
+  return kind === 'pct' ? born[axis] * n / 100 : n;
+}
+
+function applyAxisMm(part, axis, mm) {
+  if (mm == null) return;
+  const target = { x: part.size.x, y: part.size.z, z: part.size.y };
+  target[axis] = mm;
+  scalePartTo(part, target, { uniform: scaleUniform, changed: axis, space: scaleSpace, history: false });
+}
+
+function applyScaleInput(axis, kind, raw) {
+  const parts = scalePartsNow();
+  if (!parts.length) return;
+  if (targetMm(parts[0], axis, kind, raw) == null) { syncScalePanel(); return; }
+  scaleSelection(parts, '模型已缩放', part => applyAxisMm(part, axis, targetMm(part, axis, kind, raw)));
+}
+
+/* 整组缩进当前机型，间隙也跟着缩。单件仍走原来的适应。 */
+function fitSelection(parts) {
+  if (parts.length === 1) {
+    scalePartToFit(parts[0]);
+    syncScaleCage();
+    syncScalePanel();
+    logScale(parts[0], '已缩放到适合当前机型');
+    return;
+  }
+  const before = capturePartSnaps(parts);
+  for (const part of parts) bakePartRotation(part);
+  const origin = selectionPivot(parts, new THREE.Vector3());
+  const items = parts.map(part => ({
+    part,
+    ox: part.ox,
+    oy: part.oy || 0,
+    oz: part.oz,
+    base: { x: part.base.x, y: part.base.y, z: part.base.z },
+  }));
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  const lift = raiseH();
+  for (const part of parts) {
+    const b = partBounds(part);
+    if (b.min.x < minX) minX = b.min.x;
+    if (b.max.x > maxX) maxX = b.max.x;
+    const y0 = b.min.y + lift, y1 = b.max.y + lift;
+    if (y0 < minY) minY = y0;
+    if (y1 > maxY) maxY = y1;
+    if (b.min.z < minZ) minZ = b.min.z;
+    if (b.max.z > maxZ) maxZ = b.max.z;
+  }
+  const spanX = Math.max(maxX - minX, 1e-6);
+  const spanY = Math.max(maxY - minY, 1e-6);
+  const spanZ = Math.max(maxZ - minZ, 1e-6);
+  const fitX = Math.max((params.plateX || 150) - 2, 0.2);
+  const fitZ = Math.max((params.plateZ || 85) - 2, 0.2);
+  const fitY = Math.max((params.plateY || 175) - lift - 2, 0.2);
+  let factor = Math.min(fitX / spanX, fitZ / spanZ, fitY / spanY);
+  for (const it of items) factor = Math.min(factor, uniformScaleFactor(factor, it.base));
+  for (const it of items) {
+    scalePartTo(it.part, {
+      x: it.part.size.x * factor,
+      y: it.part.size.z * factor,
+      z: it.part.size.y * factor,
+    }, { uniform: true, changed: 'x', space: 'object', history: false });
+    placeScaled(it, origin, factor, factor, factor);
+  }
+  clampPartsToPrintZ(parts);
+  const px = params.plateX || 150;
+  const pz = params.plateZ || 85;
+  let loX = Infinity, hiX = -Infinity, loZ = Infinity, hiZ = -Infinity;
+  for (const part of parts) {
+    const b = partBounds(part);
+    if (b.min.x < loX) loX = b.min.x;
+    if (b.max.x > hiX) hiX = b.max.x;
+    if (b.min.z < loZ) loZ = b.min.z;
+    if (b.max.z > hiZ) hiZ = b.max.z;
+  }
+  let dx = 0, dz = 0;
+  if (loX < -px / 2) dx = -px / 2 - loX;
+  else if (hiX > px / 2) dx = px / 2 - hiX;
+  if (loZ < -pz / 2) dz = -pz / 2 - loZ;
+  else if (hiZ > pz / 2) dz = pz / 2 - hiZ;
+  if (dx || dz) for (const part of parts) { part.ox += dx; part.oz += dz; }
+  seatPartsOnPlate(parts);
+  commitPartEdit(false);
+  const changed = commitGeomHistory('缩放到适合机型', before);
+  syncScaleCage();
+  syncSelectionBoxes();
+  syncScalePanel();
+  if (changed) log(`已缩放 ${parts.length} 个模型`, 'ok');
 }
 
 /* 工作室画布在更低的层里，面板挂到 .stu 才能浮在左右卡片和底栏之上。演示界面仍挂在视口里。 */
@@ -739,11 +934,48 @@ function placeScalePanel() {
   scaleEl.style.maxHeight = `calc(100% - ${Math.round(top + 148)}px)`;
 }
 
+function motionReduced() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/* 缩放 / 旋转窗口的出现和收起。已经开着时再同步内容，不把进场动画重放一遍。 */
+function setFloatOpen(el, open) {
+  if (!el) return;
+  if (open) {
+    if (!el.hidden && !el.classList.contains('panelOut')) return;
+    el.hidden = false;
+    el.classList.remove('panelOut');
+    if (motionReduced()) return;
+    el.classList.remove('panelIn');
+    void el.offsetWidth;
+    el.classList.add('panelIn');
+    return;
+  }
+  if (el.hidden || el.classList.contains('panelOut')) return;
+  el.classList.remove('panelIn');
+  if (motionReduced()) {
+    el.hidden = true;
+    return;
+  }
+  el.classList.add('panelOut');
+  let timer = 0;
+  const finish = (ev) => {
+    if (ev && ev.target !== el) return;
+    window.clearTimeout(timer);
+    el.removeEventListener('animationend', finish);
+    if (!el.classList.contains('panelOut')) return;
+    el.classList.remove('panelOut');
+    el.hidden = true;
+  };
+  el.addEventListener('animationend', finish);
+  timer = window.setTimeout(() => finish(null), 420);
+}
+
 function syncScalePanel() {
   if (!scaleEl) return;
-  const part = scalePartNow();
-  scaleEl.hidden = !part;
-  if (!part) return;
+  const parts = scalePartsNow();
+  setFloatOpen(scaleEl, parts.length > 0);
+  if (!parts.length) return;
   placeScalePanel();
   scaleEl.dataset.space = scaleSpace;
   const spaceBtn = scaleEl.querySelector('[data-act="space"]');
@@ -757,14 +989,23 @@ function syncScalePanel() {
   link.title = scaleUniform ? '已锁定，三轴同一比例。点击后可单独改 XYZ' : '未锁定，可单独改 XYZ。点击后三轴同一比例';
   const drag = scaleEl.querySelector('[data-act="drag"]');
   drag.setAttribute('aria-pressed', scaleDrag ? 'true' : 'false');
-  const live = sliceLive(part);
-  const born = sliceBorn(part);
   for (const axis of ['x', 'y', 'z']) {
     const row = scaleEl.querySelector(`[data-axis="${axis}"]`);
     const mm = row.querySelector('input[data-kind="mm"]');
     const pct = row.querySelector('input[data-kind="pct"]');
-    if (document.activeElement !== mm) mm.value = live[axis].toFixed(2);
-    if (document.activeElement !== pct) pct.value = (live[axis] / Math.max(born[axis], 1e-6) * 100).toFixed(2);
+    const mmV = sameMeasure(parts.map(part => sliceLive(part)[axis]));
+    const pctV = sameMeasure(parts.map(part => {
+      const born = sliceBorn(part);
+      return sliceLive(part)[axis] / Math.max(born[axis], 1e-6) * 100;
+    }));
+    if (document.activeElement !== mm) {
+      mm.value = mmV == null ? '' : mmV.toFixed(2);
+      mm.placeholder = mmV == null ? '多个' : '';
+    }
+    if (document.activeElement !== pct) {
+      pct.value = pctV == null ? '' : pctV.toFixed(2);
+      pct.placeholder = pctV == null ? '多个' : '';
+    }
   }
 }
 
@@ -829,22 +1070,21 @@ function ensureScalePanel() {
     syncScalePanel();
   });
   scaleEl.querySelector('[data-act="reset"]').addEventListener('click', () => {
-    const part = scalePartNow();
-    if (!part) return;
-    resetPartScale(part, scaleSpace);
-    syncScalePanel();
-    logScale(part, '已还原模型的原始大小');
+    const parts = scalePartsNow();
+    if (!parts.length) return;
+    scaleSelection(parts, '已还原模型的原始大小', part => {
+      const b = part.born || part.size;
+      scalePartTo(part, { x: b.x, y: b.z, z: b.y }, { uniform: false, space: scaleSpace, history: false, label: '还原大小' });
+    });
   });
   scaleEl.querySelector('[data-act="link"]').addEventListener('click', () => {
     scaleUniform = !scaleUniform;
     syncScalePanel();
   });
   fit.addEventListener('click', () => {
-    const part = scalePartNow();
-    if (!part) return;
-    scalePartToFit(part);
-    syncScalePanel();
-    logScale(part, '已缩放到适合当前机型');
+    const parts = scalePartsNow();
+    if (!parts.length) return;
+    fitSelection(parts);
   });
   drag.addEventListener('click', () => {
     scaleDrag = !scaleDrag;
@@ -862,18 +1102,257 @@ function ensureScalePanel() {
   for (const btn of scaleEl.querySelectorAll('.scaleSteps button')) {
     btn.addEventListener('pointerdown', ev => { ev.preventDefault(); ev.stopPropagation(); });
     btn.addEventListener('click', () => {
-      const part = scalePartNow();
+      const parts = scalePartsNow();
       const row = btn.closest('[data-axis]');
-      if (!part || !row) return;
+      if (!parts.length || !row) return;
       const axis = row.dataset.axis;
       const kind = btn.dataset.kind;
-      const live = sliceLive(part);
-      const born = sliceBorn(part);
-      const cur = kind === 'pct' ? live[axis] / Math.max(born[axis], 1e-6) * 100 : live[axis];
-      applyScaleInput(axis, kind, cur + Number(btn.dataset.step));
+      const step = Number(btn.dataset.step);
+      scaleSelection(parts, '模型已缩放', part => {
+        const live = sliceLive(part);
+        const born = sliceBorn(part);
+        const cur = kind === 'pct' ? live[axis] / Math.max(born[axis], 1e-6) * 100 : live[axis];
+        applyAxisMm(part, axis, targetMm(part, axis, kind, cur + step));
+      });
     });
   }
   return scaleEl;
+}
+
+function rotSelectionKey() {
+  return (state.selectedIds || []).join(',');
+}
+
+function selectedParts() {
+  const out = [];
+  for (const id of state.selectedIds || []) {
+    const p = state.parts.find(x => x.id === id);
+    if (p) out.push(p);
+  }
+  return out;
+}
+
+/* 角度 0 的姿势。面板上的 X/Y/Z 都相对这一份重放，所以改一个数不会在上次结果上越叠越偏。 */
+function captureRotBasis() {
+  releaseSnaps(rotBasis);
+  const parts = selectedParts();
+  rotBasis = parts.length ? capturePartSnaps(parts) : null;
+  rotEuler = { x: 0, y: 0, z: 0 };
+  rotKey = rotSelectionKey();
+}
+
+function finishRotateSession() {
+  if (!rotBasis) return;
+  let baked = false;
+  for (const snap of rotBasis) {
+    const part = state.parts.find(p => p.id === snap.id);
+    if (part && bakePartRotation(part)) baked = true;
+  }
+  if (baked) syncPlateMesh({ faces: true });
+  releaseSnaps(rotBasis);
+  rotBasis = null;
+  rotEuler = { x: 0, y: 0, z: 0 };
+  rotKey = '';
+}
+
+function eulerQuat(deg, out) {
+  const qx = _quat.clone().setFromAxisAngle(AXIS.x, deg.x * Math.PI / 180);
+  const qy = new THREE.Quaternion().setFromAxisAngle(AXIS.y, deg.y * Math.PI / 180);
+  const qz = new THREE.Quaternion().setFromAxisAngle(AXIS.z, deg.z * Math.PI / 180);
+  out.identity();
+  out.premultiply(qx);
+  out.premultiply(qy);
+  out.premultiply(qz);
+  return out;
+}
+
+/* 切片轴：X 绕世界 +X，Y 绕世界 +Z，Z 绕世界 +Y。先 X 再 Y 再 Z。转完每件最低点落到板上。 */
+function applyRotEuler(next) {
+  if (!rotBasis) captureRotBasis();
+  if (!rotBasis || !rotBasis.length) return;
+  const parts = [];
+  for (const snap of rotBasis) {
+    const part = state.parts.find(p => p.id === snap.id);
+    if (!part || !snap.position) continue;
+    parts.push(part);
+  }
+  if (!parts.length) return;
+  const before = capturePartSnaps(parts);
+  const beforeEuler = { x: rotEuler.x, y: rotEuler.y, z: rotEuler.z };
+  for (const snap of rotBasis) {
+    const part = state.parts.find(p => p.id === snap.id);
+    if (part && snap.position) restorePartSnap(part, snap);
+  }
+  const live = [];
+  for (const snap of rotBasis) {
+    const part = state.parts.find(p => p.id === snap.id);
+    if (part) live.push(part);
+  }
+  eulerQuat(next, _quat);
+  const origin = selectionPivot(live, new THREE.Vector3());
+  const lift = raiseH();
+  for (const part of live) {
+    const cy = lift + (part.oy || 0) + part.base.y / 2;
+    _local.set(part.ox - origin.x, cy - origin.y, part.oz - origin.z);
+    _local.applyQuaternion(_quat);
+    part.ox = origin.x + _local.x;
+    part.oz = origin.z + _local.z;
+    part.oy = origin.y + _local.y - lift - part.base.y / 2;
+    part.q.premultiply(_quat).normalize();
+  }
+  seatPartsOnPlate(live);
+  for (const part of live) bakePartRotation(part);
+  rotEuler = { x: next.x, y: next.y, z: next.z };
+  syncPlateMesh({ faces: true });
+  placeGizmo();
+  syncSelectionBoxes();
+  discardStaleWork('模型已旋转，分析结果与支撑已清除，请重新分析');
+  const after = capturePartSnaps(live);
+  const afterEuler = { x: rotEuler.x, y: rotEuler.y, z: rotEuler.z };
+  const changed = before.some(snap => {
+    const part = state.parts.find(p => p.id === snap.id);
+    if (!part) return true;
+    if (Math.abs(snap.ox - part.ox) > 0.02 || Math.abs(snap.oy - part.oy) > 0.02 || Math.abs(snap.oz - part.oz) > 0.02) return true;
+    const pos = part.geom.attributes.position.array;
+    if (!snap.position || pos.length !== snap.position.length) return true;
+    for (let i = 0; i < pos.length; i++) if (pos[i] !== snap.position[i]) return true;
+    return false;
+  });
+  if (!changed) {
+    releaseSnaps(before);
+    releaseSnaps(after);
+    syncRotatePanel();
+    return;
+  }
+  rotHold = true;
+  pushHistory({
+    label: '旋转模型',
+    undo: () => {
+      rotHold = true;
+      for (const snap of before) {
+        const part = state.parts.find(p => p.id === snap.id);
+        if (part) restorePartSnap(part, snap);
+      }
+      rotEuler = { x: beforeEuler.x, y: beforeEuler.y, z: beforeEuler.z };
+      syncPlateMesh({ faces: true });
+      syncRotatePanel();
+    },
+    redo: () => {
+      rotHold = true;
+      for (const snap of after) {
+        const part = state.parts.find(p => p.id === snap.id);
+        if (part) restorePartSnap(part, snap);
+      }
+      rotEuler = { x: afterEuler.x, y: afterEuler.y, z: afterEuler.z };
+      syncPlateMesh({ faces: true });
+      syncRotatePanel();
+    },
+    dispose: () => { releaseSnaps(before); releaseSnaps(after); },
+  });
+  rotHold = false;
+  log(`已旋转：X ${rotEuler.x.toFixed(1)}° · Y ${rotEuler.y.toFixed(1)}° · Z ${rotEuler.z.toFixed(1)}°`, 'ok');
+  syncRotatePanel();
+}
+
+function setRotAxis(axis, value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) { syncRotatePanel(); return; }
+  applyRotEuler({ ...rotEuler, [axis]: n });
+}
+
+function placeFloatPanel(el) {
+  if (!el || !canvas || !canvas.parentElement) return;
+  const host = el.parentElement || scaleHost();
+  if (getComputedStyle(host).getPropertyValue('--scale-panel-place').trim() === 'css') {
+    el.style.top = '';
+    el.style.left = '';
+    el.style.right = '';
+    el.style.bottom = '';
+    el.style.maxHeight = '';
+    el.style.transform = '';
+    return;
+  }
+  const bar = host.querySelector('.modeBar, .mode-bar');
+  let top = 12;
+  if (bar) {
+    const hr = host.getBoundingClientRect();
+    const br = bar.getBoundingClientRect();
+    top = Math.max(12, br.bottom - hr.top + 8);
+  }
+  el.style.top = `${Math.round(top)}px`;
+  el.style.maxHeight = `calc(100% - ${Math.round(top + 148)}px)`;
+}
+
+function syncRotatePanel() {
+  if (!rotEl) return;
+  const on = state.transformTool === 'rotate' && (state.selectedIds || []).length > 0;
+  setFloatOpen(rotEl, on);
+  if (!on) return;
+  placeFloatPanel(rotEl);
+  for (const axis of ['x', 'y', 'z']) {
+    const input = rotEl.querySelector(`[data-axis="${axis}"] input`);
+    if (input && document.activeElement !== input) input.value = rotEuler[axis].toFixed(2);
+  }
+}
+
+function ensureRotatePanel() {
+  if (rotEl) return rotEl;
+  const host = scaleHost();
+  rotEl = document.createElement('div');
+  rotEl.className = 'scalePanel rotPanel';
+  rotEl.hidden = true;
+  rotEl.setAttribute('role', 'dialog');
+  rotEl.setAttribute('aria-label', '旋转');
+  rotEl.addEventListener('pointerdown', ev => ev.stopPropagation());
+  rotEl.addEventListener('contextmenu', ev => ev.preventDefault());
+  rotEl.innerHTML = `
+    <b class="scaleBrand">旋转</b>
+    <span class="scaleIconBtns">
+      <button type="button" class="scaleIcon" data-act="reset" title="角度回到 0">${SCALE_SVG.reset}</button>
+    </span>
+    <div class="rotAxes"></div>`;
+  const axes = rotEl.querySelector('.rotAxes');
+  const colors = { x: '#e55353', y: '#10b890', z: '#3760ea' };
+  for (const axis of ['x', 'y', 'z']) {
+    const row = document.createElement('div');
+    row.className = 'rotRow';
+    row.dataset.axis = axis;
+    row.innerHTML = `
+      <span class="scaleAxis"><i style="background:${colors[axis]}"></i>${axis.toUpperCase()}</span>
+      <span class="scaleSpin">
+        <input data-kind="deg" inputmode="decimal" autocomplete="off" aria-label="${axis.toUpperCase()} 角度">
+        <em>°</em>
+        <span class="scaleSteps">
+          <button type="button" data-step="1" aria-label="增大角度">▴</button>
+          <button type="button" data-step="-1" aria-label="减小角度">▾</button>
+        </span>
+      </span>
+      <button type="button" class="rotNudge" data-step="-45">-45°</button>
+      <button type="button" class="rotNudge" data-step="45">+45°</button>`;
+    axes.appendChild(row);
+  }
+  host.appendChild(rotEl);
+  rotEl.querySelector('[data-act="reset"]').addEventListener('click', () => {
+    applyRotEuler({ x: 0, y: 0, z: 0 });
+  });
+  for (const input of rotEl.querySelectorAll('input')) {
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('keydown', ev => { if (ev.key === 'Enter') input.blur(); });
+    input.addEventListener('change', () => {
+      const row = input.closest('[data-axis]');
+      setRotAxis(row.dataset.axis, input.value);
+    });
+  }
+  for (const btn of rotEl.querySelectorAll('.scaleSteps button, .rotNudge')) {
+    btn.addEventListener('pointerdown', ev => { ev.preventDefault(); ev.stopPropagation(); });
+    btn.addEventListener('click', () => {
+      const row = btn.closest('[data-axis]');
+      if (!row) return;
+      const axis = row.dataset.axis;
+      setRotAxis(axis, rotEuler[axis] + Number(btn.dataset.step));
+    });
+  }
+  return rotEl;
 }
 
 function hideMenu() {
@@ -936,25 +1415,31 @@ function chooseTool(tool) {
 /** 切换模型变换工具（move / rotate / scale），再点同一个取消。工具栏按钮与右键菜单共用。 */
 export function setTransformTool(tool) {
   hideMenu();
-  if (!tool || tool === state.transformTool) {
+  const prev = state.transformTool;
+  if (!tool || tool === prev) {
+    if (prev === 'rotate') finishRotateSession();
     state.transformTool = null;
     bus.emit('selection', { ids: (state.selectedIds || []).slice(), tool: null });
+    syncRotatePanel();
     return;
   }
-  if ((state.selectedIds || []).length !== 1) {
-    toast('先在视口里单击选中一件模型，再使用变换工具');
+  if (!(state.selectedIds || []).length) {
+    toast('先选中模型，再使用变换工具');
     return;
   }
   if (state.mode !== 'orbit') setMode('orbit');
   if (tool !== 'move' && tool !== 'rotate' && tool !== 'scale') return;
+  if (prev === 'rotate') finishRotateSession();
   if (tool === 'scale') scaleDrag = true;
   state.transformTool = tool;
+  if (tool === 'rotate') captureRotBasis();
   const tip = {
     move: '拖动坐标轴移动模型',
     rotate: '拖动圆环绕坐标轴旋转',
   }[tool];
   if (tip) toast(tip);
   bus.emit('selection', { ids: state.selectedIds.slice(), tool });
+  syncRotatePanel();
 }
 
 function typingTarget() {
@@ -998,6 +1483,10 @@ function onKeyDown(e) {
       document.activeElement.blur();
       return;
     }
+    if (rotEl && !rotEl.hidden && rotEl.contains(document.activeElement)) {
+      document.activeElement.blur();
+      return;
+    }
     if (state.transformTool) {
       state.transformTool = null;
       bus.emit('selection', { ids: (state.selectedIds || []).slice(), tool: null });
@@ -1005,6 +1494,28 @@ function onKeyDown(e) {
     }
     if ((state.selectedIds || []).length) setSelection([]);
     return;
+  }
+  // M 移动，R 旋转，S 缩放。再按一次关掉。输入框、命令面板和带修饰键的组合不抢。
+  if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !typingTarget() && !dialogOpen()) {
+    const k = (e.key || '').toLowerCase();
+    if (k === 'm' || e.code === 'KeyM') {
+      e.preventDefault();
+      e.stopPropagation();
+      setTransformTool('move');
+      return;
+    }
+    if (k === 's' || e.code === 'KeyS') {
+      e.preventDefault();
+      e.stopPropagation();
+      setTransformTool('scale');
+      return;
+    }
+    if (k === 'r' || e.code === 'KeyR') {
+      e.preventDefault();
+      e.stopPropagation();
+      setTransformTool('rotate');
+      return;
+    }
   }
   // Delete：删掉视口里选中的模型。输入框里打字时不抢，避免把字删掉却把模型也删了。
   if (e.key !== 'Delete' && e.code !== 'Delete') return;
@@ -1228,6 +1739,7 @@ export function initManipulate(canvasEl) {
   buildGizmo();
   ensureMenu();
   ensureScalePanel();
+  ensureRotatePanel();
   canvas.addEventListener('selectstart', e => e.preventDefault());
   canvas.addEventListener('pointerdown', onPointerDown, true);
   window.addEventListener('pointermove', onPointerMove);
@@ -1247,7 +1759,27 @@ export function initManipulate(canvasEl) {
     if (gesture) endGesture();
     if (marquee) cancelMarquee();
   });
-  window.addEventListener('resize', () => { if (scaleEl && !scaleEl.hidden) placeScalePanel(); });
-  bus.on('modelInfo', () => { syncSelectionBoxes(); syncScalePanel(); });
-  bus.on('selection', () => { hideMenu(); syncSelectionBoxes(); syncScalePanel(); });
+  window.addEventListener('resize', () => {
+    if (scaleEl && !scaleEl.hidden) placeScalePanel();
+    if (rotEl && !rotEl.hidden) placeFloatPanel(rotEl);
+  });
+  bus.on('modelInfo', () => { syncSelectionBoxes(); syncScalePanel(); syncRotatePanel(); });
+  bus.on('selection', () => {
+    hideMenu();
+    syncSelectionBoxes();
+    syncScalePanel();
+    if (state.transformTool === 'rotate') {
+      if (rotSelectionKey() !== rotKey) {
+        finishRotateSession();
+        if (state.transformTool === 'rotate') captureRotBasis();
+      }
+    } else if (rotBasis) finishRotateSession();
+    syncRotatePanel();
+  });
+  bus.on('history', () => {
+    if (state.transformTool !== 'rotate') return;
+    if (rotHold) { rotHold = false; return; }
+    captureRotBasis();
+    syncRotatePanel();
+  });
 }

@@ -60,13 +60,14 @@ function meshTopY(mesh) {
 /**
  * 当前画面的用量。
  * layers 没有模型时为 null。体积单位 mm³，毫升 = mm³ / 1000。
- * supportMm3 含落板支撑、短小支撑、连接底板和自动底板。
+ * supportMl 含落板支撑、短小支撑和连接底板。自动底板单独记在 raftMl。
  */
 export function resinSnapshot() {
   const layerH = params.layerH > 0 ? params.layerH : 0.05;
   let top = 0;
   let modelMm3 = 0;
   let supportMm3 = 0;
+  let raftMm3 = 0;
   if (state.mesh) {
     modelMm3 = geometryVolume(state.mesh.geometry);
     top = Math.max(top, meshTopY(state.mesh));
@@ -78,10 +79,10 @@ export function resinSnapshot() {
   }
   const raft = raftObject();
   if (raft && raft.geometry) {
-    supportMm3 += geometryVolume(raft.geometry);
+    raftMm3 = geometryVolume(raft.geometry);
     top = Math.max(top, meshTopY(raft));
   }
-  const mm3 = modelMm3 + supportMm3;
+  const mm3 = modelMm3 + supportMm3 + raftMm3;
   const ml = mm3 / 1000;
   const layers = state.mesh ? Math.max(1, Math.ceil((top - 1e-4) / layerH)) : null;
   return {
@@ -90,6 +91,8 @@ export function resinSnapshot() {
     grams: ml * RESIN_DENSITY,
     modelMl: modelMm3 / 1000,
     supportMl: supportMm3 / 1000,
+    raftMl: raftMm3 / 1000,
+    points: (state.supportPoints || []).length,
     density: RESIN_DENSITY,
   };
 }

@@ -187,6 +187,7 @@ label.f span { flex: 1; white-space: nowrap; }
   font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; padding: 0 2px 0 8px; text-align: right;
 }
 .scaleSpin input:focus { outline: none; }
+.scaleSpin input::placeholder { color: #8b949e; }
 .scaleSpin em { flex: none; margin-right: 4px; color: #8b949e; font-style: normal; font-size: 10px; pointer-events: none; }
 .scaleSteps { display: flex; flex-direction: column; width: 16px; align-self: stretch; flex: none; border-left: 1px solid #30363d; }
 .scaleSteps button { flex: 1; border: 0; background: transparent; cursor: pointer; padding: 0; line-height: 1; font-size: 8px; }

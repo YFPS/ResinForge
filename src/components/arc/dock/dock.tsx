@@ -30,6 +30,10 @@ export interface DockProps {
   onItemsChange?: (items: DockItem[], change: { type: "move"; id: string; index: number }) => void;
   /** 自己展开面板、不走托盘的那一格（如简化）。展开期间保持选中底色。 */
   expandedId?: string | null;
+  /** 上面的设置条打开时，把已经长出来的二级托盘立刻收掉 */
+  trayClosed?: boolean;
+  /** Tab 落在分组上时，直接把这一组的二级菜单展开 */
+  revealTray?: string | null;
   /** 托盘打开或收起。打开时 id 为分组，收起时为 null。 */
   onOpenChange?: (id: string | null) => void;
   /** 排在最后一位、不进工具循环的内容（如「下一步」），跟着坞一起被同一条轮廓兜住 */
@@ -157,7 +161,7 @@ function nameOf(item: DockItem, shown?: DockItem) {
  * 标签在格子之间滑过去，选中底色用弹簧跟上，分组的托盘从坞的上沿长出来。
  * 底色同一时间只在一格上：展开托盘或面板时滑到那一格，收起后回到当前工具。
  */
-export function Dock({ items, value = null, onValueChange, onItemsChange, expandedId = null, onOpenChange, trailing, label = "工具", className }: DockProps) {
+export function Dock({ items, value = null, onValueChange, onItemsChange, expandedId = null, onOpenChange, trayClosed = false, revealTray = null, trailing, label = "工具", className }: DockProps) {
   const reduced = useReducedMotion() ?? false;
   const reactId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -197,6 +201,20 @@ export function Dock({ items, value = null, onValueChange, onItemsChange, expand
   const holds = (item: DockItem) => item.id === value || !!item.items?.some(member => member.id === value);
 
   useEffect(() => () => window.clearTimeout(tipTimer.current), []);
+
+  useEffect(() => {
+    if (!trayClosed) return;
+    setOpenId(null);
+    setHeldId(null);
+    grow.set(0);
+  }, [trayClosed, grow]);
+
+  useEffect(() => {
+    if (trayClosed || !revealTray) return;
+    setOpenId(revealTray);
+    setHeldId(revealTray);
+    onOpenChangeRef.current?.(revealTray);
+  }, [revealTray, trayClosed]);
 
   useEffect(() => {
     if (!openId) return;

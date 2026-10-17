@@ -21,7 +21,7 @@ export const params = {
   /* 切片与孤岛分析 */
   layerH: 0.1,        // 层厚（mm）
   gapThresh: 0.35,    // 悬空阈值（mm）
-  raiseH: 4,          // 模型抬高（mm）：支撑生成前模型底面离平台的默认高度
+  raiseH: 4,          // 模型抬高（mm）。默认 4：底面离平台 4mm，下面留支撑空隙。要贴在平台上再调回 0
   minIslArea: 0.5,    // 孤岛最小面积（mm²）
   minAttach: 1,       // 最小附着面积（mm²）
   /* 支撑点 */
@@ -73,6 +73,7 @@ export const params = {
 /* 应用状态（对应旧 main.js 的 state；faces 为原模块级变量——完整面数据 {nrm,area,cent}，随几何重建） */
 export const state = {
   mesh: null,               // 合并后的模型 Mesh（各零件已写入世界 XZ，底部贴局部 y=0，mesh.position.y = raiseH）
+  supportLiftOn: false,     // 进过支撑步骤后才把「模型抬高」加到模型上；此前底面贴平台
   parts: [],                // 零件 {id,name,demo,geom,size,base,nf,ox,oy,oz,q,faceStart,protected}
   selectedIds: [],          // 视口选中的零件。单击、框选、Ctrl+A；Delete 删除这些模型。Ctrl+Z 撤回移动、旋转、缩放和删除
   transformTool: null,      // 单个模型右键：'move' 沿坐标轴移动 / 'rotate' 拖圆环旋转 / 'scale' 放大缩小 / null 不显示手柄

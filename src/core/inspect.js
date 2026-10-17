@@ -6,9 +6,10 @@
 import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { analyze, steepFaces, sampleLDILayer, rasterizeSection } from './slicer.js';
-import { raiseH, ensureBakedDisplay } from './model.js';
+import { raiseH, ensureBakedDisplay, supportScopeIds, supportScopeNote, localFaceOf, partAtWorld } from './model.js';
 import { autoPlateThickness } from './joinPlate.js';
 import { supMat, supMatAnchor } from './scene.js';
+import { buildBVH, raycast } from './collide.js';
 
 let layerCanvas = null;   // React 层检查器的 canvas（256×256）
 let curLayer = 1;         // 当前滑块层（1-based；旧代码读 $('layerSlider').value）
@@ -21,8 +22,89 @@ export function showInspector(layers, firstIsland) {
 }
 export function hideInspector() { bus.emit('inspector', { show: false }); }
 
+function ensureAnalysisBvh(A) {
+  if (!A._bvh) A._bvh = buildBVH(A.p);
+  return A._bvh;
+}
+
+/* 孤岛落在哪个零件上。射线从岛心向下，命中面优先，对不上再按底面外接框。 */
+function ownerAt(A, x, y, z) {
+  const hit = raycast(ensureAnalysisBvh(A), x, y + 0.8, z, 0, -1, 0, 0, 4);
+  if (hit && hit.f >= 0) {
+    const loc = localFaceOf(hit.f);
+    if (loc) return loc.part.id;
+  }
+  const part = partAtWorld(x, z);
+  return part ? part.id : null;
+}
+
+function tagIslandOwners(A) {
+  if (!A || !A.graph || (state.parts || []).length <= 1) return;
+  for (const nd of A.graph.nodes) {
+    if (!nd.island || nd.owner !== undefined) continue;
+    let x = nd.cx, z = nd.cz;
+    if (nd.pixels && nd.pixels.length) {
+      const cc = nd.pixels[0];
+      const ci = cc % A.grid.W, cj = (cc / A.grid.W) | 0;
+      x = A.grid.x0 + (ci + 0.5) * A.grid.sx;
+      z = A.grid.z0 + (cj + 0.5) * A.grid.sz;
+    }
+    nd.owner = ownerAt(A, x, nd.y, z);
+  }
+}
+
+/* 当前选中范围内的孤岛。只有一个模型时就是全部。 */
+function islandsInScope(A) {
+  const scope = supportScopeIds();
+  const all = (A && A.islands) || [];
+  if (!scope) return all;
+  tagIslandOwners(A);
+  return all.filter(isl => {
+    const nd = A.graph && A.graph.nodes[isl.node];
+    return !!(nd && scope.has(nd.owner));
+  });
+}
+
+/* 把分析结果按当前选中范围发出去。换选中时只改孤岛和陡峭面积，不重跑切片。
+   scopeOnly 告诉热力图：高差没变，只重画哪些面着色。 */
+function emitSliceStats(scopeOnly) {
+  const r = state.analysis;
+  if (!r) { bus.emit('sliceStats', null); return []; }
+  const scope = supportScopeIds();
+  const islands = islandsInScope(r);
+  const m = r.metrics;
+  const rh = r.raiseH;
+  let steepArea = r.steepArea || 0;
+  let protHit = r.protSteep || 0;
+  if (scope && r.steepPts) {
+    steepArea = 0;
+    protHit = 0;
+    for (const pt of r.steepPts) {
+      const loc = localFaceOf(pt.f);
+      if (!loc || !scope.has(loc.part.id)) continue;
+      steepArea += pt.area || 0;
+      if (state.protectedFaces.has(pt.f)) protHit += pt.area || 0;
+    }
+  }
+  const totIslandArea = islands.reduce((s, i) => s + i.area, 0);
+  bus.emit('sliceStats', {
+    layers: m.layers,
+    raiseText: `${rh}mm / ${params.autoPlateOn ? `底板顶 ${+autoPlateThickness(params).toFixed(2)}mm` : params.baseJoin ? `连接底板 ${+(state.joinLift || 0).toFixed(2)}mm` : '关'}`,
+    islandCount: islands.length,
+    totIslandArea,
+    steepArea,
+    protHit,
+    supportVol: m.supportVol,
+    maxFill: m.maxFill,
+    scopeOnly: !!scopeOnly,
+  });
+  return islands;
+}
+
 export async function runSliceAnalysis() {
   if (!state.mesh) return toast('请先载入模型');
+  const scope = supportScopeIds();
+  if (scope && scope.size === 0) return toast('先选中模型，再运行分析');
   const layerH = params.layerH;
   const gapThresh = params.gapThresh;
   const selfAngle = params.selfAngle;
@@ -43,25 +125,16 @@ export async function runSliceAnalysis() {
   if (rh > 0) for (const pt of sf.pts) pt.y += rh;   // 面重心为局部坐标，抬到世界系
   r.steepPts = sf.pts;
   r.protSteep = sf.protHit;
+  r.steepArea = sf.steepArea;
   state.analysis = r;
   setProgress(null);
   const m = r.metrics;
-  const totIslandArea = r.islands.reduce((s, i) => s + i.area, 0);
-  bus.emit('sliceStats', {
-    layers: m.layers,
-    raiseText: `${rh}mm / ${params.autoPlateOn ? `底板顶 ${+autoPlateThickness(params).toFixed(2)}mm` : params.baseJoin ? `连接底板 ${+(state.joinLift || 0).toFixed(2)}mm` : '关'}`,
-    islandCount: r.islands.length,
-    totIslandArea,
-    steepArea: sf.steepArea,
-    protHit: sf.protHit,
-    supportVol: m.supportVol,
-    maxFill: m.maxFill,
-  });
-  log(`逐层分析完成：${m.layers} 层 · 孤岛 ${r.islands.length} 处 · ${((performance.now() - t0) / 1000).toFixed(1)}s`, 'ok');
-  // 日志框逐层输出孤岛数量（仅列出存在孤岛的层）
-  if (r.islands.length) {
+  const islands = emitSliceStats(false);
+  log(`逐层分析完成${supportScopeNote('只分析')}：${m.layers} 层 · 孤岛 ${islands.length} 处 · ${((performance.now() - t0) / 1000).toFixed(1)}s`, 'ok');
+  // 日志框逐层输出孤岛数量（只列选中模型上的孤岛）
+  if (islands.length) {
     const byLayer = new Map();
-    for (const isl of r.islands) {
+    for (const isl of islands) {
       const e = byLayer.get(isl.layer) || { n: 0, area: 0, y: isl.y };
       e.n++; e.area += isl.area;
       byLayer.set(isl.layer, e);
@@ -75,7 +148,7 @@ export async function runSliceAnalysis() {
   const cellMm = Math.max(r.grid.sx, r.grid.sz);
   if (cellMm > pxMm * 2) log(`⚠ 分析格 ${cellMm.toFixed(2)}mm ≈ ${(cellMm / pxMm).toFixed(0)}× 机器像素（${(pxMm * 1000).toFixed(0)}µm），细于 ${(pxMm * 2).toFixed(2)}mm 的悬空结构可能漏检`, 'warn');
   // 层检查器
-  const firstIsland = r.islands.length ? Math.max(1, r.islands[0].layer + 1) : 1;
+  const firstIsland = islands.length ? Math.max(1, islands[0].layer + 1) : 1;
   showInspector(m.layers, firstIsland);
   drawLayer(firstIsland);
 }
@@ -128,8 +201,11 @@ export function drawLayer(l) {
   const occ = sliceAt(l - 1);
   const occPrev = l > 1 ? sliceAt(l - 2) : null;
   const { W, H, sx, sz: szg, x0, z0 } = A.grid;
+  const scope = supportScopeIds();
+  const yLayer = A.grid.minY + (l - 0.5) * A.grid.layerH;
   // 孤岛高亮：本层连通域与下层接触面积不足阈值（阈值来自逐层分析，已按像素面积换算）
   const visited = new Uint8Array(W * H);
+  const outside = scope ? new Uint8Array(W * H) : null;
   const stack = new Int32Array(W * H);
   const islandMask = new Uint8Array(W * H);
   const lMin = A.raiseH > 0 ? 1 : 2;   // 抬高时首层（滑块 1）悬空于平台（或底板）之上
@@ -147,6 +223,15 @@ export function drawLayer(l) {
       if (cj + 1 < H && occ[c + W] && !visited[c + W]) { visited[c + W] = 1; stack[tl++] = c + W; }
       if (cj - 1 >= 0 && occ[c - W] && !visited[c - W]) { visited[c - W] = 1; stack[tl++] = c - W; }
     }
+    if (outside) {
+      const c0 = comp[0];
+      const oi = c0 % W, oj = (c0 / W) | 0;
+      const owner = ownerAt(A, x0 + (oi + 0.5) * sx, yLayer, z0 + (oj + 0.5) * szg);
+      if (owner == null || !scope.has(owner)) {
+        for (const c of comp) outside[c] = 1;
+        continue;
+      }
+    }
     if (l >= lMin && comp.length >= A.minIslPx) {
       let ov = 0;
       if (occPrev) for (const c of comp) if (occPrev[c]) ov++;
@@ -158,9 +243,11 @@ export function drawLayer(l) {
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const id = j * W + i;
     if (occ[id]) {
-      if (islandMask[id]) { img.data[id * 4] = 235; img.data[id * 4 + 1] = 70; img.data[id * 4 + 2] = 70; }
-      else { img.data[id * 4] = 62; img.data[id * 4 + 1] = 110; img.data[id * 4 + 2] = 200; }
-      img.data[id * 4 + 3] = 235;
+      if (outside && outside[id]) {
+        img.data[id * 4] = 72; img.data[id * 4 + 1] = 76; img.data[id * 4 + 2] = 82;
+        img.data[id * 4 + 3] = 150;
+      } else if (islandMask[id]) { img.data[id * 4] = 235; img.data[id * 4 + 1] = 70; img.data[id * 4 + 2] = 70; img.data[id * 4 + 3] = 235; }
+      else { img.data[id * 4] = 62; img.data[id * 4 + 1] = 110; img.data[id * 4 + 2] = 200; img.data[id * 4 + 3] = 235; }
     } else if (occPrev && occPrev[id]) {
       img.data[id * 4] = 56; img.data[id * 4 + 1] = 76; img.data[id * 4 + 2] = 70;
       img.data[id * 4 + 3] = 150;
@@ -192,3 +279,10 @@ export function drawLayer(l) {
   const z = A.grid.minY + (l - 0.5) * A.grid.layerH;
   bus.emit('layerLabel', `层 ${l}/${A.grid.layers} · y=${z.toFixed(2)}mm · 本层孤岛 ${islandCount} 处 · 支撑点 ${(state.supportPoints || []).length}`);
 }
+
+/* 换选中：孤岛数字和层检查器跟着当前模型走，不重跑整板切片。 */
+bus.on('selection', () => {
+  if (!state.analysis) return;
+  emitSliceStats(true);
+  drawLayer();
+});

@@ -11,6 +11,7 @@ import { ScrollArea } from '@/components/arc/scroll-area/scroll-area';
 import { motionTokens } from '@/components/arc/motion-tokens';
 import { useBusLatest } from '../bridge.js';
 import { STEPS, goStep, stepIndex, useDone } from '../ui.js';
+import { HelpTip } from './fields.jsx';
 
 /* 「下一步」默认渲染在面板底栏；Studio 把它挪到视口底栏时，用这个 context 让面板里的那份不渲染 */
 export const NextSlotContext = React.createContext('panel');
@@ -21,7 +22,10 @@ export function StepPanel({ step, footer, children }) {
     <div className="stepPanelInner">
       <header className="stepHead">
         <div className="stepHeadRow">
-          <h2 className="stepTitle">{step.title}</h2>
+          <h2 className="stepTitle">
+            {step.title}
+            {step.help ? <HelpTip text={step.help} label={step.title} /> : null}
+          </h2>
           {done[step.id] ? <Badge tone="success" size="sm" icon={<Check size={12} strokeWidth={2} />}>已完成</Badge> : null}
         </div>
         {step.desc ? <p className="stepDesc">{step.desc}</p> : null}

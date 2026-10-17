@@ -11,9 +11,9 @@
    联动：分析完成 / 换模型 / 保护面变更 时若开关开着则自动重算重绘。
 ================================================================ */
 import * as THREE from 'three';
-import { state, params, bus, log } from '../store.js';
+import { state, params, bus, log, toast } from '../store.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, displayPosePending, ensureBakedDisplay, syncPartTint, setHeatActiveReader, setSelectedPainter } from './model.js';
+import { baseY, raiseH, displayPosePending, ensureBakedDisplay, syncPartTint, setHeatActiveReader, setSelectedPainter, supportScopeIds, localFaceOf } from './model.js';
 import { modelMat } from './scene.js';
 
 let heatOn = false;
@@ -111,10 +111,23 @@ export function applyHeatColors() {
   const prot = state.protectedFaces;
   const nf = faceH.length;
   const rgb = [0, 0, 0];
+  const scope = supportScopeIds();
+  const light = document.documentElement.getAttribute('data-theme') === 'light';
+  const base = new THREE.Color(light ? 0x717b88 : 0xa7b0bd);
   for (let f = 0; f < nf; f++) {
     const v = f * 3;
-    const c = prot.has(f) ? PROT_HOT : heatRGB(faceH[f], rgb);
-    for (let k = 0; k < 3; k++) ca.setXYZ(v + k, c[0] * HEAT_DIM, c[1] * HEAT_DIM, c[2] * HEAT_DIM);
+    let r, g, b;
+    const loc = scope ? localFaceOf(f) : null;
+    const on = !scope || (loc && scope.has(loc.part.id));
+    if (!on) {
+      // 没选中的模型保持普通灰，不要涂成「已分析、无需支撑」的蓝
+      if (prot.has(f)) { r = 1; g = 0.38; b = 0.38; }
+      else { r = base.r; g = base.g; b = base.b; }
+    } else {
+      const c = prot.has(f) ? PROT_HOT : heatRGB(faceH[f], rgb);
+      r = c[0] * HEAT_DIM; g = c[1] * HEAT_DIM; b = c[2] * HEAT_DIM;
+    }
+    for (let k = 0; k < 3; k++) ca.setXYZ(v + k, r, g, b);
   }
   ca.needsUpdate = true;
 }
@@ -146,8 +159,12 @@ export function setHeat(on, opts = {}) {
   syncHeatMaterial();
   if (heatOn) {
     if (state.mesh) {
+      const scope = supportScopeIds();
+      if (scope && scope.size === 0) {
+        if (!opts.quiet) toast('先选中模型，热力图只显示选中的模型');
+      }
       const hasLDI = !!(state.analysis && state.analysis.ld);
-      if (!opts.quiet) log(`支撑热力图已开启（${hasLDI ? '悬空角 × LDI 高差' : '纯悬空角，运行逐层分析后更准'}）`);
+      if (!opts.quiet) log(`支撑热力图已开启（${hasLDI ? '悬空角 × LDI 高差' : '纯悬空角，运行逐层分析后更准'}${scope ? '，只画选中的模型' : ''}）`);
       refresh();
     }
   } else {
@@ -204,8 +221,13 @@ bus.on('displayMesh', showDisplayColor);
 /* 取消选中时模型要回到主题灰。顶点涂白之后，材质色必须跟着回到灰，否则会变成一片发白。 */
 bus.on('restoreLitModel', () => { if (!heatOn) syncHeatMaterial(); });
 
-/* 联动：分析完成（LDI 可用）/ 更换模型 / 保护面增减 时自动重算重绘 */
-bus.on('sliceStats', s => { if (heatOn && s) refresh(); });
+/* 联动：分析完成（LDI 可用）/ 更换模型 / 保护面增减 时自动重算重绘。
+   只换了选中范围时高差没变，重画哪些面着色即可。 */
+bus.on('sliceStats', s => {
+  if (!heatOn || !s) return;
+  if (s.scopeOnly && state.vertHeat) applyHeatColors();
+  else refresh();
+});
 bus.on('param', k => { if (heatOn && k === 'selfAngle') refresh(); });
 // 只平移时显示靠矩阵，顶点还在原处。这时重算热力图既慢又会读到旧坐标，颜色跟着网格走就对。
 bus.on('modelInfo', () => { if (heatOn && !displayPosePending()) refresh(); });

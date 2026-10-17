@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast } from '../store.js';
-import { loadDemo, loadModelFiles, localFaceOf, raiseH, plateAxisOrigin } from './model.js';
+import { loadDemo, loadModelFiles, localFaceOf, raiseH, plateAxisOrigin, acceptSupportFace } from './model.js';
 import { modelKind } from './meshio.js';
 import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
 import { showHeightLine, clearHeightLine } from './heightLine.js';
@@ -671,10 +671,7 @@ export function initScene(canvasEl) {
       const fn = h.face ? h.face.normal : null;
       if (fn && fn.y > 0.3) { toast('只能在朝下（悬空）的表面添加支撑点'); return; }
       const loc = localFaceOf(h.faceIndex);
-      if (state.parts.length > 1) {
-        if (!state.manualPartId) { toast('先选中一个模型，再使用手动支撑'); return; }
-        if (!loc || loc.part.id !== state.manualPartId) { toast('一次只能给一个模型使用手动支撑'); return; }
-      }
+      if (!acceptSupportFace(h.faceIndex)) return;
       addSupportPoint(h.point, fn ? [fn.x, fn.y, fn.z] : null, loc && loc.part.id);
     } else if (state.mode === 'poly' && state.mesh) {
       const hits = pointerRay(e).intersectObject(state.mesh);

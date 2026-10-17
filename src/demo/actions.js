@@ -2,9 +2,9 @@
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
 import { params, state, bus, log, toast } from '../store.js';
 import { isHeatOn, setHeat } from '../core/heat.js';
-import { loadDemo, loadModelFiles, setActivePart, simplifySelection, supportTargetPart, updateRaft } from '../core/model.js';
+import { baseRaiseH, loadDemo, loadModelFiles, placeModelAtLift, raiseH, setActivePart, simplifySelection, supportScopeIds, updateRaft } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
-import { runSliceAnalysis } from '../core/inspect.js';
+import { runSliceAnalysis, shiftAnalysisY } from '../core/inspect.js';
 import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
 import { SUPPORT_TEMPLATES, getSupportTemplate, templateParams } from '../core/supportTemplates.js';
@@ -106,24 +106,65 @@ async function ensureAnalysis() {
   return !!state.analysis;
 }
 
-/** 进入支撑步骤，或切入加支撑 / 删支撑：热力图直接打开；还没做逐层分析就自动跑完。
-    已经有分析结果就不再算。没有模型时只记下热力图开关，不弹「请先载入模型」。 */
+/** 进支撑步骤时才把「模型抬高」用到模型上。此前底面贴平台。已抬过的不再重复抬。 */
+export function engageSupportLift() {
+  if (state.supportLiftOn || !state.mesh) return;
+  const before = raiseH();
+  state.supportLiftOn = true;
+  const dy = raiseH() - before;
+  placeModelAtLift();
+  if (Math.abs(dy) < 1e-6) return;
+  for (const p of state.supportPoints || []) {
+    p.y += dy;
+    if (p.ay !== undefined) p.ay += dy;
+  }
+  if (state.analysis) shiftAnalysisY(dy);
+  log(`进入支撑：模型抬高 ${baseRaiseH()} mm`, 'ok');
+}
+
+/** 离开支撑时，还没添加支撑就把模型放回平台。已经有支撑点则保持抬高。 */
+export function releaseSupportLift() {
+  if (!state.supportLiftOn || !state.mesh) return;
+  if ((state.supportPoints || []).length) return;
+  const before = raiseH();
+  state.supportLiftOn = false;
+  const dy = raiseH() - before;
+  placeModelAtLift();
+  if (Math.abs(dy) < 1e-6) return;
+  const settle = () => { if (state.analysis && !state.supportLiftOn) shiftAnalysisY(dy); };
+  if (getUI().busy === 'analyze') {
+    const off = bus.on('sliceStats', () => { off(); settle(); });
+  } else settle();
+  log('未添加支撑，模型回到平台', 'ok');
+}
+
+/** 进入支撑步骤：热力图直接打开；还没做逐层分析就自动跑完。
+    已经有分析结果就不再算。没有模型时只记下热力图开关，不弹「请先载入模型」。
+    板上有多件却一个都没选中时，不整盘分析和上色。 */
 export function enterSupport() {
+  engageSupportLift();
+  const scope = supportScopeIds();
+  if (scope && scope.size === 0) return;
   if (!isHeatOn()) setHeat(true);
   if (!state.mesh || state.analysis || getUI().busy) return;
   return runTask('analyze', () => runSliceAnalysis());
 }
 
 bus.on('enterSupport', () => { enterSupport(); });
-/* 离开支撑这一步：热力图跟着收起。人还停在加支撑时，模式切换会再关一次，这里先关不影响。 */
-bus.on('leaveSupport', () => { if (isHeatOn()) setHeat(false); });
+/* 人已经在支撑这一步时又载入模型：新模型不能再贴回地板 */
+bus.on('modelInfo', () => { if (getUI().step === 'support') engageSupportLift(); });
+/* 离开支撑这一步：没加支撑就落回平台；热力图跟着收起。 */
+bus.on('leaveSupport', () => {
+  releaseSupportLift();
+  if (isHeatOn()) setHeat(false);
+});
 
-/* 加支撑：锁定当前这一件。没分析过就先跑完（正在分析就等它结束），然后打开热力图。
+/* 加支撑：只作用于当前选中的模型。没分析过就先跑完（正在分析就等它结束），然后打开热力图。
    进来看到的就是分析完成后的热力色，而不是只有角度、还没高差的一版。 */
 bus.on('enterAddSupport', async () => {
-  const target = supportTargetPart();
-  state.manualPartId = target ? target.id : null;
-  if (state.parts.length > 1 && !target) { toast('先选中一个模型，再使用手动支撑'); return; }
+  state.manualPartId = null;
+  const scope = supportScopeIds();
+  if (scope && scope.size === 0) { toast('先选中模型，再添加支撑'); return; }
   if (!state.mesh) return;
   if (!state.analysis) {
     if (getUI().busy && getUI().busy !== 'analyze') return;
@@ -137,11 +178,14 @@ bus.on('enterAddSupport', async () => {
   // 分析过程中已经退出加支撑的，不再把热力图打开
   if (state.mode === 'add' && state.analysis && !isHeatOn()) setHeat(true);
 });
-/* 多线段 / 删支撑：只锁定模型。已有分析就用，不另外开关热力图。 */
+/* 多线段 / 删支撑：已有分析就用，不另外开关热力图。多模型没选中时不整盘分析。 */
 bus.on('enterManual', () => {
-  const target = supportTargetPart();
-  state.manualPartId = target ? target.id : null;
-  if (state.parts.length > 1 && !target) { toast('先选中一个模型，再使用手动支撑'); return; }
+  state.manualPartId = null;
+  const scope = supportScopeIds();
+  if (scope && scope.size === 0) {
+    if (state.mode === 'poly') toast('先选中模型，再添加支撑');
+    return;
+  }
   if (!state.mesh || state.analysis || getUI().busy) return;
   return runTask('analyze', () => runSliceAnalysis());
 });
@@ -153,6 +197,8 @@ bus.on('leaveManual', () => {
 });
 
 export async function doGenSupports(opts = {}) {
+  const scope = supportScopeIds();
+  if (scope && scope.size === 0) { toast('先选中模型，再生成支撑'); return; }
   await syncModelLift();                           // 先按连接底板挪好模型：没分析过时，下面的分析直接在新高度上做（不白算一遍）
   if (!(await ensureAnalysis())) return;
   await runGenSup(opts);

@@ -5,7 +5,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { state, params, toast, log } from '../store.js';
-import { localFaceOf } from './model.js';
+import { localFaceOf, supportScopeIds, acceptSupportFace } from './model.js';
 import { addSupportPoints } from './support.js';
 
 /* 画出来的线沿法线抬出表面。贴在表面上的粗线会被模型切掉，看起来像穿进去。 */
@@ -235,11 +235,7 @@ export function movePolyLine(hit, view) {
 
 export function downPolyLine(hit, view) {
   if (!hit || !state.mesh || !view) return;
-  if (state.parts.length > 1) {
-    const loc = localFaceOf(hit.faceIndex);
-    if (!state.manualPartId) { toast('先选中一个模型，再使用手动支撑'); return; }
-    if (!loc || loc.part.id !== state.manualPartId) { toast('一次只能给一个模型使用手动支撑'); return; }
-  }
+  if (!acceptSupportFace(hit.faceIndex)) return;
   const p = hitPoint(hit);
   const now = performance.now();
   const last = pts[pts.length - 1];
@@ -277,6 +273,7 @@ function samplesAlong(path) {
   let acc = 0;
   let next = spacing * 0.5;
   const faces = state.protectedFaces;
+  const scope = supportScopeIds();
   for (let i = 0; i < path.length - 1; i++) {
     const a = path[i];
     const b = path[i + 1];
@@ -287,6 +284,9 @@ function samplesAlong(path) {
       const ny = a.ny + (b.ny - a.ny) * t;
       const face = t < 0.5 ? a.face : b.face;
       if (ny <= 0.25 && !(faces && faces.has(face))) {
+        const loc = localFaceOf(face);
+        const partId = loc ? loc.part.id : null;
+        if (scope && (partId == null || !scope.has(partId))) { next += spacing; continue; }
         out.push({
           x: a.x + (b.x - a.x) * t,
           y: a.y + (b.y - a.y) * t,
@@ -296,6 +296,7 @@ function samplesAlong(path) {
             ny,
             a.nz + (b.nz - a.nz) * t,
           ],
+          partId,
         });
       }
       next += spacing;

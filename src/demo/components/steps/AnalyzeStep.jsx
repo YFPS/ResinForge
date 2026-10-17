@@ -53,7 +53,7 @@ export default function AnalyzeStep() {
         </Grid>
       </Section>
 
-      <Section title="悬空与孤岛" desc="自支撑角也用于朝向评分、热力图和支撑的倾斜上限。">
+      <Section title="悬空与孤岛" help="自支撑角也用于朝向评分、热力图和支撑的倾斜上限。">
         <Grid>
           <Num k="selfAngle" label="自支撑角" min={20} max={70} step={1} unit="°" />
           <Num k="minIslArea" label="孤岛最小面积" min={0.05} max={20} step={0.05} unit="mm²" />
@@ -64,7 +64,7 @@ export default function AnalyzeStep() {
       <Section title="显示">
         <SwitchRow
           label="支撑热力图"
-          desc="按需要支撑的程度给模型表面着色"
+          help="按需要支撑的程度给模型表面着色。"
           checked={heat}
           onChange={v => setHeat(v)}
         />

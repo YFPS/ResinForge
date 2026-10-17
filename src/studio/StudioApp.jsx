@@ -18,6 +18,18 @@ export default function StudioApp() {
   /* 支撑步骤才吃 V / N 这类单键快捷键，别的步骤里要让输入框正常打字 */
   useEffect(() => { setSupportHotkeys(step === 'support'); }, [step]);
 
+  /* 右键不弹出浏览器 / WebView 菜单（返回、刷新、另存为、打印）。输入框仍留给复制粘贴。
+     画布上的右键旋转不受影响。 */
+  useEffect(() => {
+    const onContext = e => {
+      const el = e.target;
+      if (el && el.closest && el.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+    };
+    window.addEventListener('contextmenu', onContext, true);
+    return () => window.removeEventListener('contextmenu', onContext, true);
+  }, []);
+
   useEffect(() => {
     const onKey = e => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {

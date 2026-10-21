@@ -5,7 +5,17 @@
    按钮区不标记，天然可点。浏览器打开时本组件返回 null（Web 版零回归）。 */
 import React, { useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { BrandMark } from './TopBar.jsx';
+
+/** 品牌标记。标题栏和 Studio 顶栏共用。 */
+export function BrandMark() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1.2" y="1.2" width="29.6" height="29.6" rx="9" fill="none" stroke="currentColor" strokeWidth="2.4" />
+      <path d="M9 23V16.2C9 11.2 12.2 8 16 8s7 3.2 7 8.2V23" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M12.2 23v-6.2c0-2.4 1.6-4 3.8-4s3.8 1.6 3.8 4V23" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export const IN_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 

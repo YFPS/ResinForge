@@ -3,7 +3,7 @@ import { Box, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import Button from '@/components/arc/button/button';
 import Tooltip from '@/components/arc/tooltip/tooltip';
 import MachinePicker from '../../demo/components/MachinePicker.jsx';
-import { BrandMark } from '../../demo/components/TopBar.jsx';
+import { BrandMark } from '../../demo/components/TitleBar.jsx';
 import { useBusLatest } from '../../demo/bridge.js';
 import { goStep } from '../../demo/ui.js';
 import BedPlate from '../bedPlate.jsx';

@@ -17,3 +17,14 @@ src-tauri/keys/
 
 # 参考数据（第三方逆向样本，不入库）
 .ref/
+
+# 第三方手办网格，体积大且不能再分发
+2B - 1_12/
+
+# Rust 编译产物
+src-tauri/target/
+installer/target/
+
+# 本地编辑器状态
+.claude/
+.zcode/

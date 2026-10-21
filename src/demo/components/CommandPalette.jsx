@@ -7,18 +7,16 @@ import { CommandPalette as ArcCommandPalette } from '@/components/arc/command-pa
 import dialogStyles from '@/components/arc/dialog/dialog.module.css';
 import { buildCommands } from '../commands.js';
 import { useBusLatest, useParams } from '../bridge.js';
-import { useUI } from '../ui.js';
 import { useTheme } from '../theme.js';
 
 export default function CommandPalette({ open, onOpenChange }) {
   const [, setParam] = useParams();
   const heatOn = useBusLatest('heat', false);
-  const { sidebarOpen } = useUI();
   const theme = useTheme();
 
   const commands = useMemo(
-    () => buildCommands({ setParam, heatOn, sidebarOpen, theme }),
-    [setParam, heatOn, sidebarOpen, theme],
+    () => buildCommands({ setParam, heatOn, theme }),
+    [setParam, heatOn, theme],
   );
   const items = useMemo(() => commands.map(c => ({
     id: c.id, label: c.title, description: c.hint, group: c.group, keywords: c.keywords, icon: c.icon,

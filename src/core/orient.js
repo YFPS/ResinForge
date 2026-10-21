@@ -28,8 +28,12 @@ export function canonicalQuats() {
 }
 
 let lastList = null;   // 最近一次候选（React 点击缩略图 → applyCandidate(i)）
+let lastItems = null;  // 已发给界面的缩略图，点选后只改「当前用的是哪一张」
+let orientBase = null; // 这一轮候选对应的局部几何。再点另一张时从这里换，不在上一次结果上叠加
 
 export async function runOrient() {
+  orientBase = null;
+  lastItems = null;
   const part = activePart();
   if (!part) return toast('请先载入模型');
   const pos = part.geom.attributes.position.array;
@@ -99,20 +103,44 @@ function renderCandidates(list) {
       img: prevRenderer.domElement.toDataURL(),
     };
   });
+  lastItems = items;
   bus.emit('orientResults', items);
+}
+
+/* 第一次点选时记下「用户此刻看见的形状」（含视口里还没烤进几何的旋转）。
+   之后每次点选都先回到这份形状再套候选，所以换一张不会叠上一次的旋转。 */
+function ensureOrientBase(part) {
+  if (orientBase && orientBase.partId === part.id) return;
+  bakePartRotation(part);
+  orientBase = { partId: part.id, pos: new Float32Array(part.geom.attributes.position.array) };
+}
+
+function restoreOrientBase(part) {
+  const attr = part.geom.attributes.position;
+  if (attr.array.length !== orientBase.pos.length) {
+    part.geom.setAttribute('position', new THREE.BufferAttribute(orientBase.pos.slice(), 3));
+  } else {
+    attr.array.set(orientBase.pos);
+    attr.needsUpdate = true;
+  }
+  part.q.identity();
 }
 
 export function applyCandidate(idx) {
   const r = lastList && lastList[idx];
-  if (r) applyOrientation(r);
+  if (!r) return;
+  applyOrientation(r);
+  if (!lastItems) return;
+  lastItems = lastItems.map(it => ({ ...it, applied: it.idx === idx }));
+  bus.emit('orientResults', lastItems);
 }
 
 export function applyOrientation(r) {
   const part = activePart();
   if (!part) return;
   const before = capturePartSnaps(state.parts);
-  // 视口里转过的角度先烤进几何，候选四元数加在用户看见的形状上
-  bakePartRotation(part);
+  ensureOrientBase(part);
+  restoreOrientBase(part);
   const geom = part.geom;
   geom.applyQuaternion(r.q);
   geom.computeBoundingBox();
@@ -127,7 +155,6 @@ export function applyOrientation(r) {
   clearSupports(false);
   bus.emit('sliceStats', null);
   hideInspector();
-  bus.emit('orientResults', null);
   bakeActiveLayout();
   log(`已应用朝向（评分 ${r.score}）：支撑体积 ${r.supportVol.toFixed(0)}mm³，请运行逐层分析`, 'ok');
   toast('朝向已应用，请运行逐层分析');

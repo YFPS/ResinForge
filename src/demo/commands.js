@@ -3,8 +3,8 @@
 import React from 'react';
 import {
   ArrowRight, Box, Compass, Download, Eraser, Flame, FolderOpen, FolderPlus, Grid3x3, Info, Layers, Moon, MousePointer2,
-  Paintbrush, PanelLeft, Palette, Plus, RefreshCw, ScanLine, ShieldAlert, Sparkles, Spline, Sun, SunMoon,
-  Trash2, ExternalLink, Minus, TerminalSquare, Crosshair,
+  Paintbrush, Palette, Plus, RefreshCw, ScanLine, ShieldAlert, Sparkles, Spline, Sun, SunMoon,
+  Trash2, Minus, Crosshair,
 } from 'lucide-react';
 import { setMode, clearProtectedFaces } from '../core/scene.js';
 import { setHeat } from '../core/heat.js';
@@ -14,14 +14,14 @@ import {
   doCycleSupView, pickSTL, setBaseType,
 } from './actions.js';
 import { state } from '../store.js';
-import { STEPS, goStep, runTask, toggleSidebar } from './ui.js';
+import { STEPS, goStep, runTask } from './ui.js';
 import { ACCENTS, THEME_MODES, setAccent, setThemeMode } from './theme.js';
 
 const ic = Icon => React.createElement(Icon, { size: 16, strokeWidth: 1.75 });
 
-/** ctx：{ setParam, heatOn, sidebarOpen, theme: { mode, accent } }，标题随当前状态变化 */
+/** ctx：{ setParam, heatOn, theme: { mode, accent } }，标题随当前状态变化 */
 export function buildCommands(ctx) {
-  const { setParam, heatOn, sidebarOpen, theme } = ctx;
+  const { setParam, heatOn, theme } = ctx;
   return [
     ...STEPS.map((s, i) => ({
       id: 'go-' + s.id,
@@ -59,8 +59,6 @@ export function buildCommands(ctx) {
     { id: 'vmode-del', group: '视口', title: '删除支撑', keywords: ['删支撑', '删点'], icon: ic(Minus), run: () => { goStep('support'); setMode('del'); } },
     { id: 'vmode-poly', group: '视口', title: '多线段加支撑', hint: '逐点画折线，双击或回车沿线布点', keywords: ['多线段', 'polyline'], icon: ic(Spline), run: () => { goStep('support'); setMode('poly'); } },
     { id: 'heat', group: '视口', title: heatOn ? '关闭支撑热力图' : '打开支撑热力图', icon: ic(Flame), run: () => setHeat(!heatOn) },
-    { id: 'sidebar', group: '视口', title: sidebarOpen ? '收起侧栏' : '展开侧栏', icon: ic(PanelLeft), run: toggleSidebar },
-    { id: 'log', group: '视口', title: '打开或收起运行日志', icon: ic(TerminalSquare), run: () => window.dispatchEvent(new Event('demo:toggle-log')) },
     { id: 'check-update', group: '视口', title: '检查更新', hint: '仅桌面版', keywords: ['升级', '版本', '更新'], icon: ic(RefreshCw), run: () => window.dispatchEvent(new Event('studio:check-update')) },
 
     { id: 'base-join', group: '导出', title: '底板：连接底板', hint: '塔底连成一条立板，模型随板抬高', icon: ic(Layers), run: () => runTask('base-type', () => setBaseType('join', setParam)) },
@@ -91,7 +89,6 @@ export function buildCommands(ctx) {
       id: 'about', group: '其它', title: '关于 ResinForge', hint: '本地计算，不上传模型', icon: ic(Info),
       run: () => pushToast('ResinForge', '在浏览器里完成切片、朝向、支撑和 STL 导出，文件不会离开这台电脑。'),
     },
-    { id: 'legacy', group: '其它', title: '打开旧版界面', icon: ic(ExternalLink), run: () => { window.location.href = '/index.html'; } },
     { id: 'eraser-protect', group: '其它', title: '清除保护面', icon: ic(Eraser), run: clearProtectedFaces },
   ];
 }

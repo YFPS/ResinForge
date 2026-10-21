@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>安装 ResinForge</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fff;
+    --foreground: oklch(15% 0 0);
+    --text-secondary: oklch(46% 0 0);
+    --text-muted: oklch(59% 0 0);
+    --border: oklch(93.5% 0 0);
+    --muted: oklch(97.8% 0 0);
+    --accent: #0562ef;
+    --accent-strong: #074db7;
+    --danger: oklch(54% .21 25);
+    --radius-control: 18px;
+    --radius-panel: 26px;
+    --ease: cubic-bezier(.22, 1, .36, 1);
+    --spring: linear(0, 0.09, 0.27, 0.47, 0.64, 0.77, 0.86, 0.93, 0.97, 1);
+    --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #e4e4e8; }
+  body {
+    font-family: var(--font);
+    color: var(--foreground);
+    letter-spacing: -0.01em;
+    user-select: none;
+    overflow: hidden;
+  }
+  button, input { font: inherit; appearance: none; }
+  button { cursor: pointer; }
+  .app { width: 460px; height: 400px; margin: 48px auto; }
+  .card {
+    height: 100%; display: flex; flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    overflow: hidden;
+  }
+  .chrome {
+    display: flex; align-items: center; gap: 8px;
+    height: 36px; min-height: 36px; max-height: 36px; flex: 0 0 36px;
+    padding: 0 18px 0 14px;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; min-width: 0; height: 100%; }
+  .brand img { width: 16px; height: 16px; border-radius: 4px; }
+  .brand b { font-size: 12px; font-weight: 500; letter-spacing: -0.01em; color: var(--text-muted); }
+  .ver { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+  .spacer { flex: 1; height: auto; }
+  .close {
+    width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+    padding: 0; border: 0; border-radius: 50%;
+    background: none; color: var(--text-secondary); cursor: default;
+  }
+  .close:hover { background: #c42b1c; color: #fff; }
+  .close:active { background: #a92418; color: #fff; }
+  .stage { position: relative; flex: 1; min-height: 0; }
+  .pane {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    padding: 14px 22px 18px;
+    opacity: 0; transform: translateY(8px);
+    pointer-events: none;
+  }
+  .pane.on {
+    opacity: 1; transform: none; pointer-events: auto;
+    animation: panein .42s var(--spring);
+  }
+  #busy { justify-content: center; }
+  @keyframes panein { from { opacity: 0; transform: translateY(8px); } }
+  .hero { display: flex; gap: 16px; align-items: center; }
+  .hero > div { flex: 1; min-width: 0; }
+  .mark { width: 64px; height: 64px; border-radius: 18px; flex: none; }
+  h1 { margin: 0; font-size: 26px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.15; }
+  .lead { margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.5; }
+  .group {
+    margin-top: 20px;
+    padding: 14px;
+    border-radius: var(--radius-panel);
+    background: var(--muted);
+  }
+  .label { display: block; margin: 0 0 8px; font-size: 14px; font-weight: 500; }
+  .pathrow { display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 8px; align-items: center; }
+  input[type="text"] {
+    width: 100%; height: 44px; min-width: 0; padding: 0 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--foreground);
+    font-size: 13px; user-select: text;
+  }
+  input:focus { outline: none; }
+  input:focus-visible, button:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--accent-strong) 72%, transparent);
+    outline-offset: 0;
+  }
+  .browse, .secondary, .primary {
+    height: 44px; border-radius: var(--radius-control); font-size: 14px; font-weight: 500;
+    transition: background .16s var(--ease), opacity .16s var(--ease), box-shadow .16s var(--ease);
+  }
+  .browse, .secondary {
+    border: 1px solid var(--border); background: var(--surface); color: var(--foreground);
+  }
+  .browse:hover, .secondary:hover { background: var(--muted); }
+  .primary { border: 1px solid var(--foreground); background: var(--foreground); color: #fff; }
+  .primary:hover:not(:disabled) { opacity: .91; }
+  .primary:active:not(:disabled) { opacity: .84; }
+  .primary:disabled, .browse:disabled { opacity: .52; cursor: progress; }
+  .note { margin: 8px 2px 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+  .where {
+    margin: 0; padding: 0 2px;
+    font-size: 13px; line-height: 1.45; word-break: break-all; user-select: text;
+  }
+  .err { margin: 8px 2px 0; color: var(--danger); font-size: 13px; line-height: 1.45; }
+  .foot {
+    margin-top: auto;
+    display: grid; grid-template-columns: 1fr 1.35fr; gap: 10px;
+    padding-top: 16px;
+  }
+  .track { height: 6px; border-radius: 999px; background: #fff; overflow: hidden; }
+  .meter {
+    width: 36%; height: 100%; border-radius: inherit; background: var(--accent);
+    animation: slide 1.05s var(--ease) infinite;
+  }
+  @keyframes slide { from { transform: translateX(-130%); } to { transform: translateX(340%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .pane, .meter, .close, .browse, .secondary, .primary { animation: none; transition: none; }
+    .pane { transform: none; }
+    .meter { width: 100%; opacity: .65; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+    <header class="chrome" id="drag">
+      <div class="brand"><img id="mark" alt="" /><b>ResinForge</b><span class="ver">0.3.3</span></div>
+      <div class="spacer"></div>
+      <button class="close" id="close" type="button" aria-label="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+          <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor" stroke-width="1"/>
+        </svg>
+      </button>
+    </header>
+    <div class="stage">
+      <section class="pane on" id="ask">
+        <div class="hero">
+          <img class="mark" id="hero" alt="" />
+          <div>
+            <h1>安装 ResinForge</h1>
+            <p class="lead">光固化自动支撑。<br />朝向、分析和支撑都在这台电脑上完成。</p>
+          </div>
+        </div>
+        <div class="group">
+          <label class="label" for="path">安装位置</label>
+          <div class="pathrow">
+            <input id="path" type="text" spellcheck="false" autocomplete="off" />
+            <button class="browse" id="browse" type="button">浏览</button>
+          </div>
+          <p class="note">当前用户目录，无需管理员权限。桌面会放一个快捷方式。</p>
+          <p class="err" id="err" hidden></p>
+        </div>
+        <div class="foot">
+          <button class="secondary" id="cancel" type="button">取消</button>
+          <button class="primary" id="install" type="button">安装</button>
+        </div>
+      </section>
+      <section class="pane" id="busy">
+        <div class="hero">
+          <img class="mark" id="hero2" alt="" />
+          <div>
+            <h1>正在安装</h1>
+            <p class="lead">正在写入程序文件。</p>
+          </div>
+        </div>
+        <div class="group">
+          <div class="track"><div class="meter"></div></div>
+          <p class="note">如果软件开着，会先关掉它。</p>
+        </div>
+      </section>
+      <section class="pane" id="done">
+        <div class="hero">
+          <img class="mark" id="hero3" alt="" />
+          <div>
+            <h1>可以开始了</h1>
+            <p class="lead">ResinForge 已安装到这台电脑。</p>
+          </div>
+        </div>
+        <div class="group">
+          <p class="label">安装位置</p>
+          <p class="where" id="where"></p>
+        </div>
+        <div class="foot">
+          <button class="secondary" id="finish" type="button">关闭</button>
+          <button class="primary" id="open" type="button">打开 ResinForge</button>
+        </div>
+      </section>
+    </div>
+    </div>
+  </div>
+<script>
+  document.addEventListener('contextmenu', e => e.preventDefault());
+  const $ = id => document.getElementById(id);
+  const icon = '../src-tauri/icons/icon.png';
+  for (const id of ['mark', 'hero', 'hero2', 'hero3']) $(id).src = icon;
+  window.ipc = { postMessage(raw) {
+    const msg = JSON.parse(raw);
+    if (msg.t === 'ready') window.__host({ t: 'path', path: 'C:\\Users\\ee960\\AppData\\Local\\ResinForge' });
+    if (msg.t === 'install') setTimeout(() => window.__host({ t: 'done' }), 700);
+    if (msg.t === 'browse') window.__host({ t: 'path', path: msg.path });
+  }};
+  const send = msg => window.ipc.postMessage(JSON.stringify(msg));
+  $('drag').addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    send({ t: 'drag' });
+  });
+  const show = name => {
+    for (const id of ['ask', 'busy', 'done']) $(id).classList.toggle('on', id === name);
+  };
+  const setPath = value => {
+    $('path').value = value;
+    $('where').textContent = value;
+  };
+  $('close').onclick = () => send({ t: 'close' });
+  $('cancel').onclick = () => send({ t: 'close' });
+  $('finish').onclick = () => send({ t: 'close' });
+  $('browse').onclick = () => send({ t: 'browse', path: $('path').value });
+  $('install').onclick = () => {
+    $('err').hidden = true;
+    $('install').disabled = true;
+    $('browse').disabled = true;
+    $('path').disabled = true;
+    setPath($('path').value);
+    show('busy');
+    send({ t: 'install', path: $('path').value });
+  };
+  $('open').onclick = () => send({ t: 'open' });
+  window.__host = msg => {
+    if (msg.t === 'path') setPath(msg.path);
+    if (msg.t === 'busy') show('busy');
+    if (msg.t === 'done') show('done');
+    if (msg.t === 'err') {
+      show('ask');
+      $('install').disabled = false;
+      $('browse').disabled = false;
+      $('path').disabled = false;
+      $('err').hidden = false;
+      $('err').textContent = msg.message || '安装没有完成';
+    }
+  };
+  send({ t: 'ready' });
+  const page = (location.hash || '#ask').slice(1);
+  if (page === 'busy' || page === 'done' || page === 'err') {
+    if (page === 'err') window.__host({ t: 'err', message: '安装没有完成' });
+    else show(page);
+  }
+</script>
+</body>
+</html>

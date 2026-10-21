@@ -164,7 +164,9 @@ export function Card({ title, description, media, action, avatar, meta, status, 
       {card}
       <AnimatePresence>
         {(open || returning) && <Dialog.Portal key="quick-look" forceMount>
-          <AnimatePresence>{open && <Dialog.Overlay key="overlay" asChild forceMount><motion.div className={styles.overlay} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: reduced ? fade : { duration: duration.exit, ease: [...ease.standard] } }} transition={reduced ? fade : { duration: duration.standard, ease: [...ease.enter] }} /></Dialog.Overlay>}</AnimatePresence>
+          {/* 本地补丁（React 18）：AnimatePresence 直接包 Radix Dialog.Overlay 会给函数组件传 ref，触发 ref 警告；
+              改为直接渲染静态 Overlay（遮罩不需要随卡片 morph 动画）。重跑 fetch-arc 后需重放。 */}
+          {open && <Dialog.Overlay key="overlay" className={styles.overlay} forceMount />}
           <Dialog.Content asChild forceMount {...(description ? {} : { "aria-describedby": undefined })}>
             <motion.div
               className={styles.panel}

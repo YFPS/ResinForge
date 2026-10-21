@@ -1,10 +1,10 @@
 [package]
 name = "resinforge"
-version = "0.3.0"
+version = "0.3.3"
 description = "ResinForge 光固化自动支撑"
 authors = ["ResinForge"]
-license = ""
-repository = ""
+license = "MIT"
+repository = "https://github.com/YFPS/ResinForge"
 edition = "2024"
 rust-version = "1.90"
 

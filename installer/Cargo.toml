@@ -1,0 +1,12 @@
+[package]
+name = "resinforge-setup"
+version = "0.3.3"
+edition = "2021"
+description = "ResinForge 安装界面"
+
+[dependencies]
+base64 = "0.22"
+rfd = "0.16"
+serde_json = "1"
+tao = "0.37"
+wry = "0.57"

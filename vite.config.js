@@ -20,10 +20,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
+        // 根路径转到 Studio。唯一的应用界面是 studio.html。
         main: path.resolve(root, 'index.html'),
-        demo: path.resolve(root, 'demo.html'),
         studio: path.resolve(root, 'studio.html'),
-        login: path.resolve(root, 'login.html'),
       },
     },
   },

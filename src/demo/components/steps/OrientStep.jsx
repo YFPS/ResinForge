@@ -66,14 +66,15 @@ export default function OrientStep({ hideQuality = false, protectInToolbar = fal
             exit={{ height: 0, opacity: 0, transition: { duration: motionTokens.duration.exit, ease: [...motionTokens.ease.exit] } }}
             transition={reduced ? { duration: 0 } : motionTokens.spring.smooth}
           >
-            <Section title="候选朝向" aside={<span className="secMeta">点一下即应用</span>}>
+            <Section title="候选朝向" aside={<span className="secMeta">点选即换上</span>}>
               <div className="candGrid">
                 {cands.map(c => (
                   <button
                     key={c.idx}
                     type="button"
-                    className={'cand' + (c.isBest ? ' best' : '')}
+                    className={'cand' + (c.isBest ? ' best' : '') + (c.applied ? ' on' : '')}
                     disabled={!!busy}
+                    aria-pressed={!!c.applied}
                     onClick={() => runTask('orient-apply', () => doApplyCandidate(c.idx))}
                     aria-label={`应用评分 ${Math.round(c.score)} 的朝向`}
                     title={`支撑体积 ${c.supportVol?.toFixed?.(1)} mm³ · 陡峭悬空 ${c.steepArea?.toFixed?.(1)} mm²`}

@@ -34,19 +34,18 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 
 ## 项目结构
 
+界面只保留 Studio（`studio.html`）。`index.html` 只做跳转。旧 Arco 界面、Arc 侧栏壳（`demo.html`）、资源库、项目库和登录页已从本分支删除。`src/demo/` 留下的是 Studio 仍在用的步骤面板、命令和主题，不是另一套界面。
+
 ```text
 resin-support-web/
-├── index.html          # Vite 入口 · 旧 Arco 界面（<div id="root">）
-├── demo.html           # Vite 入口 · 新 Arc UI 界面（/demo.html）
+├── index.html          # 跳转到 studio.html
+├── studio.html         # 唯一应用入口
 ├── package.json        # 依赖与脚本（dev/build/preview）
-├── vite.config.js      # @ 别名 + 双入口 + preserveSymlinks + 轮询 watch（网络盘兼容）+ Worker 按 ES 模块打包
+├── vite.config.js      # @ 别名 + Studio 入口 + preserveSymlinks + 轮询 watch（网络盘兼容）+ Worker 按 ES 模块打包
 ├── dev.bat / build.bat # UNC 网络盘启动器（pushd 映射盘符后 npm run）
 ├── scripts/
 │   └── fetch-arc.mjs   # 从 uiarc.dev registry 拉取 Arc 组件到 src/components/arc/（含补丁登记）
 ├── src/
-│   ├── main.jsx        # 旧界面 React 根 + Arco 样式 + 全局调试口（window.state/THREE/__dbg）
-│   ├── App.jsx         # 旧界面 Layout：左侧参数栏 + 右侧 3D 视口
-│   ├── styles.css      # 旧界面自定义样式（深色配色）
 │   ├── store.js        # params（全部工艺参数默认值）+ state + bus（迷你 pub/sub）
 │   ├── core/           # 框架无关算法层（不得 import React 组件）
 │   │   ├── scene.js    # 渲染器/相机/OrbitControls/灯光/平台网格/材质/指针交互/拖放
@@ -65,33 +64,30 @@ resin-support-web/
 │   │   ├── supportKit.js      # 支撑塔构件：接触端方向候选 + 短连接桥接（bridgeSpan / bridgeToSurface）+ 几何合并
 │   │   ├── collide.js  # 模型 BVH：射线/点距/胶囊体/锥台净空 + LDI 实体判定
 │   │   └── stl.js      # 二进制 STL 导出
-│   ├── components/     # 旧界面 Arco UI 卡片（每卡片对应左栏一个区块）
-│   │   ├── Viewport.jsx    # 3D 视口 + 模式栏 + 日志面板 + 层检查器 + 拖放提示
-│   │   ├── MachineCard.jsx / ModelCard.jsx / OrientCard.jsx / ProtectCard.jsx
-│   │   ├── SliceCard.jsx / SupportCard.jsx / ExportCard.jsx
-│   │   └── Card.jsx / useParams.js  # 卡片壳与参数绑定钩子
 │   ├── components/arc/ # Arc UI 组件源码（registry 原样落盘，见 scripts/fetch-arc.mjs）
-│   └── demo/           # 新界面（Arc UI 版），与旧界面共用 core / store
+│   ├── demo/           # Studio 共用的步骤面板与操作层（没有独立页面）
+│   │   ├── ui.js       # UI 状态：五个流程步骤、当前步骤、进行中任务（runTask）、各步完成情况
+│   │   ├── bridge.js   # bus 订阅 hook（useBus / useBusLatest / useBusValue）、toast 队列、参数绑定
+│   │   ├── actions.js  # 集中操作层（载模型/朝向/分析/支撑/导出）
+│   │   ├── commands.js # Ctrl/⌘ K 命令清单
+│   │   ├── theme.js / machines.js  # 外观（主题 + 强调色）与机型预设，均为持久化的环境配置 store
+│   │   ├── demo.css    # 参数积木与浮层样式（视觉 token 全部取自 foundation.css）
+│   │   └── components/ # TitleBar / MachinePicker / StepPanel / fields / Simplifier /
+│   │                   # steps/（OrientStep / AnalyzeStep / SupportStep / ExportStep）/
+│   │                   # CommandPalette / ToastHost
+│   └── studio/         # Studio 界面：浮动卡片壳、视口、底栏工具坞、更新
 │       ├── main.jsx    # 入口：字体 + foundation.css + 主题 / 机型初始化 + 全局调试口
-│       ├── DemoApp.jsx # 骨架：Arc Tabs 根包住顶栏（流程导航）+ 侧栏（步骤面板）+ 视口 + 命令面板 + toast
-│       ├── ui.js       # UI 状态：五个流程步骤、当前步骤、侧栏开合、进行中任务（runTask）、各步完成情况
-│       ├── bridge.js   # bus 订阅 hook（useBus / useBusLatest / useBusValue）、toast 队列、参数绑定
-│       ├── actions.js  # 集中操作层（载模型/朝向/分析/支撑/导出），侧栏与命令面板共用
-│       ├── commands.js # Ctrl/⌘ K 命令清单
-│       ├── theme.js / machines.js  # 外观（主题 + 强调色）与机型预设，均为持久化的环境配置 store
-│       ├── demo.css    # 仅布局层样式（视觉 token 全部取自 foundation.css）
-│       └── components/ # TitleBar（桌面版自定义标题栏，仅 Tauri 环境渲染） / TopBar / MachinePicker / Sidebar / StepPanel / fields（分区与参数积木）/
-│                       # steps/（ModelStep / OrientStep / AnalyzeStep / SupportStep / ExportStep）/
-│                       # ViewportStage / ModeBar / StatsCard / LayerInspector / LogPanel / CommandPalette / ToastHost
+│       ├── StudioApp.jsx / shells/ShellC.jsx / StageCanvas.jsx / ParamPanel.jsx
+│       └── pieces.jsx / studio.css / updater.js / UpdateHost.jsx
 ├── src-tauri/          # Tauri 桌面壳（Rust）：无边框窗口 + NSIS 安装包（见「桌面版（Tauri）」）
-│   ├── tauri.conf.json # 窗口 / 构建 / 打包配置：decorations: false、入口 demo.html、1440×920、NSIS
+│   ├── tauri.conf.json # 窗口 / 构建 / 打包配置：decorations: false、入口 studio.html、1440×920、NSIS
 │   ├── capabilities/   # 权限：core:default + 窗口控制（拖动 / 最小化 / 最大化 / 关闭）
 │   ├── icons/          # 应用图标（npx tauri icon 生成）
 │   └── src/            # Rust 入口（main.rs → resinforge_lib::run，tauri-plugin-log 调试日志）
 └── AGENTS.md           # 本文件
 ```
 
-**core ↔ React 边界**：core 只读 `params.*`、只经 `bus.emit` 发 UI 事件；React 组件订阅 bus 渲染（`log`/`toast`/`progress`/`modelInfo`/`sliceStats`/`supStats`/`orientResults`/`inspector`/`layerLabel`/`mode`/`dropHint`）。层检查器的 2D canvas 由 React 提供元素引用（`setLayerCanvas`），绘制保留在 core。
+**core ↔ React 边界**：core 只读 `params.*`、只经 `bus.emit` 发 UI 事件；React 组件订阅 bus 渲染（`log`/`toast`/`progress`/`modelInfo`/`sliceStats`/`supStats`/`orientResults`/`inspector`/`layerLabel`/`mode`/`dropHint`）。层检查器绘制仍在 core（`setLayerCanvas`），Studio 当前没有挂这块 2D 画布。
 
 ---
 
@@ -100,11 +96,10 @@ resin-support-web/
 ```bash
 npm install       # 首次
 npm run dev       # 开发服务器 http://127.0.0.1:8123
-npm run build     # 产物到 dist/（双入口：index.html + demo.html）
+npm run build     # 产物到 dist/（index.html 跳转 + studio.html）
 ```
 
-- 旧界面：`http://127.0.0.1:8123/`
-- 新界面（Arc UI 版）：`http://127.0.0.1:8123/demo.html`
+- 工作室界面：`http://127.0.0.1:8123/`（转到 `studio.html`）
 
 ### 桌面版（Tauri 无边框窗口）
 
@@ -114,8 +109,8 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
 ```
 
 - 工具链（首次需要）：Rust（rustup，stable-x86_64-pc-windows-msvc）+ VS 2022 Build Tools（Microsoft.VisualStudio.Workload.VCTools 工作负载）；WebView2 系统自带；NSIS 由 Tauri bundler 自动下载。首次编译约 2 分钟（346 个 crate）。
-- 窗口：`decorations: false` 无边框 + 自绘标题栏（`src/demo/components/TitleBar.jsx`，36px 独立一条：左 = 品牌图标 + 名称，右 = 最小化 / 最大化 / 关闭）；入口是 `demo.html`（新界面），1440×920（最小 1024×680）；产品名 ResinForge、标识符 `com.resinforge.app`。
-- 标题栏只在 Tauri 环境渲染（`'__TAURI_INTERNALS__' in window`，即 `TitleBar.jsx` 导出的 `IN_TAURI`）——浏览器版零回归；桌面版顶栏的品牌字标与斜分隔收起（`.app--desktop .topbar .brand`），避免与标题栏重复。
+- 窗口：`decorations: false` 无边框 + 自绘标题栏（`src/demo/components/TitleBar.jsx`，36px 独立一条：左 = 品牌图标 + 名称，右 = 最小化 / 最大化 / 关闭）；入口是 `studio.html`，1440×920（最小 1024×680）；产品名 ResinForge、标识符 `com.resinforge.app`。
+- 标题栏只在 Tauri 环境渲染（`'__TAURI_INTERNALS__' in window`，即 `TitleBar.jsx` 导出的 `IN_TAURI`）——浏览器版零回归；桌面版浮动条上的品牌标记收起（`.stu--desktop .stuBrand`），避免与标题栏重复。
 - 拖动：`data-tauri-drag-region` 只对**直接标记的元素**生效——`.titlebar` 与品牌区标记，纯视觉子元素 `pointer-events: none`，按钮区天然可点；双击最大化 / 还原由 Tauri 内置；窗口按钮走 `@tauri-apps/api/window` 的 `minimize` / `toggleMaximize` / `close`，权限在 `src-tauri/capabilities/default.json`（`core:window:allow-*`），最大化状态的图标切换靠 `onResized` + `isMaximized`。
 - `vite.config.js` 的 `server.strictPort: true`：devUrl 固定 8123，端口漂移会连不上。
 - 导出文件：桌面版 WebView2 里 `<a download>` 不会保存文件——`core/stl.js` 的 `exportSTL` 按 `IS_TAURI`（`__TAURI_INTERNALS__` 检测）分支：桌面版走 `@tauri-apps/plugin-dialog` 的 `save()`（系统保存对话框，默认文件名 + STL 过滤）→ `@tauri-apps/plugin-fs` 的 `writeFile()`；对话框选中的路径由 dialog 插件**自动加进 fs scope**（插件内置行为，见其 commands.rs），capabilities 里只额外需要 `fs:allow-write-file`（与 `dialog:default` 并列；`fs:default` 本身只有 App 目录读权限）。两个插件动态 import，浏览器版不进主包。`exportSTL` 返回是否真的写出（取消对话框 / 无内容 → false），侧栏导出步骤只在写出时打完成标记；浏览器版照旧 blob 下载。
@@ -124,7 +119,7 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
 
 ### 网络盘（UNC 路径）注意事项
 
-项目位于 `\\Nas518dbd\SHARE\resin-support-web` 之类的 UNC 路径时：
+项目位于 `\\server\share\resin-support-web` 之类的 UNC 路径时：
 
 - cmd 不支持 UNC 作工作目录 → 用根目录的 `dev.bat` / `build.bat`（内部 `pushd %~dp0` 映射盘符）。
 - vite 有两个 UNC 相关 bug 需要绕：`vite.config.js` 中 `resolve.preserveSymlinks: true`（阻止 realpath 把映射盘符还原成 UNC 后被 posix 归一化压垮路径）与 `server.watch.usePolling`（网络盘文件监听不可靠）。
@@ -160,9 +155,9 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
 
 ---
 
-## 新界面（Arc UI 版 · /demo.html）
+## Studio 界面（`/studio.html`）
 
-**定位**：与旧 Arco 界面并存的试作版，共用同一套 `core/` 与 `store.js`（`params` / `state` / `bus` 完全一致），只换 UI 外壳。旧界面 `index.html` 不受影响，可随时对照。
+**定位**：本分支唯一的应用界面。外壳在 `src/studio/`（浮动卡片、视口、底栏工具坞）。朝向 / 分析 / 支撑 / 导出的参数面板、命令面板、主题和机型仍在 `src/demo/`，由 `ParamPanel` 和 `StudioApp` 挂进来。旧 Arco 界面和独立的 `demo.html` 侧栏壳已删除。
 
 - **组件来源**：[Arc UI](https://uiarc.dev)（shadcn registry，`npx shadcn add @uiarc/<name>` 或直接取 `https://uiarc.dev/r/<name>.json`）。**不依赖 Tailwind**——CSS Modules + CSS 变量。依赖 `motion` + `lucide-react` + 若干 `@radix-ui/*`。Arc 的组合规则（官方 skill：`https://uiarc.dev/r/skills/arc/<file>`）要点：只用文档化的 props、每个面一个主按钮、语义 token、字重只用 400/500、不写大写 / 眉标 / 破折号文案、不自绘焦点环。App Shell 类侧栏（`sidebar-rail` / `workspace-sidebar` 等）是 **Pro** 组件，规则禁止仿造其源码，侧栏用免费组件组合。
 - **更新组件**：`node scripts/fetch-arc.mjs [名字…]`——不带参数拉 `ITEMS` 全部，带参数只拉指定组件；**默认跳过已存在的文件**（保护本地补丁与共享依赖），`--force` 才覆盖。`PATCHED` 登记了对源码的就地修改，`--force` 后需手动重放：button / badge / alert（React 18 的 forwardRef 兼容）、slider（分隔符 key）、number-field（scrub 绑到数值区）、command-palette（中文文案 + 平台快捷键 ⌘ K / Ctrl K）。
@@ -170,18 +165,17 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
 - **CSS 覆盖顺序**：Arc 组件的 CSS 模块在 `demo.css` **之后**加载，覆盖其类名（如 Tabs 触发器的 `min-width`、Button 的尺寸）时一律用更高的选择器优先级（`.stepNav .stepTab`、`.topbar .iconBtn`），不依赖先后顺序。
 - **动效**：一律用 `motionTokens`（`spring.smooth` 面板 / 侧栏宽度、`spring.snappy` 小指示器、`blur.*` 文字交叉淡入），每处都有 `useReducedMotion` 分支。
 - **字体**：`@fontsource-variable/geist`（品牌字标）+ `@fontsource-variable/inter`（正文）+ 中文回落（PingFang SC / Microsoft YaHei）。
-- **骨架**（`DemoApp.jsx`）：**顶栏 + 侧栏是同底色、无分隔线的「L 形外框」，3D 视口是外框里唯一的圆角画布**（`--radius-panel`，右 / 下各留 12px 槽）；统计卡 / 层检查器 / 日志是画布上的浮层。整个应用包在一个 Arc `Tabs` 根里：流程导航（`TabsList`）在顶栏，五个步骤面板（`TabsContent`）在侧栏，aria-controls 与方向感知的滑入动画由 Tabs 负责。
-- **流程模型**（`demo/ui.js`）：五步 **模型 → 朝向 → 分析 → 支撑 → 导出**，可任意跳步（朝向可跳过；Arc `stepper` 只允许回到已完成的步骤，不适合当导航，故用 Tabs）。各步完成情况：模型 / 分析 / 支撑读 core `state`，朝向（应用候选）与导出（真的写出文件）由操作层打标记；换模型、分析失效、支撑变化时自动重算。`runTask(key, fn)` 统一跑长任务：同一时间只跑一个，按钮按 key 显示进行中，异常转成提示。
-- **顶栏**（`TopBar.jsx`）：左 = 侧栏开合（38px 图标按钮）· 品牌 / 当前模型（Arc `DropdownMenu`：打开 STL、切换演示模型）；中 = 流程导航（窗口正中，序号圈在完成后变勾）；右 = 打印机（`MachinePicker`：Arc Popover + Select + NumberField + Input，内置 13 款机型 / 自定义 / 命名保存）· 命令搜索（`Ctrl K` / `⌘ K`）· Arc `theme-switch`（iconOnly，`rise` 页面过渡，`document.startViewTransition`）。顶栏控件统一 38px 高；断点按实测内容宽度逐级收起：1360 收搜索文字 → 1220 收品牌字标与打印机名 → 980 导航只留序号（完成态改用底色，不换勾，免得一排勾分不清）→ 900 侧栏改浮层抽屉 → 640 导航换到第二行。
-- **侧栏**（`Sidebar.jsx` + `StepPanel.jsx` + `steps/*`）：只显示当前步骤——标题与一句说明 → Arc `ScrollArea` 参数区（`fade={20}`，只在确有被遮内容的一侧渐隐）→ 固定底栏。参数按「分区」组织（`fields.jsx`：`Section` 标题 + 说明，分区间发丝线；数值框两列栅格，标签可拖动 scrub；开关行左文右控件；2~4 选一用撑满整行的 SegmentedControl），结构参数按功能分组全部可见（支撑塔：格架 / 柱与展宽 / 十字针 / 基础带）。**底栏规则**：左 = 这一步的主操作（恒为主按钮，做完后文案变「重新…」；支撑与导出用 Arc `SplitButton` 收纳变体：只补孤岛 / 按参数重建 / 清空、仅导出支撑），右 = 「下一步：xx」（未完成为幽灵按钮，完成后加描边）；长任务时 core 的 `progress` 事件以 Arc `Progress` 在按钮上方展开。底栏按 320px 一行设计，`flex-wrap` 兜底。侧栏宽 360 + 12 槽，可收起（宽度 spring，收起后 inert），**滚动条药丸距画布边框 16px**；窄屏抽屉的右侧圆角 26px，轨道上下端距边 ≥ 79px，不在圆角收窄区内（几何已验算）。
-- **各步要点**：模型——当前模型卡片（面数、尺寸、能否放进当前打印机板面），演示模型用 RadioCards；朝向——采样数（快速 / 标准 / 精细）、保护面（「涂画保护面」开关与视口左上角模式切换是同一个 core `mode`）、**候选缩略图直接在面板里点选应用**；分析——结果条（层数 / 孤岛 / 最大截面）、热力图开关（视口统计卡：还没生成支撑时有孤岛就标「N 处孤岛待支撑」；生成之后只在仍有孤岛没被结构托住时标「N 处孤岛仍悬空」，全部托住则收起）；支撑——**模板**（细 / 中细 / 中粗 / 粗，**选中即套用**；选项从当前参数反推，参数与某套模板完全一致才点亮、手动改过任一项则都不点亮——旧实现选项是面板本地状态，选了不点「套用」就点「重新生成」用的仍是上一次的参数，切换步骤回来又显示「细」）、**支撑参数**（主干直径全联动 / 接触直径 / 接触深度 / 支撑间距 / 与模型最小间距 / 小支撑缩放比例 6 个主参数，2026-10-14 简化）、**高级设置**（折叠区：格架 / 柱与展宽 / 十字针 / 基础带 / 布点 / 接触）、短小支撑开关（连不上格架的点用十字短杆，先于分叉 / 标红）、手动加 / 删点（同一个 `mode`）、**没分析过会先自动分析再生成**；导出——底板类型 RadioCards（连接底板 / 自动底板；连接底板档下的栅角 / 去掉外伸 / 底板开孔三个子开关缩进成一组）、导出内容核对、颜色图例（取 3D 材质色），导出成功在按钮上原地显示「已导出」。
-- **命令面板**（`CommandPalette.jsx`）：Arc `command-palette` 块放在裸 Radix Dialog 里（焦点圈定 / Esc / 焦点归还由 Radix 负责，遮罩复用 Arc Dialog 的样式类）——不套 Arc `DialogContent`，否则面板外再包一层带标题的卡片形成卡中卡。命令含前往步骤、模型、流程、支撑、视口、导出、外观（浅色 / 深色 / 跟随系统、8 种强调色）、运行日志开合；会产生结果的命令顺带把侧栏切到对应步骤，朝向候选到达时也会自动切到「朝向」。
+- **骨架**（`StudioApp.jsx` + `shells/ShellC.jsx`）：浮动卡片压在整幅 3D 视口上。阶段条切换五步；朝向 / 分析 / 支撑 / 导出打开 `ParamPanel`，里面仍是原来的步骤面板。命令面板（`Ctrl K` / `⌘ K`）和 toast 由 `StudioApp` 挂上。
+- **流程模型**（`demo/ui.js`）：五步 **模型 → 朝向 → 分析 → 支撑 → 导出**，可任意跳步（朝向可跳过）。各步完成情况：模型 / 分析 / 支撑读 core `state`，朝向（应用候选）与导出（真的写出文件）由操作层打标记；换模型、分析失效、支撑变化时自动重算。`runTask(key, fn)` 统一跑长任务：同一时间只跑一个，按钮按 key 显示进行中，异常转成提示。
+- **参数面板**（`StepPanel.jsx` + `steps/*` + `fields.jsx`）：标题与一句说明 → Arc `ScrollArea` 参数区 → 底栏。参数按「分区」组织（`Section` 标题 + 说明；数值框两列栅格，标签可拖动 scrub；开关行左文右控件；2~4 选一用撑满整行的 SegmentedControl）。**底栏规则**：左 = 这一步的主操作（恒为主按钮，做完后文案变「重新…」；支撑与导出用 Arc `SplitButton` 收纳变体：只补孤岛 / 按参数重建 / 清空、仅导出支撑），右 = 「下一步：xx」。长任务时 core 的 `progress` 事件以 Arc `Progress` 在按钮上方展开。
+- **各步要点**：模型在 Studio 的零件卡片和工具坞里完成（打开 / 追加文件、演示模型、简化），没有单独的模型步骤面板。朝向——采样数（快速 / 标准 / 精细）、保护面（「涂画保护面」与视口模式是同一个 core `mode`）、**候选缩略图直接在面板里点选应用**；分析——结果条（层数 / 孤岛 / 最大截面）、热力图开关；支撑——**模板**（细 / 中细 / 中粗 / 粗，**选中即套用**；选项从当前参数反推，参数与某套模板完全一致才点亮、手动改过任一项则都不点亮）、**支撑参数**（主干直径全联动 / 接触直径 / 接触深度 / 支撑间距 / 与模型最小间距 / 小支撑缩放比例 6 个主参数）、**高级设置**（折叠区：格架 / 柱与展宽 / 十字针 / 基础带 / 布点 / 接触）、短小支撑开关、手动加 / 删点、**没分析过会先自动分析再生成**；导出——底板类型 RadioCards（连接底板 / 自动底板；连接底板档下的栅角 / 去掉外伸 / 底板开孔三个子开关缩进成一组）、导出内容核对、颜色图例（取 3D 材质色），导出成功在按钮上原地显示「已导出」。
+- **命令面板**（`CommandPalette.jsx`）：Arc `command-palette` 块放在裸 Radix Dialog 里（焦点圈定 / Esc / 焦点归还由 Radix 负责，遮罩复用 Arc Dialog 的样式类）——不套 Arc `DialogContent`，否则面板外再包一层带标题的卡片形成卡中卡。命令含前往步骤、模型、流程、支撑、视口、导出、外观（浅色 / 深色 / 跟随系统、8 种强调色）；会产生结果的命令顺带切到对应步骤，朝向候选到达时也会自动切到「朝向」。
 - **接线方式**（`demo/bridge.js`）：`useBus` / `useBusState` 订阅 core 事件；**`useBusLatest`** 在模块加载时（早于 `initScene`）就缓存 `modelInfo` / `sliceStats` / `supStats` / `orientResults` / `heat` / `mode` / `progress` 的最新 payload——步骤面板按需挂载，晚挂载也能拿到当前值；`useBusValue(events, read)` 在事件触发时重读 core `state`。**`useParams()` 是全局订阅**：任何地方 `setParam` 都让所有用到参数的组件重渲染（命令面板切结构模式，侧栏立刻跟上）。
-- **外观主题**（`demo/theme.js`）：浅色 / 深色 / 跟随系统 + 强调色，store 由顶栏 ThemeSwitch 与命令面板共用；切换时**同步 three.js 的 `scene.background` / `prevScene.background` / `modelMat.color`**（3D 不读 CSS 变量：深色视口近黑 + 模型浅灰，浅色视口浅灰 + 模型压深一档），持久化到 `localStorage`；`demo.html` 内联首帧脚本按存储值预设 `data-theme` / `data-accent` 避免闪一下默认配色。
+- **外观主题**（`demo/theme.js`）：浅色 / 深色 / 跟随系统 + 强调色，store 由 Studio 的主题按钮与命令面板共用；切换时**同步 three.js 的 `scene.background` / `prevScene.background` / `modelMat.color`**（3D 不读 CSS 变量：深色视口近黑 + 模型浅灰，浅色视口浅灰 + 模型压深一档），持久化到 `localStorage`；`studio.html` 内联首帧脚本按存储值预设 `data-theme` / `data-accent` 避免闪一下默认配色。
 - **机器预设**（`demo/machines.js`）：内置 13 款常见光固化机型（参数按厂商公开规格整理），**选中即写入** `plateX` / `plateZ` / `pixelUm`；选「自定义…」**不改变当前参数**，便于以现有机器为模板微调；数值框步长 1 但显示保留一位小数（规格多为 218.9 这类数，按步长精度会显示成 219）。自定义机型可命名保存到 `localStorage`（`resinforge:machines.v1`）并删除；**当前生效的机器参数也持久化**（`resinforge:machine.current`，`initMachine(params)` 在首帧前写回）——机器属「环境配置」，与「刷新即丢」的模型 / 保护面 / 支撑区别对待。选中项用显式 `selectedId` 记录而非按参数反推，否则参数相同的自定义机型会被内置机型顶掉。
 - **键盘焦点环**：Arc 默认 `outline-offset: 2px`，而 **Chrome 在 offset 为正时不让 `outline` 跟随 `border-radius`**，大圆角控件外会套出一圈方框（仅键盘 Tab 导航时可见）。`demo.css` 把 `--focus-outline-offset` 归零（Arc 官方留的 `:root` 调优口），焦点环紧贴控件、跟随圆角。
-- **视口**：`initScene(canvas)` 与旧界面同一入口（内部自动 `loadDemo('knot')`）。core 只监听 window `resize`，侧栏开合改变视口宽度而窗口不变，`ViewportStage` 用 ResizeObserver 每帧至多补发一次 `resize`，渲染器跟着侧栏动画走。视口是 `container-type: size` 容器：画布宽 < 760px 时统计卡让位隐藏（结果在侧栏里都有），画布矮或窄时层检查器缩小。
-- **注意**：`initScene` 无幂等保护（与旧界面同约定），组件重挂载会重新初始化场景——开发期 HMR 重挂载会连带重置模型与支撑，验证时以整页刷新为准。
+- **视口**：`StageCanvas` 调用 `initScene(canvas)`（内部自动 `loadDemo('knot')`）。core 只监听 window `resize`，`StageCanvas` 用 ResizeObserver 在画布尺寸变化时补发 `resize`。
+- **注意**：`initScene` 无幂等保护，组件重挂载会重新初始化场景——开发期 HMR 重挂载会连带重置模型与支撑，验证时以整页刷新为准。
 
 ---
 
@@ -351,7 +345,7 @@ npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/Resi
   - **底板类型切换**（改 `setBaseType` / `baseY` / `joinLift` / 自动底板几何后必跑）：join↔auto 来回切，每步查模型位置（join = 抬高 + 板高、auto = 仅抬高）、支撑结构最低点（join 0 / auto 板顶）、自动底板几何（轮廓 = 结构投影凸包 + 等距外扩 `apOffset`（凸包顶点到轮廓边界距离 ≈ `apOffset`）、结构投影点（0.5mm 量化）全部在轮廓内、板厚 = `apHeight`、孔贯穿（孔心竖直射线 0 穿越）、栅角内缩 = 板厚 × tan 角度）、导出「仅支撑」面数与 z 范围、无落板结构时不出板（`autoPlateSpec` → null；清空支撑后底板 mesh 随之移除）。2026-10-14 轮廓版实测（环面结 206 点）：凸包 8 顶点（64×57）→ 外扩后轮廓 57 点（74×67）、距离 4.99≈`apOffset` 5、6081 个结构投影点零漏出、45 孔、板厚 [0, 1.3]；导出含板 435,350 面（zmin 0）/ 摘板 431,350 面（zmin 1.3 = 板顶）、板 4,000 面；清空支撑 → spec null。2026-10-14 实测（环面结 206 点）：join 438,294 面（zmin 0）→ auto 434,088 面（zmin 0）→ auto 摘板 431,350 面（板 2,738 面、zmin 1.3 = 板顶）→ 切回 join 438,294 面（逐位一致）；audit 未覆盖 0、`pierceExact` 0、`minima` 0、`unroutable` 0
   - **布点审计**（改布点 / 孤岛 / 兜底补点后必跑；本地脚本 `.ref/fix/shapes.js`，需在 `support.js` 临时挂点来源钩子）：12 种几何体 + 4 个演示模型 + 仓库真实模型（`.ref/hg_model.stl`、`2B - 1_12/` 的 Base / Butt / Hand_Left / Sword），逐点记来源（边缘环 / 内部 / 孤岛最低点 / 孤岛周界 / 兜底补点），量到所在图块投影边界的距离（轮廓须与布点同口径做 0.02mm 闭运算，否则三角形之间的数值缝会量出假「贴边」）、近点对（< 0.6 × 间距）、失败、未覆盖，并出图块 + 点的拼版图；只看 4 个演示模型与覆盖率会漏掉平底孤岛、尖朝下、细长带、转角这类情形
   - **布点均匀性对照**（改布点核心 / 布点参数 / 结构阶段挪点后建议跑；本地工具 `.ref/uni/`，已 gitignore）：`mk.mjs` 生成带探针的 support.js 副本（`support_dbg.js` = 当前源码；`support_dbg_wip.js` / `support_dbg_head.js` = 快照 `.ref/uni/wip/` 与已提交版，布点在主线程跑各自的 manifoldKit），探针记下每个候选的来源（边缘环 / 内部 / 兜底补点 / 孤岛最低点 / 周界点）与去留；`measure.js`（设 `window.__variant` / `__model` 或 `__stl` / `__tpl`）生成并出指标，`row.js` 一行汇总（挤点对 = 同层且三维 < 0.8 × 间距，上下两层另计；空当 = 图块面上 0.2mm 采样到最近点的三维距离；内部点管辖曲面面积 / 理想正六角面积；结构阶段挪点；被拒原因），`attrib.js` 把挤 / 稀归因，`heat3d.js` 在三维视口按局部点距给点上色（蓝挤、绿匀、红稀），`batch-*.jsonl` + `tab2.mjs` 三版本 × 8 模型 × 4 模板对照（`cdp2.mjs` 端口可设，三个版本可并行）。注意：「最近 3 点平均距离」在一维窄条上天然是 1.33 × 间距，稀点数对窄条偏多，看覆盖用空当指标。
-  - **零件库批量测试**（本地工具 `.ref/batch/`，已 gitignore；改布点 / 校验口径后建议跑）：`inventory.mjs` 扫用户零件库（`G:\88888888888888888\Project\3D打印测试模型\代打`，2750 个 STL / OBJ、97GB）→ `select.mjs` 按面数分 7 档、跨项目文件夹抽 500 件（`list.json`，排除 80 万面以上）→ `run.mjs <页面URL> [起] [止]` 无头 Chrome 逐件「载入 → 逐层分析 → 生成支撑」并审计（页面侧 `one.js`：逐点来源 / 离图块边距离 / 近点对 / 失败 / 成片漏支撑 / 穿模，出 360×300 缩略图）→ `report.mjs` 出 `report.html`（修复前后对比、分档、问题清单、可筛选缩略图）与拼版页 → `sheets.mjs` 截成 PNG（`sheets/总结.png`、`全部-NN.png`、`问题件-NN.png`）；`cmp.mjs <旧结果> <新结果> [all]` 逐件对比。零件文件经 CDP `Fetch` 拦截从磁盘按 8MB 分块喂给页面（不用目录联接：Vite 的轮询监听会去扫整个零件库）；每 25 件重启一次浏览器、单件限时 180 秒、可续跑；环境变量 `OUT` / `THUMBS` / `IDS`（只跑指定序号）/ `EXTRA`（在 one.js 之后注入页面脚本，可覆盖 `__batchOne` 做轻量专项检查）/ `PORT0`。审计口径：失败 = nohead / unroutable；成片漏支撑 = 4.5mm 内无「已生成结构」支撑点的悬空像素（间隙 > 0.8mm）连成 ≥ 2mm² 的一片——此口径没有「贴壁根部」规则，贴着侧壁、宽不到 1mm 的窄台会被记成漏支撑（抽查 #132、#83 均是 0.3mm 宽的一圈窄台）；贴边 = 离图块边不到 边缘距离 − 0.3mm 且附近确有离边 ≥ 边缘距离的地方；结构埋进模型 = 结构顶点在 LDI 实体内（内缩 0.25）且 BVH 点距 > 渗透 + 0.25。**跑批期间不要改任何被页面 import 过的文件**（含 `.ref` 下的临时原型）：Vite 对没有 HMR 边界的模块改动会向所有页面广播整页刷新，正在跑的零件直接报错（实测 2 件因此报 Inspected target navigated）。
+  - **零件库批量测试**（本地工具 `.ref/batch/`，已 gitignore；改布点 / 校验口径后建议跑）：`inventory.mjs` 扫本地零件库（路径随机器而定，2750 个 STL / OBJ、97GB）→ `select.mjs` 按面数分 7 档、跨项目文件夹抽 500 件（`list.json`，排除 80 万面以上）→ `run.mjs <页面URL> [起] [止]` 无头 Chrome 逐件「载入 → 逐层分析 → 生成支撑」并审计（页面侧 `one.js`：逐点来源 / 离图块边距离 / 近点对 / 失败 / 成片漏支撑 / 穿模，出 360×300 缩略图）→ `report.mjs` 出 `report.html`（修复前后对比、分档、问题清单、可筛选缩略图）与拼版页 → `sheets.mjs` 截成 PNG（`sheets/总结.png`、`全部-NN.png`、`问题件-NN.png`）；`cmp.mjs <旧结果> <新结果> [all]` 逐件对比。零件文件经 CDP `Fetch` 拦截从磁盘按 8MB 分块喂给页面（不用目录联接：Vite 的轮询监听会去扫整个零件库）；每 25 件重启一次浏览器、单件限时 180 秒、可续跑；环境变量 `OUT` / `THUMBS` / `IDS`（只跑指定序号）/ `EXTRA`（在 one.js 之后注入页面脚本，可覆盖 `__batchOne` 做轻量专项检查）/ `PORT0`。审计口径：失败 = nohead / unroutable；成片漏支撑 = 4.5mm 内无「已生成结构」支撑点的悬空像素（间隙 > 0.8mm）连成 ≥ 2mm² 的一片——此口径没有「贴壁根部」规则，贴着侧壁、宽不到 1mm 的窄台会被记成漏支撑（抽查 #132、#83 均是 0.3mm 宽的一圈窄台）；贴边 = 离图块边不到 边缘距离 − 0.3mm 且附近确有离边 ≥ 边缘距离的地方；结构埋进模型 = 结构顶点在 LDI 实体内（内缩 0.25）且 BVH 点距 > 渗透 + 0.25。**跑批期间不要改任何被页面 import 过的文件**（含 `.ref` 下的临时原型）：Vite 对没有 HMR 边界的模块改动会向所有页面广播整页刷新，正在跑的零件直接报错（实测 2 件因此报 Inspected target navigated）。
 - 浏览器面板隐藏时 rAF 会暂停，core 中的 `await nextFrame()` 将挂起——自动化测试需在隐藏时把 rAF 退化为 setTimeout。
 - **性能注意**：当面数 > 120,000 时，朝向优化与逐层分析会明显变慢；代码中有日志提示。结构生成（BVH 避让）在 demo 与 5.5 万面样本上为 30~180ms。
 

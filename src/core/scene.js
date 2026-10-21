@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { state, params, bus, log, toast } from '../store.js';
+import { state, params, bus, log, toast, setProgress } from '../store.js';
 import { loadDemo, loadModelFiles, localFaceOf, raiseH, plateAxisOrigin, acceptSupportFace } from './model.js';
 import { modelKind } from './meshio.js';
 import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
@@ -634,6 +634,49 @@ export function readPerf() {
   return perfSample;
 }
 
+/* 桌面版文件拖放。壳子在松开时把路径放进 fs 的读取范围，这里再读成 File 交给原来的载入。 */
+function bindTauriModelDrop() {
+  if (!('__TAURI_INTERNALS__' in window)) return;
+  import('@tauri-apps/api/webview').then(({ getCurrentWebview }) => {
+    getCurrentWebview().onDragDropEvent((event) => {
+      const payload = event.payload;
+      if (payload.type === 'enter' || payload.type === 'over') {
+        bus.emit('dropHint', true);
+        return;
+      }
+      bus.emit('dropHint', false);
+      if (payload.type === 'drop') loadDroppedModelPaths(payload.paths || []);
+    }).catch((e) => log(`拖放监听失败：${e && e.message || e}`, 'warn'));
+  }).catch((e) => log(`拖放监听失败：${e && e.message || e}`, 'warn'));
+}
+
+async function loadDroppedModelPaths(paths) {
+  const wanted = [];
+  for (const path of paths) {
+    const name = String(path).split(/[/\\]/).pop() || String(path);
+    if (modelKind(name)) wanted.push({ path, name });
+  }
+  if (!wanted.length) {
+    if (paths.length) toast('请拖入 .stl、.obj 或 .3mf 文件');
+    return;
+  }
+  try {
+    const { readFile } = await import('@tauri-apps/plugin-fs');
+    const files = [];
+    for (let i = 0; i < wanted.length; i++) {
+      const it = wanted[i];
+      setProgress(0.04 * (i / wanted.length), `读取 ${i + 1}/${wanted.length} · ${it.name}`);
+      const bytes = await readFile(it.path);
+      files.push(new File([bytes], it.name));
+    }
+    loadModelFiles(files, { append: state.parts.some(p => !p.demo) });
+  } catch (e) {
+    setProgress(null);
+    log(`读取拖入的模型失败：${e && e.message || e}`, 'warn');
+    toast('无法读取拖入的文件');
+  }
+}
+
 export function initScene(canvasEl) {
   canvas = canvasEl;
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -713,17 +756,24 @@ export function initScene(canvasEl) {
   });
   window.addEventListener('pointerup', () => { state.painting = false; });
 
-  /* 拖放 STL / OBJ / 3MF。不支持的文件直接提示，不清掉板上已有的模型。 */
-  window.addEventListener('dragover', e => { e.preventDefault(); bus.emit('dropHint', true); });
+  /* 拖放 STL / OBJ / 3MF。不支持的文件直接提示，不清掉板上已有的模型。
+     浏览器走 HTML5 drop。Windows 桌面壳会换成自己的投放目标，并关掉 WebView2 的外部拖放，
+     所以打包后 dataTransfer.files 一直是空的，松开像没反应。桌面版改听壳子的 drag-drop。 */
+  window.addEventListener('dragover', e => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    bus.emit('dropHint', true);
+  });
   window.addEventListener('dragleave', e => { if (e.target === document.body || e.target === canvas.parentElement) bus.emit('dropHint', false); });
   window.addEventListener('drop', e => {
     e.preventDefault(); bus.emit('dropHint', false);
-    const files = [...e.dataTransfer.files].filter(f => modelKind(f.name));
-    if (!files.length) { if (e.dataTransfer.files.length) toast('请拖入 .stl、.obj 或 .3mf 文件'); return; }
+    const raw = e.dataTransfer ? [...e.dataTransfer.files] : [];
+    const files = raw.filter(f => modelKind(f.name));
+    if (!files.length) { if (raw.length) toast('请拖入 .stl、.obj 或 .3mf 文件'); return; }
     // 板上已有真实模型时追加，只有演示模型时换成拖进来的这一批
-    const append = state.parts.some(p => !p.demo);
-    loadModelFiles(files, { append });
+    loadModelFiles(files, { append: state.parts.some(p => !p.demo) });
   });
+  bindTauriModelDrop();
 
   initManipulate(canvas);
   initViewCube(canvas);

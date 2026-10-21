@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ResinForge",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "identifier": "com.resinforge.app",
   "build": {
     "frontendDist": "../dist",
@@ -40,15 +40,28 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese"],
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "sidebarImage": "nsis/sidebar.bmp",
+        "headerImage": "nsis/header.bmp",
+        "uninstallerHeaderImage": "nsis/header.bmp",
+        "installerHooks": "nsis/hooks.nsh",
+        "customLanguageFiles": {
+          "SimpChinese": "nsis/SimpChinese.nsh"
+        }
+      }
+    }
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgwNzVEQzJCNDhGNjdCMUYKUldRZmUvWklLOXgxZ0RCejI3UmNpVThrY29kWGU4RDEveFV5S0NrOG1ZNktuSFYwbm5lc00zV20K",
       "endpoints": [
-        "http://82.157.179.191:3000/admin/open-support/releases/latest/download/latest.json"
+        "https://github.com/YFPS/ResinForge/releases/latest/download/latest.json"
       ],
-      "dangerousInsecureTransportProtocol": true,
       "windows": {
         "installMode": "passive"
       }

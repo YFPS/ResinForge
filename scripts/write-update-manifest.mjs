@@ -1,5 +1,5 @@
 /* 根据刚打出的安装包和签名，写 latest.json。
-   放到 Gitea 每个发行版的附件里，应用启动时从
+   放到 GitHub Release 附件里，应用启动时从
    releases/latest/download/latest.json 读取。
    安装包地址可用环境变量 UPDATE_BASE_URL 覆盖。 */
 import fs from 'node:fs';
@@ -20,7 +20,7 @@ if (!sigName) {
   process.exit(0);
 }
 const fileName = sigName.slice(0, -4);
-const base = (process.env.UPDATE_BASE_URL || `http://82.157.179.191:3000/admin/open-support/releases/download/v${version}`).replace(/\/$/, '');
+const base = (process.env.UPDATE_BASE_URL || `https://github.com/YFPS/ResinForge/releases/download/v${version}`).replace(/\/$/, '');
 const manifest = {
   version,
   notes: process.env.UPDATE_NOTES || '',

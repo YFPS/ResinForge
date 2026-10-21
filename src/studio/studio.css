@@ -1,0 +1,557 @@
+:root {
+  --stu-card-bg: color-mix(in oklab, var(--background) 78%, transparent);
+}
+
+.stu { --stu-bottom: 14px; --scale-panel-place: css; position: relative; height: 100vh; overflow: hidden; background: var(--background); }
+.stuShell { position: relative; z-index: 1; height: 100vh; pointer-events: none; }
+
+/* 桌面版（Tauri 无边框窗口）：顶部一条 36px 自绘标题栏（复用 demo 的 .titlebar：拖动 + 最小化 / 最大化 / 关闭），
+   画布与浮层整体下移一条。浮动工具条的 top: 12px 相对 .stuShell，自然落在标题栏下方；
+   品牌已在标题栏里，浮动条里不再重复。浏览器打开时无 stu--desktop，布局零回归。 */
+.stu--desktop { padding-top: var(--titlebar-h); }
+.stu--desktop > .titlebar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; }
+.updShade {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  background: color-mix(in oklab, var(--background) 35%, transparent);
+}
+.upd {
+  width: min(380px, calc(100vw - 32px)); padding: 16px 16px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: var(--surface); color: var(--foreground); box-shadow: var(--shadow-raised);
+}
+.updTitle { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+.updNotes { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; white-space: pre-wrap; }
+.updActs { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.stu--desktop .stuShell { height: 100%; }
+.stu--desktop .stuStage { top: var(--titlebar-h); }
+.stu--desktop .stuBrand { display: none; }
+
+.stuStage {
+  position: fixed; inset: 0; z-index: 0;
+  width: 100vw; height: 100vh; overflow: hidden;
+  background: var(--viewport-bg);
+}
+/* 视角方块贴在画布右上角，100px，和参考视窗同一大小。右栏从它下面起，避免挡住字面。 */
+.stuStage .viewCube { top: 12px; right: 12px; width: 100px; height: 100px; }
+.stuStage .dropOverlay { pointer-events: none; }
+
+.stuBrand { display: grid; place-items: center; color: var(--foreground); }
+.stuBrand svg { width: 20px; height: 20px; }
+.stuSearch { min-height: 34px; }
+
+.stuParts { display: flex; flex-direction: column; gap: 4px; }
+.stuPart {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--surface); color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.stuPart svg { flex: none; color: var(--text-muted); }
+.stuPart.on { border-color: var(--accent); }
+.stuPart.on svg { color: var(--accent); }
+.stuPartName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.stuPartMeta { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+.stuPartsCard { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.stuPartMain { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.stuPartsScroll { flex: 1; min-height: 0; }
+/* 滚动条轨道上下内缩，避开卡片 26px 圆角的收窄区（药丸本体距卡片边约 17px，与侧栏口径一致）；
+   类名重复提高特异性，压过 Arc ScrollArea 的 CSS Modules 默认轨道定位 */
+.stuPartsScroll.stuPartsScroll [data-axis="y"] { top: 10px; right: 2px; bottom: 12px; }
+@media (hover: hover) and (pointer: fine) { .stuPart:hover { border-color: var(--border-strong); } }
+
+.stuWizard { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.stuWizard > .stepPanelInner { flex: 1; min-height: 0; }
+
+.stuTools { display: flex; align-items: center; gap: 0; }
+.stuToolDiv { flex: none; width: 1px; height: 22px; margin: 0 1px; background: var(--border); }
+.stuTool {
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  box-sizing: border-box; border: 1px solid transparent; border-radius: 10px; background: none;
+  color: var(--text-secondary); cursor: pointer;
+}
+.stuTool:hover { color: var(--foreground); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+.stuTool[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+
+.stuEmpty { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
+
+.stuPill { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--radius-pill); background: var(--surface-muted); }
+.stuPillBtn {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+  border: 0; border-radius: var(--radius-pill); background: none;
+  color: var(--text-muted); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap;
+}
+.stuPillBtn:hover { color: var(--foreground); }
+.stuPillBtn.on { background: var(--background); color: var(--foreground); box-shadow: var(--shadow-resting); }
+.stuPillMark {
+  display: grid; place-items: center; width: 15px; height: 15px;
+  border: 1px solid currentColor; border-radius: 50%;
+  font-size: 9px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.stuPillMark[data-done] { border-color: transparent; background: var(--accent); color: #fff; }
+
+/* 左上角性能读数：贴在顶栏左侧空档，底边停在模型卡上方 */
+.stuPerf {
+  position: absolute; z-index: 3; top: 12px; left: 14px;
+  display: grid; grid-template-columns: auto auto; column-gap: 12px; row-gap: 0;
+  margin: 0; padding: 6px 10px 6px 12px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--stu-card-bg); backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-muted); font-size: 11px; line-height: 1.35;
+  pointer-events: none;
+}
+.stuPerf b { color: var(--foreground); font-weight: 500; text-align: right; }
+
+/* 左下角摘要卡。展开是横卡片；收起是一条竖着的矩形，只留层数和体积。
+   左边和底边都用左侧卡片同一套 14px 边距。坞变宽、会盖住卡片时，改停在坞上方。 */
+.stuResin {
+  position: absolute; z-index: 4; left: 14px; bottom: var(--stu-bottom);
+  margin: 0; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--stu-card-bg); backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary); font-size: 12px; line-height: 1.2;
+  pointer-events: auto; user-select: none;
+}
+.stuResinFace[data-open="1"] { width: 232px; padding: 10px 12px 12px; }
+.stuResinFace[data-open="0"] { width: 46px; padding: 8px 0 10px; }
+@media (max-width: 1100px) {
+  .stuResin { bottom: calc(var(--stu-bottom) + 64px); }
+}
+.stuSumHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stuSumTitle { font-weight: 500; color: var(--foreground); }
+.stuSumFold {
+  margin-left: auto; display: grid; place-items: center;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.stuSumFold:hover { background: var(--background-hover, color-mix(in oklab, var(--foreground) 8%, transparent)); color: var(--foreground); }
+.stuSumBody { display: flex; flex-direction: column; gap: 7px; }
+.stuSumRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stuSumRow.sub { padding-left: 22px; color: var(--text-muted); }
+.stuSumLabel { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.stuSumIco { display: grid; place-items: center; width: 14px; flex: none; color: var(--text-muted); }
+.stuSumRow b { margin-left: auto; font-weight: 500; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.stuSumRow.sub b { font-weight: 400; color: var(--text-secondary); }
+.stuSumRow b.accent { color: var(--accent); }
+.stuResinSpine {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 100%; padding: 0; border: 0; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 11px; line-height: 1.15;
+  cursor: pointer;
+}
+.stuResinSpine svg { color: var(--text-muted); margin-bottom: 4px; }
+.stuResinSpine .tnum { color: var(--foreground); font-weight: 500; font-size: 12px; }
+
+.stuFloatBar {
+  position: absolute; z-index: 3; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--stu-card-bg); backdrop-filter: blur(16px) saturate(1.2); box-shadow: var(--shadow-raised);
+  pointer-events: auto;
+}
+.stuFloatSep { flex: none; width: 1px; height: 20px; background: var(--border-strong); }
+.stuModelMenu { min-width: 0; }
+.stuModelMenu > button { max-width: 180px; }
+.stuModelMenu > button > span:nth-child(2) { max-width: 124px; overflow: hidden; }
+.stuFloatLeft {
+  position: absolute; z-index: 3; top: 76px; left: 14px; bottom: var(--stu-bottom); width: 344px;
+  display: flex; flex-direction: column; gap: 10px; min-height: 0; pointer-events: none;
+}
+.stuFloatLeft > .stuCard { pointer-events: auto; }
+/* 模型卡可以拖着换位置：拖动时提到最上层，免得被右边的参数卡压住 */
+.stuFloatLeft[data-dragging] { z-index: 6; }
+.stuFloatLeft .stuCard--model { flex: 0 1 auto; min-height: 38px; max-height: 46%; }
+.stuFloatLeft .stuCard--model .stuCardBody { display: flex; overflow: hidden; }
+.stuToolsRow {
+  position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: var(--stu-bottom);
+  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: nowrap;
+  width: max-content; max-width: calc(100vw - 24px); pointer-events: auto;
+}
+.stuDockAnchor { display: flex; max-width: 100%; }
+.stuDockSlot { position: relative; display: flex; max-width: 100%; min-width: 0; }
+/* 「下一步」排在坞里的尾巴上：一条发丝线隔开，两侧各留一段，和相邻图标拉开呼吸 */
+.stuDockSep {
+  flex: none; align-self: center; width: 1px; height: 22px; margin: 0 8px;
+  background: var(--border-strong);
+}
+/* 生成支撑等长任务的进度，盖住底栏这一排，不另占窗口底边 */
+.stuDockProgress {
+  position: absolute; z-index: 6; inset: 0;
+  display: flex; align-items: center; gap: 10px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: 18px;
+  background: color-mix(in oklab, var(--background) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 8px 22px rgb(0 0 0 / .18);
+  color: var(--text-secondary); font-size: var(--text-xs);
+}
+.stuDockProgressText { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stuDockProgressBar { flex: 1; min-width: 0; }
+.stuDockProgressPct { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.stuFloatRight {
+  position: absolute; z-index: 3; top: 124px; right: 14px; bottom: var(--stu-bottom); width: 344px;
+  display: flex; flex-direction: column; gap: 10px; min-height: 0; pointer-events: none;
+}
+.stuFloatRight > .stuCard { pointer-events: auto; }
+.stuFloatRight .stuCard--panel { flex: 0 1 auto; min-height: 0; max-height: 100%; }
+
+.stuCard {
+  display: flex; flex-direction: column; min-height: 0; width: 100%; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: var(--stu-card-bg); backdrop-filter: blur(16px) saturate(1.2); box-shadow: var(--shadow-raised);
+}
+.stuCardHead {
+  display: flex; align-items: center; gap: 8px; flex: none; height: 36px; padding: 0 12px;
+  border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-xs); cursor: pointer;
+}
+/* 标题行是拖动手柄：抓着能挪卡片，光标也这么示意 */
+.stuCardHead { cursor: grab; }
+.stuCardHead:active { cursor: grabbing; }
+.stuCardHead:hover { color: var(--foreground); }
+.stuCardTitle { font-weight: 500; }
+.stuCardMeta { margin-left: auto; font-size: var(--text-xs); color: var(--text-muted); }
+.stuCardMeta + .stuCardChev { margin-left: 6px; }
+.stuCardChev { margin-left: auto; transition: transform var(--duration-fast) var(--ease-standard); }
+.stuCard[data-open="0"] .stuCardChev { transform: rotate(-90deg); }
+.stuCardBody { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
+/* 参数栏没有标题行，面板标题直接贴着卡片顶边，补一点上边距，免得挤在圆角里 */
+.stuCard--panel .stuCardBody { display: flex; flex-direction: column; overflow: hidden; padding: 6px 0 0; }
+
+/* 工具栏的简化浮层：底栏正上方一条横条。双类名压过 Popover 内容区 22rem 的最大宽度。
+   卡片按缩放对话框那套玻璃来：半透明底 + 背景模糊 + 描边 + 抬升阴影，圆角用同一个面板 token。 */
+/* 底栏浮层的出现和收起。用 scale / opacity，不碰 Radix 用来定位的 transform。 */
+@keyframes stu-pop-in {
+  from { opacity: 0; scale: 0.96; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes stu-pop-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.98; }
+}
+.stuPop.stuPop[data-state="open"] {
+  animation: stu-pop-in var(--duration-standard, 240ms) var(--ease-enter, cubic-bezier(.16, 1, .3, 1)) both;
+}
+.stuPop.stuPop[data-state="closed"] {
+  animation: stu-pop-out var(--duration-fast, 160ms) var(--ease-standard, cubic-bezier(.22, 1, .36, 1)) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stuPop.stuPop[data-state="open"],
+  .stuPop.stuPop[data-state="closed"] { animation: none; }
+}
+.stuPop.stuPop {
+  width: min(600px, calc(100vw - 48px));
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--stu-card-bg);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-raised);
+  color: var(--foreground);
+  font-size: 13px;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .stuPop.stuPop { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+/* 保护面跟简化条同一套横条：标题、开关、两个数值、说明。 */
+.stuPop.stuPopBrush {
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px 8px 16px;
+}
+.stuPop.stuPopPoly {
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px 8px 16px;
+}
+.stuBrush.stuBrushPoly { grid-template-columns: auto 1px auto 132px 28px; }
+.polyGapHelp {
+  display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.polyGapHelp:hover { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+.stuBrush {
+  display: grid; align-items: center; column-gap: 10px;
+  grid-template-columns: auto auto 1px auto auto auto auto auto;
+}
+.stuBrushBrand { font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.stuBrushSep { width: 1px; height: 20px; background: var(--border-strong); }
+.stuBrushLabel { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+.stuBrush > button[role="switch"] { min-height: 0; }
+.stuBrushNum { width: 132px; --number-field-width: 132px; }
+.stuBrushNum > div { width: 100%; }
+.stuBrushNum > div > div:first-child {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.simpBar {
+  display: grid; align-items: center; column-gap: 12px;
+  grid-template-columns: auto auto minmax(180px, 1fr) auto auto;
+}
+.simpBarBrand { font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; }
+/* Arc 分段控件压到横条这一档：整块 32px 高（内部格子 24px），和右边的面数、按钮齐平 */
+.simpBar .simpBarSeg { flex: none; }
+.simpBar .simpBarSeg button { min-height: 24px; padding: 0 10px; font-size: 12px; }
+.simpBarSlider { min-width: 0; }
+.simpBarStat, .simpBarGo {
+  display: flex; align-items: center; justify-content: center; height: 32px; margin: 0;
+  border: 1px solid var(--border); border-radius: 10px; font-size: 12px; white-space: nowrap;
+}
+.simpBarStat {
+  padding: 0 10px; color: var(--text-secondary);
+  background: color-mix(in oklab, var(--foreground) 5%, var(--surface-raised));
+}
+.simpBarGo {
+  padding: 0 16px; border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--accent-foreground);
+  font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.simpBarGo:hover { background: color-mix(in oklab, var(--accent) 88%, var(--foreground)); }
+.simpBarGo:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 860px) {
+  .stuPop.stuPop { width: min(340px, calc(100vw - 24px)); padding: 12px; }
+  .stuPop.stuPopBrush { width: min(320px, calc(100vw - 24px)); padding: 12px; }
+  .stuBrush {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "brand switch help" "rlabel rnum rnum" "wlabel wnum wnum";
+    row-gap: 8px;
+  }
+  .stuBrushBrand { grid-area: brand; }
+  .stuBrush > button[role="switch"] { grid-area: switch; justify-self: start; }
+  .stuBrushSep { display: none; }
+  .stuBrushLabel[data-field="r"] { grid-area: rlabel; }
+  .stuBrushNum[data-field="r"] { grid-area: rnum; }
+  .stuBrushLabel[data-field="w"] { grid-area: wlabel; }
+  .stuBrushNum[data-field="w"] { grid-area: wnum; }
+  .stuBrush > .polyGapHelp { grid-area: help; }
+  .simpBar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand modes" "slider slider" "stat go";
+    row-gap: 8px;
+  }
+  .simpBarBrand { grid-area: brand; }
+  .simpBarModes { grid-area: modes; justify-self: end; }
+  .simpBarSlider { grid-area: slider; }
+  .simpBarStat { grid-area: stat; }
+  .simpBarGo { grid-area: go; }
+}
+.stuTool[data-state="open"] { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+
+/* 缩放面板挂在 .stu 上（高于左右卡片和底栏），始终在底栏正上方居中。
+   --dock-clear 是底栏含变换托盘的上沿，再加一道够放下工具提示的空。浮层另加 --dock-pop-lift。宽屏横排，窄屏收成竖卡片。 */
+.stu .scalePanel {
+  z-index: 6;
+  top: auto;
+  left: 50%;
+  right: auto;
+  bottom: calc(var(--dock-clear, calc(var(--stu-bottom, 14px) + 68px)) + var(--dock-pop-lift, 0px));
+  transform: translateX(-50%);
+  width: min(320px, calc(100% - 760px));
+  max-width: calc(100% - 760px);
+  max-height: calc(100% - var(--dock-clear, 96px) - var(--dock-pop-lift, 0px) - 16px);
+}
+.stu .scalePanel[hidden] { display: none; }
+@media (min-width: 1500px) {
+  /* 标题在上、三轴横排在下。栏宽够放「100.00」时才横过来，否则维持竖卡片。 */
+  .stu .scalePanel {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "brand acts icons" "axes axes axes";
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 8px;
+    width: max-content;
+    max-width: calc(100% - 760px);
+    padding: 10px 14px 10px 16px;
+  }
+  .stu .scaleAxes { flex-direction: row; flex-wrap: nowrap; gap: 6px 8px; }
+  .stu .scaleRow { grid-template-columns: 26px 100px 88px; gap: 4px; width: max-content; }
+  .stu .scaleActs { display: flex; justify-content: center; gap: 8px; }
+  .stu .scaleAction { padding: 0 12px; }
+  /* 旋转跟缩放同一条横条：标题在左、复位在右，三轴并排，不再单独收成竖卡片。 */
+  .stu .rotPanel.scalePanel {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand icons" "axes axes";
+    width: max-content;
+    max-width: calc(100% - 760px);
+  }
+  .stu .rotAxes { flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 12px; }
+  .stu .rotRow { grid-template-columns: 26px 108px auto auto; gap: 4px; width: max-content; }
+  .stu .rotNudge { padding: 0 10px; }
+}
+
+/* 顶栏变宽、伸到右上角时，方块改到顶栏下面，右栏再跟着往下，避免被挡住。 */
+@media (max-width: 1180px) {
+  .stuStage .viewCube { top: 72px; }
+  .stuFloatRight { top: 184px; }
+  /* 顶栏伸到左上角时，读数改到顶栏下面，模型卡再跟着往下 */
+  .stuPerf { top: 72px; }
+  .stuFloatLeft { top: 142px; }
+}
+@media (max-width: 980px) {
+  .stuFloatRight { width: 300px; }
+  .stuFloatLeft { width: 310px; }
+  .stuToolsRow { max-width: calc(100vw - 16px); }
+  .stuFloatBar > .stuBrand, .stuFloatSep, .stuPillMark { display: none; }
+  .stuPillBtn { padding: 0 8px; }
+  .stu .scalePanel {
+    width: min(300px, calc(100% - 680px));
+    max-width: calc(100% - 680px);
+  }
+}
+@media (max-width: 860px) {
+  /* 中间缝比卡片窄，仍居中浮在底栏上方，避免贴进右栏里 */
+  .stu .scalePanel {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(300px, calc(100% - 28px));
+    max-width: calc(100% - 28px);
+  }
+}
+@media (max-width: 760px) {
+  .stuFloatRight { width: 260px; }
+}
+@media (max-width: 640px) {
+  /* 极窄屏：左右浮层收窄，工具栏退回两行（组间分隔线隐藏，靠换行分组） */
+  .stuFloatLeft { width: 272px; }
+  .stuToolsRow { max-width: calc(100vw - 12px); }
+}
+
+/* PROTOTYPE 简化演示：视觉对齐缩放对话框（玻璃、13px、圆角 10 的小按钮）。看完可删。 */
+.simpProto {
+  position: absolute; z-index: 7; left: 50%; bottom: calc(var(--stu-bottom, 14px) + 68px);
+  transform: translateX(-50%); box-sizing: border-box;
+  display: grid; align-items: center; gap: 8px; padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-panel, 20px);
+  background: var(--stu-card-bg); backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-raised); color: var(--foreground);
+  font-size: 13px; pointer-events: auto;
+}
+.simpProtoBrand { font-weight: 500; font-size: 13px; line-height: 1; }
+.simpProtoModes { display: flex; gap: 2px; justify-self: end; }
+.simpProtoModes button {
+  height: 30px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer;
+}
+.simpProtoModes button:hover { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+.simpProtoModes button[aria-pressed="true"] { background: var(--accent-subtle); color: var(--accent); }
+.simpProtoBody { min-width: 0; }
+.simpProtoStat, .simpProtoGo {
+  display: flex; align-items: center; justify-content: center; height: 32px; margin: 0; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 12px; white-space: nowrap;
+}
+.simpProtoStat {
+  color: var(--text-secondary);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+}
+.simpProtoGo {
+  background: transparent; color: var(--foreground); cursor: pointer;
+}
+.simpProtoGo:hover { background: color-mix(in oklab, var(--foreground) 8%, transparent); }
+.simpProto[data-layout="card"], .simpProto[data-layout="spin"] {
+  width: min(320px, calc(100% - 28px));
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "brand modes" "body body" "stat go";
+}
+.simpProto[data-layout="spin"] { grid-template-areas: "brand modes" "field field" "body body" "stat go"; }
+.simpProto[data-layout="card"] .simpProtoBrand,
+.simpProto[data-layout="spin"] .simpProtoBrand { grid-area: brand; align-self: center; }
+.simpProto[data-layout="card"] .simpProtoModes,
+.simpProto[data-layout="spin"] .simpProtoModes { grid-area: modes; }
+.simpProto[data-layout="card"] .simpProtoBody,
+.simpProto[data-layout="spin"] .simpProtoBody { grid-area: body; }
+.simpProto[data-layout="card"] .simpProtoStat,
+.simpProto[data-layout="spin"] .simpProtoStat { grid-area: stat; }
+.simpProto[data-layout="card"] .simpProtoGo,
+.simpProto[data-layout="spin"] .simpProtoGo { grid-area: go; }
+.simpProtoField {
+  grid-area: field; display: flex; align-items: center; height: 32px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+}
+.simpProtoField:focus-within { border-color: var(--accent); }
+.simpProtoField > span:first-child {
+  flex: none; padding-left: 10px; font-size: 12px; font-weight: 500; color: var(--text-secondary);
+}
+.simpProtoField input {
+  width: 100%; min-width: 0; border: 0; background: transparent; color: inherit;
+  font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; padding: 0 4px;
+}
+.simpProtoField input:focus { outline: none; }
+.simpProtoField em {
+  flex: none; margin-right: 4px; color: var(--text-muted); font-style: normal; font-size: 10px;
+}
+.simpProtoSteps {
+  display: flex; flex-direction: column; width: 16px; align-self: stretch; flex: none;
+  border-left: 1px solid var(--border);
+}
+.simpProtoSteps button {
+  flex: 1; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer;
+  padding: 0; line-height: 1; font-size: 8px;
+}
+.simpProtoSteps button + button { border-top: 1px solid var(--border); }
+.simpProtoSteps button:hover { color: var(--foreground); background: color-mix(in oklab, var(--foreground) 8%, transparent); }
+.simpProtoBare > :first-child { display: none; }
+.simpProto[data-layout="bar"] {
+  width: min(720px, calc(100vw - 760px));
+  grid-template-columns: auto auto minmax(220px, 1fr) auto auto;
+  grid-template-areas: "brand modes body stat go";
+  column-gap: 12px; padding: 10px 14px 10px 16px;
+}
+.simpProto[data-layout="bar"] .simpProtoBrand { grid-area: brand; }
+.simpProto[data-layout="bar"] .simpProtoModes { grid-area: modes; justify-self: start; }
+.simpProto[data-layout="bar"] .simpProtoBody { grid-area: body; }
+.simpProto[data-layout="bar"] .simpProtoStat { grid-area: stat; }
+.simpProto[data-layout="bar"] .simpProtoGo { grid-area: go; padding: 0 14px; }
+@media (max-width: 860px) {
+  .simpProto[data-layout="bar"] {
+    width: min(320px, calc(100% - 28px));
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand modes" "body body" "stat go";
+    padding: 12px;
+  }
+}
+.simpProtoSwitch {
+  position: fixed; z-index: 90; top: 78px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 8px;
+  border-radius: 999px; background: var(--foreground); color: var(--background);
+  box-shadow: var(--shadow-floating, 0 8px 24px rgb(0 0 0 / .2));
+  font-size: 12px; pointer-events: auto;
+}
+.simpProtoSwitch button {
+  width: 26px; height: 26px; border: 0; border-radius: 999px; background: transparent;
+  color: inherit; font: inherit; font-size: 16px; cursor: pointer;
+}
+.simpProtoSwitch button:hover { background: color-mix(in oklab, var(--background) 14%, transparent); }
+.simpProtoSwitch span { display: flex; flex-direction: column; align-items: center; min-width: 148px; line-height: 1.2; }
+.simpProtoSwitch small { font-size: 10px; opacity: .72; }
+@media (prefers-reduced-motion: no-preference) {
+  .simpProtoModes button:active, .simpProtoGo:active, .simpProtoSteps button:active { transform: scale(0.96); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .simpProto { background: var(--surface); backdrop-filter: none; }
+}
+
+/* 网板点云演示的切换条。高对比胶囊，和正在看的板面分开，免得被当成正式界面。 */
+.bedProtoSwitch {
+  position: fixed; z-index: 90; left: 50%; bottom: 78px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 8px;
+  border-radius: 999px; background: var(--foreground); color: var(--background);
+  box-shadow: var(--shadow-floating, 0 8px 24px rgb(0 0 0 / .2));
+  font-size: 12px; font-weight: 500; pointer-events: auto;
+}
+.bedProtoSwitch button {
+  width: 26px; height: 26px; border: 0; border-radius: 999px; background: transparent;
+  color: inherit; font: inherit; font-size: 16px; font-weight: 500; cursor: pointer;
+}
+.bedProtoSwitch button:hover { background: color-mix(in oklab, var(--background) 14%, transparent); }
+.bedProtoSwitch span { display: flex; flex-direction: column; align-items: center; min-width: 220px; line-height: 1.2; }
+.bedProtoSwitch small { font-size: 10px; font-weight: 400; opacity: .72; }
+.bedProtoSize {
+  display: flex; align-items: center; gap: 2px; margin-left: 4px; padding-left: 8px;
+  border-left: 1px solid color-mix(in oklab, var(--background) 28%, transparent);
+}
+.bedProtoSize b { min-width: 42px; text-align: center; font-size: 12px; font-weight: 500; }
+.bedProtoSwitch button:disabled { opacity: .35; cursor: default; }
+.bedProtoSwitch button:disabled:hover { background: transparent; }

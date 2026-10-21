@@ -1,0 +1,640 @@
+/* ============================================================
+   工程与零件库方案 Demo
+   视觉 token 全部取自 Arc foundation.css；工作区沿用 Studio 的浮动玻璃卡（studio.css）。
+   结构约定（与 Arc 版一致）：标签条 + 左侧导航是同一层「外框」（--background），
+   内容画布与 3D 视口同色（--viewport-bg），切换主页与工程时画布不跳色。
+   两套外观（根节点 data-look）：
+   - standard：与 Studio 一致（面板 26、控件 18、药丸控件全圆、浮层 78% 毛玻璃）
+   - pro（默认）：专业紧凑，参照 BPS 实测（控件 8、面板 12、弹窗 14；只有开关保留全圆；浮层 94% 实底）
+   ============================================================ */
+
+/* 外观变量挂在 :root（弹层、对话框、菜单都渲染在 body 下，不在 .pdRoot 里）；外观标记是 <html data-pd-look> */
+:root {
+  --pd-pill: var(--radius-pill);   /* 页签 / 胶囊 / 搜索框 / 分段控件 */
+  --pd-r-row: 14px;                /* 列表行、提示块 */
+  --pd-r-img: 12px;                /* 卡片里的缩略图 */
+  --pd-r-img-lg: 20px;             /* 大缩略图、预览框 */
+}
+:root[data-pd-look="pro"] {
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-surface: 14px;
+  --pd-pill: 8px;
+  --pd-r-row: 6px;
+  --pd-r-img: 6px;
+  --pd-r-img-lg: 8px;
+  --stu-card-bg: color-mix(in oklab, var(--background) 94%, transparent);
+}
+.pdRoot { --pd-tab-h: var(--titlebar-h, 36px); color: var(--foreground); font-family: var(--font-body); }
+/* Studio 自带的药丸形部件在专业外观下也收成小圆角（顶栏、流程药丸、工具坞、左下摘要） */
+:root[data-pd-look="pro"] .stuFloatBar { border-radius: 12px; }
+:root[data-pd-look="pro"] .stuPill { border-radius: 8px; }
+:root[data-pd-look="pro"] .stuPillBtn { border-radius: 6px; }
+:root[data-pd-look="pro"] .stuResin { border-radius: 10px; }
+:root[data-pd-look="pro"] .stuTool { border-radius: 6px; }
+:root[data-pd-look="pro"] .pdMore { border-radius: 6px; }
+:root[data-pd-look="pro"] .pdCheck { border-radius: 4px; }
+:root[data-pd-look="pro"] .pdSeg button, :root[data-pd-look="pro"] .pdModuleSwitch button,
+:root[data-pd-look="pro"] .pdSchemeSeg button { border-radius: 6px; }
+.pdStageWrap { position: absolute; inset: 0; }
+.stu--desktop .pdStageWrap { top: var(--pd-tab-h); }
+.pdBoot { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: var(--background); color: var(--text-secondary); font-size: var(--text-sm); }
+.pdDropHint { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; pointer-events: none; }
+.pdDropHint::before { content: ''; position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: var(--radius-panel); }
+.stu--desktop .pdDropHint::before { top: calc(var(--pd-tab-h) + 12px); }
+.pdDropHint span { position: relative; padding: 8px 14px; border-radius: var(--pd-pill); background: var(--accent); color: var(--accent-foreground); font-size: var(--text-sm); box-shadow: var(--shadow-raised); }
+
+/* 提示气泡让开顶栏：Studio 顶栏在 12px 处，桌面布局（方案一）上面还多一条标签条 */
+.pdRoot .toastHost { top: 74px; }
+.pdRoot.stu--desktop .toastHost { top: calc(var(--pd-tab-h) + 74px); }
+
+/* ---------- 共用小件 ---------- */
+
+.pdThumb { position: relative; display: block; overflow: hidden; background: var(--viewport-bg); }
+.pdThumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.pdThumbEmpty { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--foreground) 5%, transparent) 50%, transparent 70%); background-size: 220% 100%; animation: pdShimmer 1.4s linear infinite; }
+@keyframes pdShimmer { from { background-position: 120% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .pdThumbEmpty { animation: none; } }
+
+.pdSwatch {
+  display: inline-block; flex: none; border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, color-mix(in oklab, white 70%, transparent) 0 14%, transparent 40%),
+    radial-gradient(circle at 50% 60%, var(--sw), color-mix(in oklab, var(--sw) 72%, black));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, black 18%, transparent), 0 1px 3px color-mix(in oklab, black 20%, transparent);
+}
+.pdSwatch.is-clear {
+  background:
+    radial-gradient(circle at 34% 28%, color-mix(in oklab, white 80%, transparent) 0 16%, transparent 42%),
+    radial-gradient(circle at 50% 60%, color-mix(in oklab, var(--sw) 55%, transparent), color-mix(in oklab, var(--sw) 85%, black 6%));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sw) 60%, black 25%);
+}
+
+.pdPlate { display: block; flex: none; overflow: visible; }
+.pdPlateBed { fill: color-mix(in oklab, var(--foreground) 10%, transparent); stroke: color-mix(in oklab, var(--foreground) 34%, transparent); stroke-width: 1; }
+.pdPlateFoot { fill: color-mix(in oklab, var(--accent) 35%, transparent); stroke: var(--accent); stroke-width: 1; }
+.pdPlate.is-over .pdPlateFoot { fill: color-mix(in oklab, var(--danger) 30%, transparent); stroke: var(--danger); }
+
+.pdMore {
+  display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 10px; background: none; color: var(--text-muted); cursor: pointer;
+}
+.pdMore:hover, .pdMore[data-state="open"] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+.pdMenu [role="menuitem"][data-highlighted] { background: var(--surface-muted); }
+.pdMenu [role="menuitem"][data-highlighted][data-tone="danger"] { background: color-mix(in oklab, var(--danger) 9%, var(--surface)); }
+
+.pdEmpty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 36px 16px; text-align: center; color: var(--text-muted); }
+.pdEmpty b { color: var(--text-secondary); font-size: var(--text-sm); font-weight: 500; }
+.pdEmpty p { max-width: 34ch; margin: 0; font-size: var(--text-xs); line-height: 1.5; }
+.pdEmptyIcon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 4px; border: 1px dashed var(--border-strong); border-radius: var(--radius-panel); }
+.pdMuted { color: var(--text-muted); font-size: var(--text-xs); }
+.pdPad { padding: 12px 16px; margin: 0; }
+.pdLink { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.pdLink:hover { text-decoration: underline; }
+.pdStar { flex: none; margin-left: 6px; color: var(--warning); vertical-align: -1px; }
+.pdDirtyDot { display: inline-block; flex: none; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: var(--warning); vertical-align: 1px; }
+.pdCount { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.pdFieldLabel { display: block; color: var(--text-secondary); font-size: var(--text-xs); }
+
+.pdChips { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.pdChips::-webkit-scrollbar { display: none; }
+.pdChips button {
+  flex: none; height: 28px; padding: 0 11px; border: 1px solid var(--border); border-radius: var(--pd-pill);
+  background: var(--surface); color: var(--text-secondary); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap;
+}
+.pdChips button:hover { border-color: var(--border-strong); color: var(--foreground); }
+.pdChips button.is-on { border-color: transparent; background: var(--foreground); color: var(--background); }
+
+.pdSearch {
+  display: flex; align-items: center; gap: 7px; min-width: 0; height: 34px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: var(--pd-pill); background: var(--surface); color: var(--text-muted);
+}
+.pdSearch:focus-within { border-color: var(--accent); }
+.pdSearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--foreground); font: inherit; font-size: var(--text-sm); }
+.pdSearch input::placeholder { color: var(--text-muted); }
+
+.pdCheck {
+  display: grid; place-items: center; width: 18px; height: 18px; border: 1.5px solid var(--border-strong); border-radius: 6px;
+  background: var(--surface); cursor: pointer; opacity: 0; transition: opacity var(--duration-fast) var(--ease-standard);
+}
+.pdCheck.is-on { opacity: 1; border-color: transparent; background: var(--accent); }
+.pdCheck.is-on::after { content: ''; width: 8px; height: 4px; margin-top: -2px; border: solid var(--accent-foreground); border-width: 0 0 2px 2px; transform: rotate(-45deg); }
+.pdCheck:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@keyframes pdSpin { to { transform: rotate(360deg); } }
+.pdSpin { animation: pdSpin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .pdSpin { animation: none; } }
+
+/* ---------- 工作区：顶栏上的机器 / 材料 / 保存 ---------- */
+
+.pdBar { gap: 6px; }
+.pdChip {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 260px; height: var(--control-height-sm); padding: 0 12px 0 10px;
+  border: 1px solid var(--border); border-radius: var(--pd-pill); background: var(--surface); color: var(--foreground);
+  font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+.pdChip:hover { border-color: var(--border-strong); background: var(--surface-muted); }
+.pdChip[data-state="open"] { border-color: var(--border-strong); background: var(--surface-muted); }
+.pdChip.is-warn { border-color: color-mix(in oklab, var(--danger) 55%, var(--border)); }
+.pdChipText { overflow: hidden; text-overflow: ellipsis; }
+.pdChipSub { color: var(--text-muted); font-size: var(--text-xs); }
+.pdChipWarn { flex: none; color: var(--danger); }
+.pdSaveState { flex: none; color: var(--text-muted); font-size: var(--text-xs); white-space: nowrap; padding: 0 2px 0 4px; }
+.pdSaveState.is-dirty { color: var(--warning); }
+
+.pdPop { width: 400px; padding: 8px !important; }
+.pdPop--material { width: 430px; }
+.pdPopHead { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px 10px; }
+.pdPopHead b { font-size: var(--text-sm); font-weight: 500; }
+.pdPopHead span { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.pdPopList { display: flex; flex-direction: column; gap: 2px; max-height: min(360px, 52vh); overflow: auto; }
+.pdPopList button {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--pd-r-row);
+  background: none; color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.pdPopList button:hover { background: var(--surface-muted); }
+.pdPopList button.is-on { background: var(--accent-subtle); }
+.pdPopMain { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pdPopMain b { font-size: var(--text-sm); font-weight: 500; }
+.pdPopMain small { overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.pdPopCheck { flex: none; color: var(--accent); }
+.pdFit { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+.pdFit.is-over { color: var(--danger); }
+.pdPopField { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 8px 0; }
+.pdPopField > span { flex: none; color: var(--text-secondary); font-size: var(--text-xs); }
+.pdPopNote { display: flex; align-items: center; gap: 6px; margin: 12px 8px 4px; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.pdPopNotice { display: flex; align-items: center; gap: 10px; margin: 12px 4px 4px; padding: 10px 10px 10px 12px; border-radius: var(--pd-r-row); background: color-mix(in oklab, var(--warning) 12%, transparent); color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.5; }
+.pdPopNotice > span { flex: 1; }
+
+/* ---------- 工作区：左卡 ---------- */
+
+/* 左列底边停在左下角「摘要」卡（Studio 的 ResinHud，展开约 200px）上方 */
+.pdShell .pdLeft { bottom: calc(var(--stu-bottom) + 214px); }
+.pdLeft .pdCard { flex: 1 1 auto; max-height: 100%; }
+.pdCard { display: flex; flex-direction: column; min-height: 0; }
+.pdCardHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 10px 10px 6px 12px; }
+.pdCardTitle { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); font-weight: 500; }
+.pdCardTitle small { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400; }
+.pdCardBody { flex: 1 1 auto; min-height: 0; display: flex; }
+.pdCardFoot { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex: none; padding: 6px 10px 10px; border-top: 1px solid var(--border-subtle); }
+.pdCardBtn { gap: 6px !important; }
+.pdSeg { display: flex; gap: 2px; padding: 2px; border-radius: var(--pd-pill); background: var(--surface-muted); }
+.pdSeg button {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border: 0; border-radius: var(--pd-pill);
+  background: none; color: var(--text-muted); font: inherit; font-size: var(--text-sm); cursor: pointer;
+}
+.pdSeg button:hover { color: var(--foreground); }
+.pdSeg button.is-on { background: var(--background); color: var(--foreground); box-shadow: var(--shadow-resting); }
+.pdSeg button span { color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+
+.pdObjScroll { flex: 1; min-height: 0; padding: 0 8px 8px; }
+.pdObj { position: relative; cursor: pointer; }
+.pdObj .pdMore { margin-right: -4px; opacity: 0; }
+.pdObj:hover .pdMore, .pdObj .pdMore[data-state="open"], .pdObj.on .pdMore { opacity: 1; }
+.pdObjThumb { flex: none; width: 34px; height: 28px; border-radius: var(--pd-r-img); }
+.pdObjIcon { display: grid; place-items: center; flex: none; width: 34px; height: 28px; border-radius: var(--pd-r-img); background: var(--surface-muted); color: var(--text-muted); }
+
+.pdLibCard { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.pdLibTools { display: flex; flex-direction: column; gap: 8px; flex: none; padding: 2px 12px 8px; }
+.pdLibScroll { flex: 1 1 auto; min-height: 0; }
+.pdLibGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 2px 12px 12px; }
+
+.pdTile {
+  position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 5px 5px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--foreground);
+  font: inherit; text-align: left; cursor: grab;
+  transition: border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+.pdTile:hover { border-color: var(--border-strong); }
+.pdTile:active { cursor: grabbing; transform: scale(.98); }
+.pdTileThumb { aspect-ratio: 6 / 5; border-radius: var(--pd-r-img); margin-bottom: 4px; }
+.pdTileName { padding: 0 5px; overflow: hidden; font-size: var(--text-xs); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdTileMeta { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.pdTileAdd {
+  position: absolute; right: 10px; top: 10px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-foreground); opacity: 0; transform: scale(.9);
+  transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+.pdTile:hover .pdTileAdd, .pdTile:focus-visible .pdTileAdd { opacity: 1; transform: none; }
+
+/* ---------- 打开 / 重建进度 ---------- */
+
+.pdLoading { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; pointer-events: none; }
+.pdTabsApp > .pdLoading, .pdModuleApp > .pdLoading { top: var(--pd-tab-h); }
+.pdLoadingCard {
+  width: min(440px, calc(100vw - 48px)); padding: 18px 20px; pointer-events: auto;
+  border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: color-mix(in oklab, var(--background) 86%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-floating);
+}
+.pdLoadingTitle { display: block; margin-bottom: 12px; font-size: var(--text-sm); font-weight: 500; }
+.pdLoadingSteps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0 0 14px; padding: 0; list-style: none; }
+.pdLoadingSteps li { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: var(--text-xs); }
+.pdLoadingSteps li > span { display: grid; place-items: center; flex: none; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; font-variant-numeric: tabular-nums; }
+.pdLoadingSteps li.is-on { color: var(--foreground); }
+.pdLoadingSteps li.is-on > span { border-color: var(--accent); color: var(--accent); }
+.pdLoadingSteps li.is-done { color: var(--text-secondary); }
+.pdLoadingSteps li.is-done > span { border-color: transparent; background: var(--accent); color: var(--accent-foreground); }
+.pdLoadingCard p { margin: 12px 0 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+@media (prefers-reduced-transparency: reduce) { .pdLoadingCard { background: var(--surface-raised); backdrop-filter: none; } }
+
+/* ---------- 各方案的外层：铺满窗口、自身不接指针（让画布收到拖动），子元素各自接 ---------- */
+
+.pdTabsApp, .pdDrawerApp, .pdModuleApp { position: absolute; inset: 0; pointer-events: none; }
+.pdTabsApp > .stuShell, .pdDrawerApp > .stuShell, .pdModuleApp > .stuShell { position: absolute; inset: var(--pd-tab-h) 0 0 0; height: auto; }
+.pdTabs, .pdTitle, .pdHome, .pdLib { pointer-events: auto; }
+
+/* ---------- 方案二、三：窗口标题栏（与方案一的标签条同高同底色；右端 280px 留给方案切换） ---------- */
+
+.pdTitle {
+  position: absolute; z-index: 12; top: 0; left: 0; right: 0; height: var(--pd-tab-h);
+  display: flex; align-items: center; gap: 6px; padding: 0 280px 0 10px; background: var(--background);
+}
+.pdTitleCenter {
+  position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; max-width: 46%; min-width: 0;
+}
+.pdTitle .pdModuleSwitch { padding: 2px; }
+.pdTitle .pdModuleSwitch button { height: 26px; padding: 0 12px; font-size: var(--text-xs); }
+.pdTitle .pdProjBtn { height: 28px; padding: 0 8px 0 3px; font-size: var(--text-xs); }
+.pdTitle .pdProjBtnThumb { width: 30px; height: 22px; }
+.pdTitle .pdSaveState { padding: 0; }
+.pdTitleDoc { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; color: var(--text-secondary); font-size: var(--text-xs); white-space: nowrap; }
+.pdTitleDoc > span { overflow: hidden; text-overflow: ellipsis; }
+.pdTitleDoc .pdDirtyDot { margin-left: 0; }
+.pdTitleDoc--link { height: 28px; padding: 0 10px; border: 0; border-radius: var(--pd-r-row); background: none; font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.pdTitleDoc--link:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); color: var(--foreground); }
+
+/* ---------- 方案一：标签条 ---------- */
+
+.pdTabs {
+  position: absolute; z-index: 12; top: 0; left: 0; right: 0; height: var(--pd-tab-h);
+  display: flex; align-items: center; gap: 2px; padding: 0 12px 0 10px; background: var(--background);
+}
+.pdTabsBrand { display: grid; place-items: center; flex: none; width: 30px; margin-right: 6px; color: var(--foreground); }
+.pdTabsBrand svg { width: 18px; height: 18px; }
+.pdTab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 220px; height: 28px;
+  padding: 0 6px 0 12px; border: 0; border-radius: var(--pd-pill); background: none; color: var(--text-muted);
+  font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; outline: none;
+}
+.pdTab:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); color: var(--foreground); }
+.pdTab.is-on { background: var(--surface-muted); color: var(--foreground); }
+.pdTab:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.pdTab--home { padding-right: 12px; }
+.pdTabName { overflow: hidden; text-overflow: ellipsis; }
+.pdTab .pdDirtyDot { margin-left: 0; }
+.pdTabClose {
+  display: grid; place-items: center; flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--text-muted); cursor: pointer; opacity: 0;
+}
+.pdTab:hover .pdTabClose, .pdTab.is-on .pdTabClose { opacity: 1; }
+.pdTabClose:hover { background: color-mix(in oklab, var(--foreground) 10%, transparent); color: var(--foreground); }
+.pdTabNew { display: grid; place-items: center; flex: none; width: 28px; height: 28px; margin-left: 2px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
+.pdTabNew:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); color: var(--foreground); }
+
+/* ---------- 方案一：主页（外框 + 画布） ---------- */
+
+.pdHome {
+  position: absolute; z-index: 6; top: var(--pd-tab-h); left: 0; right: 0; bottom: 0;
+  display: grid; grid-template-columns: 236px minmax(0, 1fr); background: var(--background);
+}
+.pdNav { display: flex; flex-direction: column; gap: 18px; min-height: 0; overflow: auto; padding: 10px 10px 14px; }
+.pdNavGroup { display: flex; flex-direction: column; gap: 1px; }
+.pdNavLabel { padding: 0 10px 6px; color: var(--text-muted); font-size: var(--text-xs); }
+.pdNavItem {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: var(--pd-r-row);
+  background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer;
+}
+.pdNavItem > svg, .pdNavItem > .pdNavDrop { flex: none; color: var(--text-muted); }
+.pdNavItem > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdNavItem > small { color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.pdNavItem:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); color: var(--foreground); }
+.pdNavItem.is-on { background: var(--surface-muted); color: var(--foreground); }
+.pdNavItem.is-on > svg { color: var(--foreground); }
+.pdNavDrop { width: 14px; height: 14px; margin: 0 1px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 1.6px solid currentColor; }
+.pdNavFoot { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: auto; padding: 0 10px; color: var(--text-muted); font-size: var(--text-xs); }
+
+.pdCanvas { position: relative; min-width: 0; min-height: 0; margin: 0 12px 12px 0; overflow: hidden; border-radius: var(--radius-panel); background: var(--viewport-bg); }
+
+/* 视图（主页画布里 / 方案三的资源库里） */
+.pdView { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.pdView--split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+.pdViewMain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.pdViewHead { display: flex; align-items: center; gap: 10px; flex: none; padding: 22px 24px 14px; }
+.pdViewHead h1 { margin: 0; font-size: var(--text-xl, 1.25rem); font-weight: 500; letter-spacing: var(--tracking-display, -0.01em); }
+.pdViewTools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.pdViewTools .pdSearch { width: 240px; }
+.pdViewFilters { flex: none; padding: 0 24px 12px; }
+.pdViewScroll { flex: 1 1 auto; min-height: 0; }
+.pdViewBody { padding: 0 24px 28px; }
+.pdLead { max-width: 70ch; margin: 0 24px 16px; color: var(--text-muted); font-size: var(--text-sm); line-height: 1.55; }
+.pdSection + .pdSection { margin-top: 26px; }
+.pdSection h2 { margin: 0 0 12px; color: var(--text-secondary); font-size: var(--text-sm); font-weight: 500; }
+
+.pdRecent { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pdRecentTile {
+  display: flex; flex-direction: column; min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: var(--surface); color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), transform var(--duration-standard) var(--ease-spring);
+}
+.pdRecentTile:hover { border-color: var(--border-strong); }
+.pdRecentTile:active { transform: scale(.99); }
+.pdRecentThumb { aspect-ratio: 16 / 10; border-radius: var(--pd-r-img-lg); }
+.pdRecentBody { display: flex; flex-direction: column; gap: 4px; padding: 10px 8px 6px; min-width: 0; }
+.pdRecentBody b { display: flex; align-items: center; overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdRecentBody small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdMetaLine { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: var(--text-xs); white-space: nowrap; }
+.pdMetaItem { overflow: hidden; text-overflow: ellipsis; }
+.pdMetaItem + .pdMetaItem::before { content: '·'; margin-right: 6px; color: var(--text-muted); }
+
+.pdRows { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); overflow: hidden; }
+.pdRow {
+  display: grid; grid-template-columns: 34px minmax(220px, 2fr) minmax(120px, 1fr) minmax(150px, 1.2fr) 52px 72px 112px 36px;
+  align-items: center; gap: 10px; min-height: 58px; padding: 6px 10px 6px 8px; border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-sm); cursor: pointer; outline: none;
+}
+.pdRow:first-child { border-top: 0; }
+.pdRow:hover:not(.pdRow--head) { background: var(--surface-muted); }
+.pdRow:hover .pdCheck, .pdRow .pdCheck.is-on, .pdRow:focus-within .pdCheck { opacity: 1; }
+.pdRow:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.pdRow.is-checked { background: var(--accent-subtle); }
+.pdRow.is-active .pdRowName b::after { content: '已打开'; margin-left: 8px; padding: 1px 7px; border-radius: var(--pd-pill); background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; font-weight: 400; }
+.pdRow--head { min-height: 38px; color: var(--text-muted); font-size: var(--text-xs); cursor: default; }
+.pdRowCheck { display: grid; place-items: center; }
+.pdRowName { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pdRowName > span { display: flex; align-items: center; min-width: 0; }
+.pdRowName b { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdRowThumb { flex: none; width: 62px; height: 40px; border-radius: var(--pd-r-img); }
+.pdRowMuted { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.pdRowMat { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text-secondary); white-space: nowrap; text-overflow: ellipsis; }
+.pdNum { color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+.pdRowEnd { display: flex; justify-content: flex-end; }
+.pdRowTime { padding-left: 16px; }
+
+.pdBatch {
+  position: absolute; z-index: 5; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 16px; border: 1px solid var(--border); border-radius: var(--pd-pill);
+  background: var(--surface-raised); box-shadow: var(--shadow-floating); white-space: nowrap;
+}
+.pdBatch > b { margin-right: 8px; font-size: var(--text-sm); font-weight: 500; }
+
+.pdPartGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; padding: 0 24px 28px; }
+.pdPart {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 6px 6px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-control); background: var(--surface); color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.pdPart:hover { border-color: var(--border-strong); }
+.pdPart.is-on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pdPartThumb { aspect-ratio: 6 / 5; border-radius: var(--pd-r-img); margin-bottom: 6px; }
+.pdPartName { display: flex; align-items: center; padding: 0 6px; overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdPartMeta { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; color: var(--text-muted); font-size: var(--text-xs); }
+
+.pdInspector { display: flex; flex-direction: column; min-height: 0; margin: 12px 12px 12px 0; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); }
+.pdInspector > .pdEmpty { margin: auto; }
+.pdLive { position: relative; flex: none; height: 260px; margin: 6px 6px 0; overflow: hidden; border-radius: var(--pd-r-img-lg); background: var(--viewport-bg); }
+.pdLive canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.pdLive canvas:active { cursor: grabbing; }
+.pdLiveNote { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--text-muted); font-size: var(--text-xs); pointer-events: none; }
+.pdInspectorBody { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; }
+.pdInspectorTitle { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.pdInspectorTitle h2 { margin: 0; font-size: var(--text-base); font-weight: 500; line-height: 1.35; }
+.pdFacts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 14px; margin: 0; font-size: var(--text-xs); }
+.pdFacts > div { display: contents; }
+.pdFacts dt { color: var(--text-muted); }
+.pdFacts dd { margin: 0; color: var(--foreground); text-align: right; font-variant-numeric: tabular-nums; }
+.pdNote { margin: 0; padding: 10px 12px; border-radius: var(--pd-r-row); background: var(--surface-muted); color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.5; }
+.pdInspectorActions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.pdMachineGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 12px; padding: 0 24px 28px; }
+.pdMachine { display: flex; flex-direction: column; gap: 10px; padding: 8px 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); }
+.pdMachine.is-default { border-color: var(--accent); }
+.pdMachineArt { display: grid; place-items: center; height: 136px; border-radius: var(--pd-r-img-lg); background: var(--viewport-bg); }
+.pdMachineBody { display: flex; flex-direction: column; gap: 3px; padding: 0 6px; }
+.pdMachineBody b { font-size: var(--text-sm); font-weight: 500; }
+.pdMachineBody span { color: var(--text-muted); font-size: var(--text-xs); }
+.pdMachine > button, .pdMachine > .pdDefault { align-self: flex-start; margin-left: 2px; }
+.pdDefault { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: var(--pd-pill); background: var(--accent-subtle); color: var(--accent); font-size: var(--text-xs); }
+
+.pdMaterialList { display: flex; flex-direction: column; margin: 0 24px 28px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); overflow: hidden; }
+.pdMaterial {
+  display: grid; grid-template-columns: 40px minmax(180px, 1.6fr) repeat(4, minmax(80px, .7fr)) 140px;
+  align-items: center; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--border-subtle);
+}
+.pdMaterial:first-child { border-top: 0; }
+.pdMaterial.is-default { background: color-mix(in oklab, var(--accent) 6%, transparent); }
+.pdMaterialMain { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pdMaterialMain b { font-size: var(--text-sm); font-weight: 500; }
+.pdMaterialMain small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdMaterialFact { display: flex; flex-direction: column; gap: 2px; color: var(--foreground); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pdMaterialFact small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdMaterial > button, .pdMaterial > .pdDefault { justify-self: end; }
+
+/* ---------- 方案二：竖向资源栏 + 抽屉 ---------- */
+
+.pdDrawerApp .pdLeft { width: auto; }
+.pdDrawerCol { display: flex; align-items: flex-start; gap: 8px; height: 100%; min-height: 0; pointer-events: none; }
+.pdDrawerCol > * { pointer-events: auto; }
+.pdRail {
+  display: flex; flex-direction: column; gap: 2px; flex: none; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: var(--stu-card-bg); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2); box-shadow: var(--shadow-raised);
+}
+.pdRailBtn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 58px; padding: 8px 2px 7px; border: 0; border-radius: var(--pd-r-row);
+  background: none; color: var(--text-muted); font: inherit; font-size: 11px; cursor: pointer;
+}
+.pdRailBtn span { white-space: nowrap; }
+.pdRailBtn:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); color: var(--foreground); }
+.pdRailBtn.is-on { background: var(--surface-muted); color: var(--foreground); }
+.pdRailBtn:nth-child(2) { margin-top: 6px; }
+.pdRailBtn:nth-child(2)::before { content: ''; display: block; width: 28px; height: 1px; margin: -6px auto 4px; background: var(--border); }
+.pdDrawerCard { width: 344px; height: 100%; }
+.pdDrawer { width: 404px; height: 100%; }
+.pdDrawer .pdLibGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pdCurrent { display: flex; gap: 12px; margin: 0 12px 10px; padding: 8px; border-radius: var(--pd-r-img-lg); background: var(--surface-muted); }
+.pdCurrentThumb { flex: none; width: 104px; height: 72px; border-radius: var(--pd-r-img); }
+.pdCurrentBody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pdCurrentBody b { overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdCurrentBody small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdCurrentActions { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0 0 -8px; }
+.pdDrawerList { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 10px; }
+.pdDrawerRow {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 6px; border: 0; border-radius: var(--pd-r-row);
+  background: none; color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.pdDrawerRow:hover { background: var(--surface-muted); }
+.pdDrawerRowThumb { flex: none; width: 72px; height: 48px; border-radius: var(--pd-r-img); }
+.pdDrawerRowMain { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pdDrawerRowMain b { overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdDrawerRowMain small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdProfiles { padding: 0 8px 14px; }
+.pdProfiles h3 { margin: 6px 8px 8px; color: var(--text-secondary); font-size: var(--text-xs); font-weight: 500; }
+.pdProfiles .pdPopList { max-height: none; overflow: visible; }
+.pdProfiles .pdPopList + h3 { margin-top: 16px; }
+.pdProjBtn {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 240px; height: var(--control-height-sm); padding: 0 10px 0 4px;
+  border: 0; border-radius: var(--pd-pill); background: none; color: var(--foreground); font: inherit; font-size: var(--text-sm); cursor: pointer;
+}
+.pdProjBtn:hover, .pdProjBtn[data-state="open"] { background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+.pdProjBtn > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.pdProjBtn > svg { flex: none; color: var(--text-muted); }
+.pdProjBtnThumb { flex: none; width: 40px; height: 28px; border-radius: var(--pd-r-img); }
+
+/* ---------- 方案三：资源库模块 ---------- */
+
+.pdLib { position: absolute; inset: var(--pd-tab-h) 0 0 0; z-index: 6; display: flex; flex-direction: column; background: var(--background); }
+.pdLibBody { display: grid; grid-template-columns: 236px minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
+.pdModuleSwitch { display: flex; gap: 2px; padding: 3px; border-radius: var(--pd-pill); background: var(--surface-muted); }
+.pdModuleSwitch button {
+  height: 30px; padding: 0 16px; border: 0; border-radius: var(--pd-pill); background: none; color: var(--text-muted);
+  font: inherit; font-size: var(--text-sm); cursor: pointer; white-space: nowrap;
+}
+.pdModuleSwitch button:hover { color: var(--foreground); }
+.pdModuleSwitch button.is-on { background: var(--background); color: var(--foreground); box-shadow: var(--shadow-resting); }
+.pdBar .pdModuleSwitch { margin-left: 2px; }
+
+.pdBrowseGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tile, 220px), 1fr)); gap: 14px; padding: 0 24px 28px; }
+.pdBrowseTile {
+  position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 6px 6px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); cursor: pointer; outline: none;
+}
+.pdBrowseTile:hover { border-color: var(--border-strong); }
+.pdBrowseTile.is-on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pdBrowseTile:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.pdBrowseThumb { aspect-ratio: 4 / 3; border-radius: var(--pd-r-img-lg); margin-bottom: 6px; }
+.pdBrowseName { display: flex; align-items: center; padding: 0 8px; min-width: 0; }
+.pdBrowseName b { overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdBrowseMeta { padding: 0 8px; color: var(--text-muted); font-size: var(--text-xs); }
+.pdBrowseMore { position: absolute; right: 12px; top: 12px; background: color-mix(in oklab, var(--surface) 80%, transparent); opacity: 0; }
+.pdBrowseTile:hover .pdBrowseMore, .pdBrowseMore[data-state="open"] { opacity: 1; }
+.pdZoom { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); }
+.pdZoom input { width: 96px; accent-color: var(--accent); }
+.pdTimeline { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.pdTimeline .pdFieldLabel { margin-bottom: 6px; }
+.pdTimelineItem { position: relative; display: flex; align-items: center; gap: 10px; padding: 6px 0 6px 18px; }
+.pdTimelineItem > i { position: absolute; left: 4px; top: 0; bottom: 0; width: 1px; background: var(--border); }
+.pdTimelineItem > i::after { content: ''; position: absolute; left: -3px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--border-strong); }
+.pdTimelineItem:first-of-type > i::after { background: var(--accent); }
+.pdTimelineItem > span { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.pdTimelineItem b { font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pdTimelineItem small { color: var(--text-muted); font-size: 11px; }
+.pdTimelineItem .pdLink { display: inline-flex; align-items: center; gap: 3px; }
+
+/* 工作区底部胶片条 */
+.pdFilm {
+  position: absolute; z-index: 4; left: 50%; bottom: calc(var(--stu-bottom) + 64px); transform: translateX(-50%);
+  width: min(700px, calc(100vw - 760px)); min-width: 360px; pointer-events: auto; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-panel);
+  background: var(--stu-card-bg); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2); box-shadow: var(--shadow-raised);
+}
+.pdFilmHead { display: flex; align-items: center; gap: 8px; padding: 10px 12px 2px 16px; }
+.pdFilmHead b { font-size: var(--text-sm); font-weight: 500; }
+.pdFilmHead small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdFilmHead select { margin-left: auto; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--pd-pill); background: var(--surface); color: var(--text-secondary); font: inherit; font-size: var(--text-xs); }
+.pdFilmRow { display: flex; gap: 8px; padding: 8px 12px 12px; }
+.pdTile--sm { flex: none; width: 104px; }
+.pdTile--sm .pdTileThumb { aspect-ratio: 1 / 1; }
+.pdTile--sm .pdTileMeta { display: none; }
+.pdCardName { overflow: hidden; max-width: 200px; text-overflow: ellipsis; white-space: nowrap; }
+.pdNoProject { text-align: left; }
+.pdNoProject p { margin: 0 0 14px; }
+
+/* ---------- 对话框内容 ---------- */
+
+.pdDlgActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.pdDlgSpacer { flex: 1; }
+.pdDlgList { margin: 0; padding: 10px 12px 10px 28px; border-radius: var(--pd-r-row); background: var(--surface-muted); color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.7; }
+.pdDlgStack { display: flex; flex-direction: column; gap: 14px; }
+.pdSwitchRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border-radius: var(--pd-r-row); background: var(--surface-muted); }
+.pdSwitchRow > span { display: flex; flex-direction: column; gap: 2px; }
+.pdSwitchRow b { font-size: var(--text-sm); font-weight: 500; }
+.pdSwitchRow small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdFolderPick { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow: auto; }
+.pdFolderPick > button {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 4px 12px; border: 0; border-radius: var(--pd-r-row);
+  background: none; color: var(--foreground); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer;
+}
+.pdFolderPick > button:hover { background: var(--surface-muted); }
+.pdFolderPick > button.is-on { background: var(--accent-subtle); }
+.pdFolderPick > button > svg:first-child { color: var(--text-muted); }
+.pdFolderCheck { margin-left: auto; color: var(--accent); }
+.pdFolderAdd { color: var(--text-secondary) !important; }
+.pdFolderNew { display: flex; align-items: flex-end; gap: 8px; padding: 6px 4px; }
+.pdFolderNew > :first-child { flex: 1; }
+.pdProjectPick > button { min-height: 52px; }
+.pdPickThumb { flex: none; width: 54px; height: 36px; border-radius: var(--pd-r-img); }
+.pdPickMain { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pdPickMain b { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pdPickMain small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdNewForm { display: flex; flex-direction: column; gap: 14px; }
+.pdNewMaterial { display: flex; align-items: flex-end; gap: 10px; }
+.pdNewMaterial > :first-child { flex: 1; }
+.pdNewMaterial .pdSwatch { margin-bottom: 12px; }
+.pdNewRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pdNewNote { margin: 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.pdVersionsDlg { width: min(calc(100vw - 32px), 520px) !important; }
+.pdVersions { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow: auto; }
+.pdVersion { display: flex; align-items: center; gap: 12px; padding: 6px 8px 6px 6px; border-radius: var(--pd-r-row); background: var(--surface-muted); }
+.pdVersionThumb { flex: none; width: 72px; height: 46px; border-radius: var(--pd-r-img); }
+.pdVersionMain { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pdVersionMain b { font-size: var(--text-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pdVersionMain small { color: var(--text-muted); font-size: var(--text-xs); }
+.pdVersionNow { padding: 0 10px; color: var(--text-muted); font-size: var(--text-xs); }
+
+/* ---------- 演示方案切换 ---------- */
+
+.pdScheme { position: absolute; z-index: 30; top: 4px; right: 10px; display: flex; align-items: center; gap: 2px; }
+.pdSchemeSeg { display: flex; gap: 2px; padding: 2px; border-radius: var(--pd-pill); background: var(--surface-muted); }
+.pdSchemeSeg button { height: 24px; padding: 0 10px; border: 0; border-radius: var(--pd-pill); background: none; color: var(--text-muted); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
+.pdSchemeSeg button:hover { color: var(--foreground); }
+.pdSchemeSeg button.is-on { background: var(--background); color: var(--foreground); box-shadow: var(--shadow-resting); }
+.pdSchemeHelp { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
+.pdSchemeHelp:hover { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+.pdSchemePop { width: 720px; padding: 16px 18px !important; }
+.pdSchemePop > b { display: block; margin-bottom: 6px; font-size: var(--text-sm); font-weight: 500; }
+.pdSchemePop > p { margin: 0 0 12px; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.55; }
+.pdSchemePop table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+.pdSchemePop th { padding: 6px 8px; color: var(--text-muted); font-weight: 400; text-align: left; }
+.pdSchemePop td { padding: 8px; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); vertical-align: top; line-height: 1.45; }
+.pdSchemePop td:first-child { color: var(--foreground); font-weight: 500; white-space: nowrap; }
+.pdSchemePop tr.is-on td { background: var(--accent-subtle); }
+.pdLookRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.pdLookRow > span { display: flex; flex-direction: column; gap: 2px; }
+.pdLookRow b { font-size: var(--text-sm); font-weight: 500; }
+.pdLookRow small { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.45; }
+.pdLookRow .pdSchemeSeg { flex: none; }
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 1440px) {
+  .pdChipSub { display: none; }
+}
+@media (max-width: 1280px) {
+  .pdRecent { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .pdRecent > :nth-child(4) { display: none; }
+  .pdRow { grid-template-columns: 34px minmax(200px, 2fr) minmax(110px, 1fr) minmax(140px, 1.2fr) 72px 112px 36px; }
+  .pdRow > :nth-child(5) { display: none; }
+  .pdView--split { grid-template-columns: minmax(0, 1fr) 300px; }
+}
+@media (max-width: 1100px) {
+  .pdHome { grid-template-columns: 200px minmax(0, 1fr); }
+  .pdRow { grid-template-columns: 34px minmax(180px, 2fr) minmax(130px, 1.2fr) 72px 36px; }
+  .pdRow > :nth-child(3), .pdRow > :nth-child(7) { display: none; }
+  .pdViewTools .pdSearch { width: 180px; }
+  .pdMaterial { grid-template-columns: 40px minmax(160px, 1.6fr) repeat(2, minmax(80px, .7fr)) 130px; }
+  .pdMaterial > .pdMaterialFact:nth-of-type(n+3) { display: none; }
+}
+@media (max-width: 900px) {
+  .pdHome { grid-template-columns: minmax(0, 1fr); }
+  .pdNav { display: none; }
+  .pdCanvas { margin-left: 12px; }
+  .pdView--split { grid-template-columns: minmax(0, 1fr); }
+  .pdView--split > .pdInspector { display: none; }
+  .pdRecent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pdRecent > :nth-child(n+3) { display: none; }
+  .pdViewHead { flex-wrap: wrap; }
+  .pdViewTools { width: 100%; margin-left: 0; }
+  .pdViewTools .pdSearch { flex: 1; width: auto; }
+}

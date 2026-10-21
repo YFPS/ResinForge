@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResinForge · 登录 Demo</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230562ef'/%3E%3Cpath d='M16 7l7 5v8l-7 5-7-5v-8z' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+  (function () {
+    try {
+      var m = localStorage.getItem('resinforge:theme') || 'dark';
+      var dark = m === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : m === 'dark';
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-accent', localStorage.getItem('resinforge:accent') || 'blue');
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      document.documentElement.setAttribute('data-accent', 'blue');
+    }
+  })();
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="/src/login/main.jsx"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# 测试/调试残留
+.msys*
+.test.html
+.testshot.html
+.dom_test*.html
+.shot*.png
+chrome_*.err
+server_test*.log
+kimi-debug-session_*.zip
+
+# 前端工程
+node_modules/
+dist/
+
+# 在线更新签名私钥和口令。公钥写在 tauri.conf.json 里。
+src-tauri/keys/
+
+# 参考数据（第三方逆向样本，不入库）
+.ref/
+
+# 第三方手办网格，体积大且不能再分发
+2B - 1_12/
+
+# Rust 编译产物
+src-tauri/target/
+installer/target/
+
+# 本地编辑器状态
+.claude/
+.zcode/

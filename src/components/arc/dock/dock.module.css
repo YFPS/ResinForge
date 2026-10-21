@@ -1,0 +1,69 @@
+/* 浮动工具坞。槽位固定 40px，不随宽度压缩；整条超出时横向滚动，标签和托盘画在栏的上方。 */
+.root { position: relative; display: inline-flex; max-width: 100%; color: var(--foreground); }
+.bar {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 6px; border-radius: 18px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.plate {
+  position: absolute; left: 0; z-index: 0; pointer-events: none;
+  background: color-mix(in oklab, var(--background) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  filter: drop-shadow(0 8px 22px rgb(0 0 0 / .18));
+}
+.plateLine {
+  position: absolute; left: 0; z-index: 3; overflow: visible; pointer-events: none;
+}
+.plateLine path { fill: none; stroke: var(--border); stroke-width: 1; }
+.bar::-webkit-scrollbar { display: none; }
+.slot { position: relative; flex: none; width: 40px; height: 40px; }
+.item {
+  position: relative; display: grid; width: 40px; height: 40px; place-items: center;
+  padding: 0; border: 0; border-radius: 14px; background: transparent;
+  color: var(--text-secondary); cursor: pointer; touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+.item[aria-pressed="true"],
+.item[data-chosen] { color: var(--foreground); }
+.selection {
+  position: absolute; z-index: 0; inset: 0; border-radius: 14px; pointer-events: none;
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+}
+.icon { position: relative; z-index: 1; display: grid; place-items: center; pointer-events: none; }
+.icon svg { display: block; overflow: visible; }
+.badge {
+  position: absolute; z-index: 2; top: 1px; right: 1px;
+  display: grid; min-width: 16px; height: 16px; place-items: center; padding: 0 4px;
+  border-radius: 999px; background: var(--danger); color: #fff;
+  font-size: 10px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--background) 88%, transparent);
+  pointer-events: none;
+}
+.tip {
+  position: absolute; z-index: 5; bottom: var(--tip-bottom, calc(100% + 8px)); left: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 10px; border-radius: 10px; background: var(--foreground); color: var(--background);
+  font-size: var(--text-xs); font-weight: 500; line-height: 1.4; white-space: nowrap;
+  box-shadow: 0 6px 18px oklch(0 0 0 / .065), 0 1px 3px oklch(0 0 0 / .035);
+  pointer-events: none;
+}
+.kbd {
+  display: grid; min-width: 18px; height: 18px; place-items: center; padding: 0 4px;
+  border-radius: 5px; background: color-mix(in oklab, var(--background) 18%, transparent);
+  font: inherit; font-size: 11px; font-weight: 500;
+}
+.tray {
+  position: absolute; z-index: 2; bottom: calc(100% - 14px);
+  display: flex; align-items: flex-end; gap: 4px; padding: 6px;
+  overflow: hidden;
+  background: transparent;
+  transform-origin: 50% 100%;
+}
+@media (hover: hover) and (pointer: fine) {
+  .item:hover { color: var(--foreground); }
+}
+@media (pointer: coarse) { .tip { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .item { transition: none; }
+}

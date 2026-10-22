@@ -12,6 +12,7 @@ export const STEPS = [
   { id: 'orient', label: '朝向', title: '优化朝向', help: '找一个支撑更少、孤岛更少的摆放方向。可以跳过。' },
   { id: 'analyze', label: '分析', title: '逐层分析', help: '逐层切片，找出孤岛和需要支撑的悬空。' },
   { id: 'support', label: '支撑', title: '生成支撑' },
+  { id: 'frame', label: '边框', title: '包围盒边框', help: '沿模型包围盒生成笼架。顶面四条梁加四角立柱，可选 Y 型、立柱或 A 字，底板和加强筋收在高级设置里。' },
   { id: 'export', label: '导出', title: '导出 STL', desc: '选择底板，导出给切片软件。' },
 ];
 
@@ -85,6 +86,7 @@ const readDone = () => ({
   orient: flags.oriented,
   analyze: !!state.analysis,
   support: (state.supportPoints || []).length > 0,
+  frame: !!(state.frame && state.frame.triangles),
   export: flags.exported,
 });
 
@@ -95,6 +97,7 @@ const refresh = () => done.set(readDone());
 bus.on('modelInfo', () => { flags.oriented = false; flags.exported = false; refresh(); });
 bus.on('sliceStats', s => { if (!s) flags.exported = false; refresh(); });
 bus.on('supStats', () => { flags.exported = false; refresh(); });
+bus.on('frame', refresh);
 bus.on('orientResults', refresh);
 
 export function markOriented() { flags.oriented = true; refresh(); }

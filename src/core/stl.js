@@ -6,6 +6,7 @@
 ================================================================ */
 import { state, params, log, toast, setProgress } from '../store.js';
 import { placeVertex, raiseH, ensureAutoPlateGeom } from './model.js';
+import { frameGeometry } from './bboxView.js';
 import { unionShells } from './union.js';
 
 /* 跑在 Tauri 桌面壳（打包后的 exe）里还是普通浏览器：写出方式不同（见 exportSTL 尾部） */
@@ -34,7 +35,7 @@ function writeFace(dv, off, ax, ay, az, bx, by, bz, cx, cy, cz) {
   return off + 2;
 }
 
-export async function exportSTL(includeModel, includeSupports, filename) {
+export async function exportSTL(includeModel, includeSupports, filename, includeFrame = !!(includeModel && params.bfExport)) {
   const arrays = [];
   const modelParts = [];
   if (includeModel) {
@@ -83,6 +84,12 @@ export async function exportSTL(includeModel, includeSupports, filename) {
     }
     if (merged) arrays.push({ arr: merged.pos, dx: 0, dy: 0, dz: 0 });
     else arrays.push(...supParts);
+  }
+  if (includeFrame) {
+    const fg = frameGeometry();
+    const arr = fg && fg.attributes.position && fg.attributes.position.array;
+    if (arr && arr.length >= 9) arrays.push({ arr, dx: 0, dy: 0, dz: 0 });
+    else if (!includeModel && !includeSupports) { /* 下面的空内容提示会接住 */ }
   }
   let count = 0;
   for (const m of modelParts) count += m.pos.length / 9;

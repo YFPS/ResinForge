@@ -177,6 +177,8 @@ body {
 /* 两列数值栅格：每格的 NumberField 撑满本列 */
 .fieldGrid { --number-field-width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
 .fieldGrid > * { min-width: 0; }
+.fieldStack { --number-field-width: 100%; display: flex; flex-direction: column; gap: 14px; }
+.fieldStack > * { min-width: 0; }
 .rowStart { display: flex; align-items: center; gap: 8px; }
 
 /* 设置行：左文右开关 */

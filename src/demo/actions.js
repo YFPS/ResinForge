@@ -7,8 +7,11 @@ import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis, shiftAnalysisY } from '../core/inspect.js';
 import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
 import { exportSTL } from '../core/stl.js';
+import { clearFrame, rebuildFrame, resetFrameStack, scheduleFrameRebuild, setFrameVisible, stackFrameParts } from '../core/bboxView.js';
 import { SUPPORT_TEMPLATES, getSupportTemplate, templateParams } from '../core/supportTemplates.js';
 import { getUI, markOriented, markExported, runTask } from './ui.js';
+
+export { setFrameVisible };
 
 export const hasSupports = () => (state.supportPoints || []).length > 0;
 
@@ -218,6 +221,36 @@ export async function doExport(includeModel) {
   // core 返回是否真的写出了文件（桌面版取消保存对话框、没有内容都算没导出）；只在写出时把这一步记为完成
   const ok = await exportSTL(includeModel, true, includeModel ? 'model_with_supports.stl' : 'supports_only.stl');
   if (ok) markExported();
+}
+
+export async function doExportFrame() {
+  const ok = await exportSTL(false, false, 'bbox_frame.stl', true);
+  if (ok) markExported();
+}
+
+export function doBuildFrame() {
+  return rebuildFrame();
+}
+
+export function doClearFrame() {
+  clearFrame(false);
+}
+
+export function doToggleFrame() {
+  setFrameVisible(params.bfVisible === false);
+}
+
+/** 边框已经生成时，改参数就重算。还没生成则只记下参数，等用户点生成。 */
+export function onFrameParam() {
+  if (state.frame) scheduleFrameRebuild();
+}
+
+export function doStackModels() {
+  return stackFrameParts();
+}
+
+export function doResetStack() {
+  return resetFrameStack();
 }
 
 /** 底板开孔：连接条上打菱形孔。已有支撑时立刻重算。 */

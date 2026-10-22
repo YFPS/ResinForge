@@ -17,6 +17,10 @@ export const STEP_COPY = {
     title: '支撑',
     help: '格架塔从接触点落到平台。先选粗细，再按需微调六项；高级参数收在折叠区里。',
   },
+  frame: {
+    title: '边框',
+    help: '沿模型包围盒生成笼架。顶梁加角立柱，Y 型、立柱和 A 字在下面选。',
+  },
   export: {
     title: '导出',
     help: '选底板，导出合并 STL 或仅支撑 STL，交给切片软件。',

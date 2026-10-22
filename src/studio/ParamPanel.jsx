@@ -4,10 +4,11 @@ import OrientStep from '../demo/components/steps/OrientStep.jsx';
 import AnalyzeStep from '../demo/components/steps/AnalyzeStep.jsx';
 import SupportStep from '../demo/components/steps/SupportStep.jsx';
 import ExportStep from '../demo/components/steps/ExportStep.jsx';
+import FrameStep from '../demo/components/steps/FrameStep.jsx';
 
 /* 「模型」步骤没有右侧参数卡：打开文件在顶栏，模型列表在左侧卡片，简化 / 演示模型 / 下一步在底栏；
    再留一张「载入模型」卡只会重复顶栏的按钮，所以这一步整张卡不渲染。 */
-const PANELS = { orient: OrientStep, analyze: AnalyzeStep, support: SupportStep, export: ExportStep };
+const PANELS = { orient: OrientStep, analyze: AnalyzeStep, support: SupportStep, frame: FrameStep, export: ExportStep };
 
 /** 这一步在右侧有没有参数卡（ShellC 据此决定要不要渲染卡片容器，不留空壳） */
 export const hasParamPanel = stage => Object.prototype.hasOwnProperty.call(PANELS, stage);

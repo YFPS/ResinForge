@@ -10,12 +10,12 @@ import { supMat, supMatAnchor } from '../../../core/scene.js';
 import { updateRaft } from '../../../core/model.js';
 import { joinLiftWanted } from '../../../core/joinPlate.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
-import { currentBaseType, doExport, onAutoPlateThickness, setBaseChamfer, setBaseFlush, setBaseHole, setBaseType, splitModelName } from '../../actions.js';
+import { currentBaseType, doExport, doExportFrame, onAutoPlateThickness, setBaseChamfer, setBaseFlush, setBaseHole, setBaseType, splitModelName } from '../../actions.js';
 import { STEPS, goStep, runTask, useUI } from '../../ui.js';
 import { Grid, Num, Section, SwitchRow } from '../fields.jsx';
 import { StepPanel } from '../StepPanel.jsx';
 
-const STEP = STEPS[4];
+const STEP = STEPS.find(s => s.id === 'export');
 
 const BASES = [
   { value: 'join', label: '连接底板', description: '支撑塔底部收成一条立起来的连接条，模型随之抬高一个板高' },
@@ -29,6 +29,7 @@ export default function ExportStep() {
   const [params, setParam] = useParams();
   const info = useBusLatest('modelInfo', null);
   const points = useBusValue(['supStats', 'sliceStats', 'modelInfo'], () => (state.supportPoints || []).length);
+  const frame = useBusLatest('frame', state.frame);
   const { busy } = useUI();
   const baseType = currentBaseType();
   const [justExported, setJustExported] = useState('');
@@ -62,6 +63,7 @@ export default function ExportStep() {
           onClick={() => exportNow(true)}
           actions={[
             { label: '仅导出支撑', icon: <Layers size={16} strokeWidth={1.75} />, disabled: !points, onSelect: () => exportNow(false) },
+            { label: '仅导出边框', icon: <Download size={16} strokeWidth={1.75} />, disabled: !frame, onSelect: () => runTask('export-frame', doExportFrame) },
           ]}
         />
       )}
@@ -129,6 +131,12 @@ export default function ExportStep() {
           checked={!!params.unionExport}
           onChange={v => setParam('unionExport', v)}
         />
+        <SwitchRow
+          label="导出时包含边框"
+          desc="已生成的笼架跟模型写进同一个 STL，不跟支撑做布尔并"
+          checked={params.bfExport !== false}
+          onChange={v => setParam('bfExport', v)}
+        />
       </Section>
 
       <Section title="导出内容">
@@ -146,6 +154,10 @@ export default function ExportStep() {
             </dd>
           </div>
           <div><dt>底板</dt><dd>{baseLabel}</dd></div>
+          <div>
+            <dt>边框</dt>
+            <dd>{frame ? (params.bfExport ? '写入模型文件' : '已生成，导出时不含') : '未生成'}</dd>
+          </div>
         </dl>
         <div className="legend">
           <span><i style={{ background: swatch(supMat) }} />落到平台的支撑</span>

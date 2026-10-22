@@ -23,7 +23,7 @@ import {
   capturePoses, capturePartSnaps, restorePartSnap, releaseSnaps, commitPoseHistory, commitGeomHistory,
 } from './model.js';
 import { undo, redo, pushHistory } from './history.js';
-import { clearSupports, updateSupStats } from './support.js';
+import { bakeSupportShift, clearSupports, previewSupportShift, supportsFollowParts, updateSupStats } from './support.js';
 import { hideInspector } from './inspect.js';
 
 /* 切片软件坐标：X / Y 在板面上，Z 向上。场景本身是 Y 朝上，所以切片 Y = 世界 +Z，切片 Z = 世界 +Y。 */
@@ -480,15 +480,24 @@ function planePoint(ray, origin, normal, out) {
   return p || null;
 }
 
+function clearAnalysisOnly() {
+  if (!state.analysis && !state.orientResult) return;
+  if (state.orientResult) {
+    state.orientResult = null;
+    bus.emit('orientResults', null);
+  }
+  state.analysis = null;
+  hideInspector();
+  bus.emit('sliceStats', null);
+}
+
 function invalidateWork() {
   const dirty = !!(state.analysis || (state.supportPoints && state.supportPoints.length) || (state.supports && state.supports.length));
   if (!dirty) return;
   clearSupports(false);
-  state.analysis = null;
-  hideInspector();
-  bus.emit('sliceStats', null);
+  clearAnalysisOnly();
   updateSupStats();
-  log('模型已移动，分析结果与支撑已清除，请重新分析', 'warn');
+  log('模型已旋转，分析结果与支撑已清除，请重新分析', 'warn');
 }
 
 function reallyMoved(snaps) {
@@ -560,7 +569,17 @@ function applyGesture(e) {
   }
   if (!g.moved && reallyMoved(g.snaps)) {
     g.moved = true;
-    invalidateWork();
+    if (g.kind === 'free' || g.kind === 'move') {
+      g.followSupports = supportsFollowParts(g.snaps.map(s => s.part.id));
+      clearAnalysisOnly();
+      log(g.followSupports
+        ? '模型已移动，支撑跟随。分析结果已清除，请重新分析'
+        : '模型已移动，支撑保留。分析结果已清除，请重新分析', 'warn');
+    } else invalidateWork();
+  }
+  if (g.moved && g.followSupports && (g.kind === 'free' || g.kind === 'move')) {
+    const s0 = g.snaps[0];
+    previewSupportShift(s0.part.ox - s0.ox, s0.part.oy - s0.oy, s0.part.oz - s0.oz);
   }
   if (g.moved) {
     if (!previewPartPose()) syncPlateMesh({ faces: false });
@@ -756,6 +775,10 @@ function endGesture() {
     return;
   }
   if (g.kind === 'rotate') seatPartsOnPlate(partsOf(g));
+  if (g.followSupports && (g.kind === 'free' || g.kind === 'move')) {
+    const s0 = g.snaps[0];
+    bakeSupportShift(g.snaps.map(s => s.part.id), s0.part.ox - s0.ox, s0.part.oy - s0.oy, s0.part.oz - s0.oz);
+  }
   commitPartEdit(g.kind === 'rotate');
   syncSelectionBoxes();
   if (g.kind === 'rotate') commitGeomHistory('旋转模型', g.before);

@@ -20,7 +20,7 @@ import { autoPlateAsync } from './geomClient.js';
 const _corner = new THREE.Vector3();
 import { computeFaceDataFull } from './slicer.js';
 import { autoPlateThickness } from './joinPlate.js';
-import { clearSupports, updateSupStats } from './support.js';
+import { clearSupports, shiftSupports, updateSupStats } from './support.js';
 import { buildBVH, raycast as bvhRaycast } from './collide.js';
 import { hideInspector } from './inspect.js';
 
@@ -848,8 +848,18 @@ export function setSelection(ids) {
   for (const id of ids || []) {
     if (state.parts.some(p => p.id === id) && !valid.includes(id)) valid.push(id);
   }
+  const prevKey = (state.selectedIds || []).slice().sort().join(',');
+  const nextKey = valid.slice().sort().join(',');
   state.selectedIds = valid;
   if (!valid.length) state.transformTool = null;
+  if (valid.length && nextKey !== prevKey) {
+    const had = (state.supports && state.supports.length) || (state.supportPoints && state.supportPoints.length);
+    if (had) {
+      clearSupports(false);
+      updateSupStats();
+      log('已选择模型，支撑已清除', 'warn');
+    }
+  }
   const primary = valid.length ? state.parts.find(p => p.id === valid[valid.length - 1]) : null;
   if (primary && primary.id !== state.activePartId) {
     state.activePartId = primary.id;
@@ -1078,20 +1088,49 @@ function applyPartSnaps(snaps, sel) {
 }
 
 function applyPoses(poses) {
+  const shifts = [];
+  let rotated = false;
   let any = false;
   for (const s of poses) {
     const part = state.parts.find(p => p.id === s.id);
     if (!part) continue;
+    const q = new THREE.Quaternion(s.q[0], s.q[1], s.q[2], s.q[3]);
+    if (part.q.angleTo(q) > 0.002) rotated = true;
+    shifts.push({
+      id: part.id,
+      dx: s.ox - part.ox,
+      dy: (s.oy || 0) - (part.oy || 0),
+      dz: s.oz - part.oz,
+    });
     part.ox = s.ox;
     part.oy = s.oy;
     part.oz = s.oz;
-    part.q.set(s.q[0], s.q[1], s.q[2], s.q[3]);
+    part.q.copy(q);
     any = true;
   }
   if (!any || !state.parts.length) return;
   syncPlateMesh({ faces: true });
   updateBuildVolume();
-  discardStaleWork('模型已改动，分析结果与支撑已清除，请重新分析');
+  if (rotated) discardStaleWork('模型已改动，分析结果与支撑已清除，请重新分析');
+  else {
+    const groups = new Map();
+    for (const s of shifts) {
+      const key = `${s.dx.toFixed(3)}|${s.dy.toFixed(3)}|${s.dz.toFixed(3)}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = { dx: s.dx, dy: s.dy, dz: s.dz, ids: [] });
+      g.ids.push(s.id);
+    }
+    for (const g of groups.values()) shiftSupports(g.ids, g.dx, g.dy, g.dz);
+    if (state.analysis || state.orientResult) {
+      state.analysis = null;
+      if (state.orientResult) {
+        state.orientResult = null;
+        bus.emit('orientResults', null);
+      }
+      hideInspector();
+      bus.emit('sliceStats', null);
+    }
+  }
   const part = activePart();
   if (part) syncPreview(part);
   emitModelInfo();

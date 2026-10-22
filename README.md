@@ -4,7 +4,7 @@
 
 浏览器版用 Vite + React。桌面版用 Tauri 2，打出 Windows 安装包。
 
-当前版本：0.4.0。许可：[MIT](LICENSE)。更新内容见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：0.5.0。许可：[MIT](LICENSE)。更新内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 浏览器里跑
 
@@ -34,4 +34,4 @@ Windows 上需要 Rust stable（MSVC）和 VS 2022 的 C++ 生成工具。WebVie
 
 ## 发布
 
-标记为 `v0.4.0` 的安装包在 [Releases](https://github.com/YFPS/ResinForge/releases)。桌面版从 `releases/latest/download/latest.json` 检查更新。
+标记为 `v0.5.0` 的安装包在 [Releases](https://github.com/YFPS/ResinForge/releases)。桌面版从 `releases/latest/download/latest.json` 检查更新。

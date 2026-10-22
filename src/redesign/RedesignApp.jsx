@@ -9,16 +9,16 @@ import { setHeat, isHeatOn } from '../core/heat.js';
 import { useBusLatest, useParams } from '../demo/bridge.js';
 import { getUI, goStep, runTask, useDone, useUI } from '../demo/ui.js';
 import {
-  doAnalyze, doClearSupports, doExport, doGenSupports, doLoadDemo, doOrient,
+  doAnalyze, doBuildFrame, doClearSupports, doExport, doExportFrame, doGenSupports, doLoadDemo, doOrient,
   doRebuild, pickSTL, splitModelName,
 } from '../demo/actions.js';
 import {
   MobileMenu, NextButton, RedesignToasts, Sidebar, Stage, StatusBar, TopBar,
 } from './parts.jsx';
 import { STEP_COPY, fmt1, fmt2, fmtInt } from './copy.jsx';
-import { AnalyzePanel, ExportPanel, ModelPanel, OrientPanel, SupportPanel } from './panels.jsx';
+import { AnalyzePanel, ExportPanel, FramePanel, ModelPanel, OrientPanel, SupportPanel } from './panels.jsx';
 
-const PANELS = { model: ModelPanel, orient: OrientPanel, analyze: AnalyzePanel, support: SupportPanel, export: ExportPanel };
+const PANELS = { model: ModelPanel, orient: OrientPanel, analyze: AnalyzePanel, support: SupportPanel, frame: FramePanel, export: ExportPanel };
 
 export default function RedesignApp() {
   const { step, busy } = useUI();
@@ -27,6 +27,7 @@ export default function RedesignApp() {
   const infoRaw = useBusLatest('modelInfo', null);
   const slice = useBusLatest('sliceStats', null);
   useBusLatest('supStats', null);     // 只用来让页面跟结构统计一起重绘
+  const frame = useBusLatest('frame', state.frame);
   const orient = useBusLatest('orientResults', null) || [];
   const heat = useBusLatest('heat', false);
   const mode = useBusLatest('mode', 'orbit');
@@ -146,6 +147,11 @@ export default function RedesignApp() {
         ? `${fmtInt(points)} 个支撑点 · ${stats ? fmtInt(stats.nodes) : '—'} 个格架节点 · ${openIslands || 0} 处孤岛仍悬空。`
         : STEP_COPY.support.help;
     }
+    if (step === 'frame') {
+      return frame
+        ? `边框 ${frame.sizeText} · ${fmtInt(frame.triangles)} 面 · ${frame.pillars} 根立柱。`
+        : STEP_COPY.frame.help;
+    }
     return `底板：${params.autoPlateOn ? '自动底板' : '连接底板'} · ${params.unionExport ? '导出前布尔并' : '交给切片软件并集'} · ${fmt2(params.layerH)} mm 层厚`;
   })();
 
@@ -183,6 +189,20 @@ export default function RedesignApp() {
         >
           {slice ? '重新分析' : '运行逐层分析'}
         </Button>
+      );
+    }
+    if (step === 'frame') {
+      return (
+        <div className="rf-split">
+          <SplitButton
+            label={busy === 'frame' ? '正在生成…' : done.frame ? '重新生成边框' : '生成边框'}
+            disabled={!!busy}
+            onClick={() => runTask('frame', doBuildFrame)}
+            actions={[
+              { label: '仅导出边框', disabled: !done.frame, onSelect: () => runTask('export-frame', doExportFrame) },
+            ]}
+          />
+        </div>
       );
     }
     if (step === 'support') {

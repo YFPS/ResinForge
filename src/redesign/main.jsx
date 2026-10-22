@@ -13,6 +13,7 @@ import { loadDemo, loadSTLBuffer, loadSTLBuffers, setActivePart, setSelection, p
 import { setPointsOnly } from '../core/support.js';
 import { rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings } from '../core/slicer.js';
 import '../demo/actions.js';        // 注册 enterSupport / leaveSupport / enterAddSupport 等流程副作用
+import { initBBoxFrame, rebuildFrame, clearFrame } from '../core/bboxView.js';
 import RedesignApp from './RedesignApp.jsx';
 
 /* 这套界面固定浅色（framed-sheet），不读 localStorage 的主题；
@@ -21,6 +22,7 @@ document.documentElement.setAttribute('data-theme', 'light');
 document.documentElement.setAttribute('data-accent', 'neutral');
 
 initMachine(params);
+initBBoxFrame();
 
 /* three.js 不读 CSS 变量：视口底色 = 画布凹面的色值，模型压成石墨灰。
    updateBuildVolume 读 data-theme 决定板面网格与坐标轴的颜色，所以必须在设完 light 之后跑。 */
@@ -36,7 +38,8 @@ syncPartTint();
 
 /* 与 Studio 同构的调试口（.ref 下的 harness 依赖这些） */
 window.state = state;
+window.params = params;
 window.THREE = THREE;
-window.__dbg = { loadDemo, loadSTLBuffer, loadSTLBuffers, setActivePart, setSelection, setMode, partBounds, clampPartsAboveZ, plateAxisOrigin, framePart, setPointsOnly, simplifySelection, rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings, camera, getControls, scalePartTo, scalePartAxis };
+window.__dbg = { loadDemo, loadSTLBuffer, loadSTLBuffers, setActivePart, setSelection, setMode, partBounds, clampPartsAboveZ, plateAxisOrigin, framePart, setPointsOnly, simplifySelection, rasterizeSection, analyze, buildLDI, sampleLDILayer, compareLDI, ldiColumnCrossings, camera, getControls, scalePartTo, scalePartAxis, rebuildFrame, clearFrame };
 
 createRoot(document.getElementById('root')).render(<RedesignApp />);

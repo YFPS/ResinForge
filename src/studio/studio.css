@@ -75,7 +75,7 @@
 
 .stuPill { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--radius-pill); background: var(--surface-muted); }
 .stuPillBtn {
-  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
   border: 0; border-radius: var(--radius-pill); background: none;
   color: var(--text-muted); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap;
 }

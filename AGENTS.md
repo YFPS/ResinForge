@@ -15,7 +15,7 @@ ResinForge 是一个**纯浏览器端**的光固化（SLA/DLP/LCD）3D 打印自
 - 支撑结构：**支撑塔**（格架塔，2026-10-14 起为**三角格**规避版：斜边单向折返、孔为三角形，与 Materialise 菱形格架专利的图案拉开距离；同一移除树状后为唯一模式）；全程胶囊体避让，可落板也可锚定模型表面（短小支撑）
 - 导出合并 STL 或仅支撑 STL
 
-版本：v0.4.0（Studio 桌面版）
+版本：v0.5.0（Studio 桌面版）
 语言：界面与代码注释以中文为主。
 
 ---
@@ -107,7 +107,7 @@ npm run build     # 产物到 dist/（index.html 跳转 + studio.html）
 
 ```bash
 npm run desktop:dev     # 桌面开发：起 vite（beforeDevCommand）+ 编译 Rust + 打开窗口
-npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/ResinForge_0.4.0_x64-setup.exe
+npm run desktop:build   # 出安装包 src-tauri/target/release/bundle/nsis/ResinForge_0.5.0_x64-setup.exe
 ```
 
 - 工具链（首次需要）：Rust（rustup，stable-x86_64-pc-windows-msvc）+ VS 2022 Build Tools（Microsoft.VisualStudio.Workload.VCTools 工作负载）；WebView2 系统自带；NSIS 由 Tauri bundler 自动下载。首次编译约 2 分钟（346 个 crate）。

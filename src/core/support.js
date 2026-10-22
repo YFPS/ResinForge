@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor, supMatBase, supMatGlass, supMatAnchorGlass } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, localFaceOf, supportScopeIds, supportScopeNote, partAtWorld } from './model.js';
+import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, raftObject, localFaceOf, supportScopeIds, supportScopeNote, partAtWorld } from './model.js';
 import { drawLayer, shiftAnalysisY } from './inspect.js';
 import { joinLiftWanted, joinPlateHeight } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
@@ -303,6 +303,73 @@ export function setSupportView(v) {
 
 /** 兼容旧入口：只显示支撑点开 / 关 */
 export function setPointsOnly(on) { setSupportView(on ? 'point' : 'full'); }
+function shiftPositionAttr(geom, dx, dy, dz) {
+  const attr = geom && geom.attributes && geom.attributes.position;
+  if (!attr) return;
+  const a = attr.array;
+  for (let i = 0; i < a.length; i += 3) {
+    a[i] += dx;
+    a[i + 1] += dy;
+    a[i + 2] += dz;
+  }
+  attr.needsUpdate = true;
+  geom.computeBoundingBox();
+  geom.computeBoundingSphere();
+}
+
+/** 拖动过程中只挪显示，不改顶点。松手再 bakeSupportShift 写进几何。 */
+export function previewSupportShift(dx, dy, dz) {
+  supportGroup.position.set(dx, dy, dz);
+  const raft = raftObject();
+  if (raft) raft.position.set(dx, 0, dz);
+}
+
+/** 这些零件的支撑是否可以整组跟着平移。别的零件上还有支撑时不能整组挪。 */
+export function supportsFollowParts(partIds) {
+  const ids = new Set(partIds || []);
+  for (const p of state.supportPoints || []) {
+    if (p.partId != null && !ids.has(p.partId)) return false;
+  }
+  return !!((state.supportPoints && state.supportPoints.length) || (state.supports && state.supports.length));
+}
+
+/** 把支撑点和支撑网格平移。有别的零件的支撑时只挪属于这些零件的点，网格留在原地。 */
+export function shiftSupports(partIds, dx, dy, dz) {
+  if (Math.hypot(dx, dy, dz) < 1e-4) return false;
+  const ids = new Set(partIds || []);
+  const pts = state.supportPoints || [];
+  const follow = supportsFollowParts(partIds);
+  let moved = false;
+  for (const p of pts) {
+    if (!follow && p.partId != null && !ids.has(p.partId)) continue;
+    if (!follow && p.partId == null) continue;
+    p.x += dx;
+    p.y += dy;
+    p.z += dz;
+    if (p.ax !== undefined) {
+      p.ax += dx;
+      p.ay = (p.ay || 0) + dy;
+      p.az += dz;
+    }
+    moved = true;
+  }
+  if (follow) {
+    for (const s of state.supports || []) shiftPositionAttr(s.mesh && s.mesh.geometry, dx, dy, dz);
+    const raft = raftObject();
+    if (raft && raft.geometry) shiftPositionAttr(raft.geometry, dx, 0, dz);
+    moved = moved || (state.supports || []).length > 0;
+  }
+  if (pointMesh) paintPointMarkers(pts);
+  if (moved) updateSupStats();
+  return moved;
+}
+
+/** 松手：去掉拖动时的显示偏移，把同一段位移写进支撑。 */
+export function bakeSupportShift(partIds, dx, dy, dz) {
+  previewSupportShift(0, 0, 0);
+  return shiftSupports(partIds, dx, dy, dz);
+}
+
 export function clearSupports(refresh = true) {
   buildSeq++;                                         // 正在后台算的重建作废
   clearMeshes();

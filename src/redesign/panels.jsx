@@ -10,12 +10,13 @@ import { setHeat } from '../core/heat.js';
 import { setMode } from '../core/scene.js';
 import { handleRaiseHChange } from '../core/model.js';
 import { SUP_COLOR, SUP_ANCHOR_COLOR } from '../core/scene.js';
+import { FRAME_COLOR } from '../core/bboxFrame.js';
 import { joinLiftWanted } from '../core/joinPlate.js';
 import { SUPPORT_TEMPLATES, trunkLinkage } from '../core/supportTemplates.js';
 import { useBusLatest, useParams } from '../demo/bridge.js';
 import {
   DEMOS, activeSupportTemplate, applySupportTemplate, doApplyCandidate, doLoadDemo,
-  doRebuild, doSetSupView, focusModel, pickSTL, setBaseType, splitModelName,
+  doRebuild, doSetSupView, focusModel, onFrameParam, pickSTL, setBaseType, splitModelName,
 } from '../demo/actions.js';
 import { runTask } from '../demo/ui.js';
 import { ControlRow, EmptyBox, HeatScale, KV, Legend, Num, Section, SwitchRow } from './parts.jsx';
@@ -435,8 +436,84 @@ export function ExportPanel() {
         <Legend items={[
           { color: hex(SUP_COLOR), label: '落板支撑 / 底板' },
           { color: hex(SUP_ANCHOR_COLOR), label: '短小支撑' },
+          { color: hex(FRAME_COLOR), label: '包围盒边框' },
           { color: '#5f6468', label: '模型' },
         ]} />
+      </Section>
+    </>
+  );
+}
+
+export function FramePanel() {
+  const [p, setParam] = useParams();
+  const frame = useBusLatest('frame', state.frame);
+  const set = (k, v) => { setParam(k, v); onFrameParam(); };
+  return (
+    <>
+      <Section title="边框" note="顶面四条梁，四角立柱落到平台。已经生成过的边框会跟着参数重算。">
+        <ControlRow label="范围">
+          <SegmentedControl
+            label="边框范围"
+            options={[{ value: 'all', label: '全部' }, { value: 'selected', label: '选中' }]}
+            value={p.bfScope || 'all'}
+            onValueChange={v => set('bfScope', v)}
+          />
+        </ControlRow>
+        <div className="rf-stack">
+          <Num k="bfBeam" label="边框宽度" min={0.4} max={12} step={0.1} unit="mm" onChange={onFrameParam} />
+          <Num k="bfOffset" label="水平间距" min={0} max={30} step={0.5} unit="mm" onChange={onFrameParam} />
+          <Num k="bfSupportGap" label="支撑间距" min={0} max={30} step={0.5} unit="mm" onChange={onFrameParam} />
+          <Num k="bfTop" label="顶部高出" min={0} max={40} step={0.5} unit="mm" onChange={onFrameParam} />
+        </div>
+      </Section>
+      <Section title="支撑">
+        <SegmentedControl
+          label="边框支撑"
+          options={[
+            { value: 'none', label: '无' },
+            { value: 'y', label: 'Y型' },
+            { value: 'pillar', label: '立柱' },
+            { value: 'aframe', label: 'A字' },
+          ]}
+          value={p.bfSupport || 'pillar'}
+          onValueChange={v => set('bfSupport', v)}
+        />
+        {p.bfSupport === 'y' ? (
+          <div className="rf-grid2">
+            <Num k="bfYHeight" label="分叉高度" min={4} max={60} step={1} unit="mm" onChange={onFrameParam} />
+            <Num k="bfYSpacing" label="间距" min={8} max={80} step={1} unit="mm" onChange={onFrameParam} />
+          </div>
+        ) : null}
+        {(p.bfSupport === 'pillar' || !p.bfSupport) ? (
+          <div className="rf-stack">
+            <Num k="bfPillarSpacing" label="立柱间距" min={6} max={80} step={1} unit="mm" onChange={onFrameParam} />
+            <Num k="bfPillarW" label="立柱宽度" min={0.4} max={12} step={0.1} unit="mm" onChange={onFrameParam} />
+            <Num k="bfPillarD" label="立柱高度" min={0.4} max={12} step={0.1} unit="mm" onChange={onFrameParam} />
+          </div>
+        ) : null}
+        {p.bfSupport === 'aframe' ? (
+          <div className="rf-stack">
+            <Num k="bfASpacing" label="A字间距" min={8} max={80} step={1} unit="mm" onChange={onFrameParam} />
+            <Num k="bfABase" label="底部宽度" min={4} max={60} step={1} unit="mm" onChange={onFrameParam} />
+            <Num k="bfAConverge" label="汇聚高度" min={4} max={80} step={1} unit="mm" onChange={onFrameParam} />
+          </div>
+        ) : null}
+      </Section>
+      <Section title="底板">
+        <SwitchRow label="生成底板" checked={!!p.bfPlate} onChange={v => set('bfPlate', v)} />
+        <SwitchRow label="打孔" checked={!!p.bfHoles} onChange={v => set('bfHoles', v)} />
+        <div className="rf-stack">
+          <Num k="bfPlateH" label="板厚" min={0.4} max={6} step={0.1} unit="mm" onChange={onFrameParam} />
+          <Num k="bfPlateOffset" label="外扩" min={0} max={20} step={0.5} unit="mm" onChange={onFrameParam} />
+          <Num k="bfPlateAngle" label="栅角" min={0} max={45} step={1} unit="°" onChange={onFrameParam} />
+        </div>
+      </Section>
+      <Section title="边框状态">
+        <KV rows={[
+          ['外形', frame ? frame.sizeText : '—', ''],
+          ['三角面', frame ? fmtInt(frame.triangles) : '—', ''],
+        ]} />
+        <Legend items={[{ color: hex(FRAME_COLOR), label: '包围盒边框' }]} />
       </Section>
     </>
   );

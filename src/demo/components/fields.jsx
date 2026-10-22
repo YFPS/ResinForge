@@ -39,9 +39,9 @@ export function Section({ title, aside, desc, help, children }) {
   );
 }
 
-/** 两列栅格：数值框成对排布，密而不挤 */
-export function Grid({ children }) {
-  return <div className="fieldGrid">{children}</div>;
+/** 两列栅格：数值框成对排布。stack 时改成一列竖排，三个一组时用这个，避免第三项单独折到下一行。 */
+export function Grid({ children, stack = false }) {
+  return <div className={stack ? 'fieldStack' : 'fieldGrid'}>{children}</div>;
 }
 
 const limitHint = (edge, limit) => (edge === 'max' ? `最大 ${limit}` : `最小 ${limit}`);

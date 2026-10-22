@@ -68,6 +68,51 @@ export const params = {
   apChamferAngle: 15, // 栅角角度（°）
   /* 导出 */
   unionExport: true,  // 导出前用 manifold-3d 把支撑各构件布尔并成一张水密外壳（消共面重复面与非流形边；仅导出时算，不进实时回路）
+  /* 包围盒边框：顶梁 + 角立柱的笼架，可选 Y 型 / 立柱 / A 字、底板和加强筋 */
+  bfScope: 'all',         // all 全部模型 / selected 只包选中的
+  bfBeam: 2,              // 边框宽度（mm）
+  bfOffset: 1,            // 水平间距（mm）：笼架离模型的 XZ 距离
+  bfSupportGap: 2,        // 支撑间距（mm）：边框内壁离支撑外表面的空隙。没有支撑时不生效
+  bfTop: 2,               // 顶部高出（mm）
+  bfSupport: 'pillar',    // none / y / pillar / aframe
+  bfYHeight: 20,
+  bfYSpacing: 40,
+  bfPillarSpacing: 30,
+  bfPillarW: 2,           // 立柱宽度：垂直于边
+  bfPillarD: 2,           // 立柱高度：沿边方向的截面边长
+  bfASpacing: 40,
+  bfABase: 20,
+  bfAConverge: 30,
+  bfACross: true,
+  bfACrossRatio: 0.5,
+  bfPlate: true,
+  bfPlateH: 1.3,
+  bfPlateOffset: 0,
+  bfPlateAngle: 15,
+  bfHoles: false,
+  bfHoleShape: 'circle',  // circle / square
+  bfHoleR: 1,
+  bfHoleSpacing: 4,
+  bfArc: false,
+  bfArcH: 0,              // 0 = 按边长自动
+  bfArcCurve: 100,
+  bfInner: false,
+  bfInnerSpacing: 2,
+  bfInnerR: 1.5,
+  bfInnerMargin: 3,
+  bfReinf: false,
+  bfReinfType: 'x',       // 立柱 x/rice；A 字 ladder/diamond/radial
+  bfReinfLayers: 5,
+  bfReinfSpacing: 10,
+  bfReinfRatio: 0.7,
+  bfYBetween: false,
+  bfYWithin: false,
+  bfYBranch: false,
+  bfYTrunk: false,
+  bfAToCorner: false,
+  bfFollow: true,         // 模型移动后重算笼架
+  bfVisible: true,
+  bfExport: true,         // 导出模型时把边框写进同一个 STL
 };
 
 /* 应用状态（对应旧 main.js 的 state；faces 为原模块级变量——完整面数据 {nrm,area,cent}，随几何重建） */
@@ -90,6 +135,7 @@ export const state = {
   mode: 'orbit',
   painting: false,
   faces: null,              // 原 main.js 模块级 `let faces`（完整法线面数据）
+  frame: null,              // 包围盒边框统计 { triangles, pillars, partIds, sizeText, ... }
 };
 
 /* 迷你事件总线 */

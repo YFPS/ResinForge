@@ -2,6 +2,14 @@
 
 写给使用 ResinForge 的人看的，尽量少用术语。更早的版本见 [Releases](https://github.com/YFPS/ResinForge/releases)。
 
+## 0.5.1 — 2026-10-23
+
+热更新。生成支撑之后点一下模型，支撑不再消失。
+
+- 点选模型、再点一次，支撑都留着。旋转和缩放仍会清掉，因为朝向和尺寸变了。
+- 机型补了 2025–2026 的 Elegoo、Creality、Anycubic，以及 UniFormation GK3 / GK3 Pro / GK3 Ultra。
+- 顶栏步骤离窗口顶边留出空隙。
+
 ## 0.5.0 — 2026-10-23
 
 这一版加了打印用的包围盒边框，并修了移动模型时支撑被清掉的问题。

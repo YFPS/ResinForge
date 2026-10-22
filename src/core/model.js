@@ -848,18 +848,8 @@ export function setSelection(ids) {
   for (const id of ids || []) {
     if (state.parts.some(p => p.id === id) && !valid.includes(id)) valid.push(id);
   }
-  const prevKey = (state.selectedIds || []).slice().sort().join(',');
-  const nextKey = valid.slice().sort().join(',');
   state.selectedIds = valid;
   if (!valid.length) state.transformTool = null;
-  if (valid.length && nextKey !== prevKey) {
-    const had = (state.supports && state.supports.length) || (state.supportPoints && state.supportPoints.length);
-    if (had) {
-      clearSupports(false);
-      updateSupStats();
-      log('已选择模型，支撑已清除', 'warn');
-    }
-  }
   const primary = valid.length ? state.parts.find(p => p.id === valid[valid.length - 1]) : null;
   if (primary && primary.id !== state.activePartId) {
     state.activePartId = primary.id;

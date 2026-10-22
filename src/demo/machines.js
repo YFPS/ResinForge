@@ -25,6 +25,17 @@ export const BUILTIN_MACHINES = [
   { id: 'halotmage', brand: 'Creality', model: 'Halot Mage', plateX: 228, plateY: 230, plateZ: 128, pixelUm: 29 },
   { id: 'mighty8k', brand: 'Phrozen', model: 'Sonic Mighty 8K', plateX: 218, plateY: 235, plateZ: 123, pixelUm: 28 },
   { id: 'mega8k', brand: 'Phrozen', model: 'Sonic Mega 8K', plateX: 330, plateY: 300, plateZ: 185, pixelUm: 43 },
+  /* 2025–2026 国内新品。像素不是正方形时，pixelUm 取较细的一轴。
+     Saturn 4 Ultra 16K / HALOT-X1 / UniFormation GK3：14×19 µm；Jupiter 2 / GK3 Ultra：20×26 µm；Photon P1：16.8×24.8 µm。 */
+  { id: 'saturn4u16k', brand: 'Elegoo', model: 'Saturn 4 Ultra 16K', plateX: 211.68, plateY: 220, plateZ: 118.37, pixelUm: 14 },
+  { id: 'jupiter2', brand: 'Elegoo', model: 'Jupiter 2', plateX: 302, plateY: 300, plateZ: 162, pixelUm: 20 },
+  { id: 'halotx1', brand: 'Creality', model: 'HALOT-X1', plateX: 211.68, plateY: 200, plateZ: 118.37, pixelUm: 14 },
+  { id: 'm7max', brand: 'Anycubic', model: 'Photon Mono M7 Max', plateX: 298, plateY: 300, plateZ: 164, pixelUm: 46 },
+  { id: 'photonp1', brand: 'Anycubic', model: 'Photon P1', plateX: 223, plateY: 230, plateZ: 126, pixelUm: 16.8 },
+  { id: 'photonp1max', brand: 'Anycubic', model: 'Photon P1 Max', plateX: 285.5, plateY: 300, plateZ: 214, pixelUm: 24.8 },
+  { id: 'gk3', brand: 'UniFormation', model: 'GK3', plateX: 211, plateY: 240, plateZ: 118, pixelUm: 14 },
+  { id: 'gk3pro', brand: 'UniFormation', model: 'GK3 Pro', plateX: 211, plateY: 240, plateZ: 118, pixelUm: 14 },
+  { id: 'gk3ultra', brand: 'UniFormation', model: 'GK3 Ultra', plateX: 300, plateY: 300, plateZ: 160, pixelUm: 20 },
   { id: 'form3', brand: 'Formlabs', model: 'Form 3（激光）', plateX: 145, plateY: 185, plateZ: 145, pixelUm: 85 },
   { id: 'form4', brand: 'Formlabs', model: 'Form 4（激光）', plateX: 200, plateY: 210, plateZ: 125, pixelUm: 50 },
 ];

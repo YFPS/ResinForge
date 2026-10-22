@@ -1,6 +1,6 @@
 [package]
 name = "resinforge"
-version = "0.3.3"
+version = "0.4.0"
 description = "ResinForge 光固化自动支撑"
 authors = ["ResinForge"]
 license = "MIT"

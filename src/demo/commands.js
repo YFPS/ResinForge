@@ -55,7 +55,7 @@ export function buildCommands(ctx) {
 
     { id: 'vmode-orbit', group: '视口', title: '旋转视角', icon: ic(MousePointer2), run: () => setMode('orbit') },
     { id: 'vmode-paint', group: '视口', title: '涂画保护面', icon: ic(Paintbrush), run: () => { goStep('orient'); setMode('paint'); } },
-    { id: 'vmode-add', group: '视口', title: '添加支撑', keywords: ['加支撑', '手动支撑', '加点'], icon: ic(Plus), run: () => { goStep('support'); setMode('add'); } },
+    { id: 'vmode-add', group: '视口', title: '添加 / 拖动支撑', keywords: ['加支撑', '手动支撑', '加点', '拖针尖', '移动支撑'], icon: ic(Plus), run: () => { goStep('support'); setMode('add'); } },
     { id: 'vmode-del', group: '视口', title: '删除支撑', keywords: ['删支撑', '删点'], icon: ic(Minus), run: () => { goStep('support'); setMode('del'); } },
     { id: 'vmode-poly', group: '视口', title: '多线段加支撑', hint: '逐点画折线，双击或回车沿线布点', keywords: ['多线段', 'polyline'], icon: ic(Spline), run: () => { goStep('support'); setMode('poly'); } },
     { id: 'heat', group: '视口', title: heatOn ? '关闭支撑热力图' : '打开支撑热力图', icon: ic(Flame), run: () => setHeat(!heatOn) },

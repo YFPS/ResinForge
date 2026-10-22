@@ -52,6 +52,8 @@ const ITEMS = [
   'theme-switch',
   'command-palette',
   'icon-morph',
+  /* redesign.html 的支撑模板选择用 */
+  'chip-group',
 ];
 
 /** 已就地打补丁的组件（React 18 兼容等），改动需在 fetch 后手动重放 */

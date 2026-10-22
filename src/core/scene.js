@@ -9,9 +9,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast, setProgress } from '../store.js';
-import { loadDemo, loadModelFiles, localFaceOf, raiseH, plateAxisOrigin, acceptSupportFace } from './model.js';
+import { loadDemo, loadModelFiles, localFaceOf, raiseH, baseY, plateAxisOrigin, acceptSupportFace } from './model.js';
 import { modelKind } from './meshio.js';
-import { addSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
+import { addSupportPoint, moveSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
 import { showHeightLine, clearHeightLine } from './heightLine.js';
 import { downPolyLine, movePolyLine, finishPolyLine, cancelPolyLine } from './polyLine.js';
 import { initManipulate, tickManipulate } from './manipulate.js';
@@ -280,6 +280,8 @@ export function setMode(m) {
   controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
   controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
   canvas.style.cursor = m === 'orbit' ? 'default' : 'crosshair';
+  cancelTipDrag();
+  clearSupportHover();
   if (m !== 'add') clearHeightLine();
   if (m !== 'poly') cancelPolyLine();
   if (m === 'del') prepareSupportColors();
@@ -289,7 +291,13 @@ export function setMode(m) {
   // 加支撑：先分析，再默认打开热力图，进来就是分析完成后的样子。
   // 退出加支撑 / 多线段 / 删支撑时关掉热力图。多线段和删支撑本身不强迫打开。
   const manual = x => x === 'add' || x === 'del' || x === 'poly';
-  if (m === 'add' && prev !== 'add') bus.emit('enterAddSupport');
+  if (m === 'add' && prev !== 'add') {
+    if (!tipHintShown) {
+      tipHintShown = true;
+      log('加点：点模型朝下的面加点；按在支撑杆身或针尖上可选中并拖动这一根。按 V 切到「仅连接体」视图更容易点中');
+    }
+    bus.emit('enterAddSupport');
+  }
   else if ((m === 'del' || m === 'poly') && !manual(prev)) bus.emit('enterManual');
   if (!manual(m) && manual(prev)) bus.emit('leaveManual');
 }
@@ -335,6 +343,416 @@ function supportIndexNear(x, y, px = 16) {
   return best;
 }
 
+/* ================================================================
+   选中 / 拖拽已有支撑
+   ----------------------------------------------------------------
+   认哪一根支撑按「离指针最近的可见针身」来，不再只认针尖：
+   - 按下时先射线打针身网格（真几何、前面那根优先），命中点找最近的针段（needleList 的针尖 C ↔ 针根 N）；
+   - 射线没打中（细杆、远距离）再按屏幕距离找针段（12px），最后才退到针尖（16px）；
+   - 背面（法线背对相机）的候选只在正面一个都没有时才接受，密集支撑里优先眼前这一侧；
+   - 悬停就画蓝环 + 针身高亮线，先看清抓住的是哪一根，再按下。
+   拖动仍只在松手时重建结构。 */
+const SHAFT_PICK_PX = 12;
+const TIP_PICK_PX = 16;
+const TIP_DRAG_COLOR = 0xff3df2;
+const HOVER_COLOR = 0x63c9ff;
+let tipDrag = null;
+let tipGhost = null;
+let tipHintShown = false;
+let hoverMark = null;
+let hoverIndex = -1;
+const _hgrV = new THREE.Vector3();
+const _hgrA = { x: 0, y: 0, z: 0 };
+const _hgrB = { x: 0, y: 0, z: 0 };
+
+/** 遍历当前结构里的每根针。needleList 来自最后一次重建；点集增删后索引会错位，针尖对不上当前点就跳过。 */
+function eachNeedle(cb) {
+  const L = state.supportStats && state.supportStats.needleList;
+  const pts = state.supportPoints || [];
+  if (!Array.isArray(L) || !L.length || !pts.length) return;
+  for (let k = 0; k < L.length; k++) {
+    const nd = L[k];
+    if (!nd || !nd.N) continue;
+    const p = pts[nd.pi];
+    if (!p) continue;
+    const c = nd.C;
+    const tx = c ? c[0] : p.x, ty = c ? c[1] : p.y, tz = c ? c[2] : p.z;
+    if (Math.hypot(tx - p.x, ty - p.y, tz - p.z) > 1.5) continue;
+    cb(nd, tx, ty, tz);
+  }
+}
+
+function toScreen(x, y, z, rect, out) {
+  _hgrV.set(x, y, z).project(camera);
+  out.x = (_hgrV.x * 0.5 + 0.5) * rect.width + rect.left;
+  out.y = (-_hgrV.y * 0.5 + 0.5) * rect.height + rect.top;
+  out.z = _hgrV.z;
+  return out;
+}
+
+/** 被托面法线是否朝着相机。背面候选只在正面一个都没有时才用。 */
+function tipFrontFacing(p) {
+  const n = p.n;
+  if (!n) return true;
+  return n[0] * (camera.position.x - p.x) + n[1] * (camera.position.y - p.y) + n[2] * (camera.position.z - p.z) > 0;
+}
+
+function segDist2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const L = dx * dx + dy * dy;
+  const t = L > 1e-9 ? Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / L)) : 0;
+  const qx = ax + dx * t, qy = ay + dy * t;
+  return { d2: (px - qx) ** 2 + (py - qy) ** 2, t };
+}
+
+function pointSegDist2(px, py, pz, ax, ay, az, bx, by, bz) {
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  const L = dx * dx + dy * dy + dz * dz;
+  const t = L > 1e-12 ? Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / L)) : 0;
+  const qx = ax + dx * t, qy = ay + dy * t, qz = az + dz * t;
+  return (px - qx) ** 2 + (py - qy) ** 2 + (pz - qz) ** 2;
+}
+
+/** 屏幕坐标附近最近的针身（投影成线段量距离）；同一像素距离取更靠前的。 */
+function nearestNeedleScreen(x, y, px = SHAFT_PICK_PX, rect = null) {
+  const rc = rect || (canvas && canvas.getBoundingClientRect());
+  if (!canvas || !rc) return -1;
+  const r2 = px * px;
+  const scan = (frontOnly) => {
+    let best = -1, bd = r2, bz = Infinity;
+    eachNeedle((nd, tx, ty, tz) => {
+      const p = (state.supportPoints || [])[nd.pi];
+      if (!p) return;
+      if (frontOnly && !tipFrontFacing(p)) return;
+      toScreen(tx, ty, tz, rc, _hgrA);
+      toScreen(nd.N[0], nd.N[1], nd.N[2], rc, _hgrB);
+      if (_hgrA.z > 1 || _hgrB.z > 1) return;
+      const { d2, t } = segDist2(x, y, _hgrA.x, _hgrA.y, _hgrB.x, _hgrB.y);
+      if (d2 > bd + 0.01) return;
+      const z = _hgrA.z + (_hgrB.z - _hgrA.z) * t;
+      if (Math.abs(d2 - bd) <= 0.01 && z >= bz) return;
+      bd = d2; bz = z; best = nd.pi;
+    });
+    return best;
+  };
+  const front = scan(true);
+  return front >= 0 ? front : scan(false);
+}
+
+/** 射线命中点（针身表面）附近最近的针段。tol 要盖住针截面半径 + 一点点抖动。 */
+function nearestNeedleToPoint(hx, hy, hz, tol = 1.0) {
+  let best = -1, bd = tol * tol;
+  eachNeedle((nd, tx, ty, tz) => {
+    const d2 = pointSegDist2(hx, hy, hz, tx, ty, tz, nd.N[0], nd.N[1], nd.N[2]);
+    if (d2 < bd) { bd = d2; best = nd.pi; }
+  });
+  return best;
+}
+
+/** 屏幕坐标附近最近的针尖；先只认正面，正面没有才放宽。 */
+function tipIndexNearScreen(x, y, px = TIP_PICK_PX) {
+  const pts = state.supportPoints || [];
+  if (!canvas || !pts.length) return -1;
+  const rect = canvas.getBoundingClientRect();
+  const r2 = px * px;
+  const scan = (frontOnly) => {
+    let best = -1, bd = r2;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (frontOnly && !tipFrontFacing(p)) continue;
+      _hgrV.set(p.x, p.y, p.z).project(camera);
+      if (_hgrV.z > 1 || _hgrV.z < -1) continue;
+      const dx = (_hgrV.x * 0.5 + 0.5) * rect.width + rect.left - x;
+      const dy = (-_hgrV.y * 0.5 + 0.5) * rect.height + rect.top - y;
+      const d = dx * dx + dy * dy;
+      if (d <= bd) { bd = d; best = i; }
+    }
+    return best;
+  };
+  const front = scan(true);
+  return front >= 0 ? front : scan(false);
+}
+
+/** 指针下的支撑点：射线打针身 → 屏幕距离找针身 → 针尖。格架不参与，免得点塔身误抓一根支撑。 */
+function supportIndexAtPointer(e, withRay) {
+  const pts = state.supportPoints || [];
+  if (!pts.length) return -1;
+  if (withRay && state.mesh) {
+    const meshes = [];
+    for (const s of state.supports) if (s.part === 'needle' && s.mesh.visible) meshes.push(s.mesh);
+    if (meshes.length) {
+      const hits = pointerRay(e).intersectObjects(meshes, false);
+      for (let i = 0; i < hits.length && i < 6; i++) {
+        const h = hits[i];
+        const byNeedle = nearestNeedleToPoint(h.point.x, h.point.y, h.point.z, 1.0);
+        if (byNeedle >= 0) return byNeedle;
+        // 短小支撑（十字短杆 / 分叉）不在 needleList 里，按命中点就近认点；远于 4mm 不认
+        const near = supportIndexNearHit(h.point.x, h.point.y, h.point.z);
+        if (near >= 0) {
+          const q = pts[near];
+          if (q && Math.hypot(q.x - h.point.x, q.y - h.point.y, q.z - h.point.z) < 4) return near;
+        }
+      }
+    }
+  }
+  const shaft = nearestNeedleScreen(e.clientX, e.clientY);
+  if (shaft >= 0) return shaft;
+  return tipIndexNearScreen(e.clientX, e.clientY);
+}
+
+function ensureHoverMark() {
+  if (hoverMark) return hoverMark;
+  const g = new THREE.Group();
+  g.name = 'supportHover';
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.85, 28),
+    new THREE.MeshBasicMaterial({ color: HOVER_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthTest: false, depthWrite: false }),
+  );
+  ring.raycast = () => {};
+  ring.renderOrder = 9;
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({ color: HOVER_COLOR, transparent: true, opacity: 0.75, depthTest: false, depthWrite: false }),
+  );
+  line.raycast = () => {};
+  line.renderOrder = 8;
+  g.add(ring, line);
+  g.visible = false;
+  scene.add(g);
+  hoverMark = g;
+  return g;
+}
+
+/** 悬停环按像素大小缩放（远近都看得见），并沿针轴画一条高亮线。 */
+function placeHoverMark(index) {
+  const p = (state.supportPoints || [])[index];
+  const g = ensureHoverMark();
+  if (!p) { g.visible = false; hoverIndex = -1; return; }
+  const ring = g.children[0], line = g.children[1];
+  let root = null;
+  eachNeedle(nd => { if (nd.pi === index && !root) root = nd.N; });
+  if (root) {
+    const a = line.geometry.attributes.position;
+    a.setXYZ(0, p.x, p.y, p.z);
+    a.setXYZ(1, root[0], root[1], root[2]);
+    a.needsUpdate = true;
+    line.geometry.computeBoundingSphere();
+    line.visible = true;
+  } else line.visible = false;
+  g.visible = true;
+  tickSupportHover();
+}
+
+function tickSupportHover() {
+  if (!hoverMark || !hoverMark.visible) return;
+  const p = (state.supportPoints || [])[hoverIndex];
+  if (!p) { clearSupportHover(); return; }
+  const ring = hoverMark.children[0];
+  ring.position.set(p.x, p.y, p.z);
+  const dist = camera.position.distanceTo(ring.position);
+  const perPx = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * dist / Math.max(1, canvas.clientHeight);
+  ring.scale.setScalar(perPx * 11 / 0.85);
+  ring.lookAt(camera.position);
+}
+
+function setSupportHover(index) {
+  if (index === hoverIndex) {
+    if (index >= 0) placeHoverMark(index);
+    return;
+  }
+  hoverIndex = index;
+  if (index < 0) { if (hoverMark) hoverMark.visible = false; return; }
+  placeHoverMark(index);
+}
+
+let hoverTimer = 0;
+
+function cancelHoverPick() {
+  if (!hoverTimer) return;
+  clearTimeout(hoverTimer);
+  hoverTimer = 0;
+}
+
+function clearSupportHover() {
+  cancelHoverPick();
+  hoverIndex = -1;
+  if (hoverMark) hoverMark.visible = false;
+}
+
+/** 这一根支撑的针根（格架节点 / 自由针的落点）。短小支撑没有针，返回 null。 */
+function rootOfPoint(index) {
+  let root = null;
+  eachNeedle(nd => {
+    if (nd.pi === index && !root) root = { x: nd.N[0], y: nd.N[1], z: nd.N[2] };
+  });
+  return root;
+}
+
+/** 悬停环用「停顿一下再射线」：指针移动时先只换光标，停 55ms 才精确认一次。
+ *  射线只打针身网格（几十万面也只要一两毫秒），不会像逐帧打整模那样卡；
+ *  这样环画出来的就是按下时真正会抓住的那一根，不会指错。 */
+function scheduleSupportHover(x, y, cheap) {
+  if (hoverMark && hoverMark.visible && hoverIndex === cheap) return;
+  cancelHoverPick();
+  hoverIndex = -1;
+  if (hoverMark) hoverMark.visible = false;
+  hoverTimer = setTimeout(() => {
+    hoverTimer = 0;
+    if (!canvas || state.mode !== 'add' || tipDrag) return;
+    const idx = supportIndexAtPointer({ clientX: x, clientY: y }, true);
+    if (idx >= 0) setSupportHover(idx);
+  }, 55);
+}
+
+function ensureTipGhost() {
+  if (tipGhost) return tipGhost;
+  const g = new THREE.Group();
+  g.name = 'tipDragGhost';
+  const tip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.85, 16, 12),
+    new THREE.MeshBasicMaterial({ color: TIP_DRAG_COLOR, transparent: true, opacity: 0.92, depthWrite: false }),
+  );
+  tip.raycast = () => {};
+  tip.renderOrder = 6;
+  const band = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({ color: TIP_DRAG_COLOR, transparent: true, opacity: 0.95, depthTest: false }),
+  );
+  band.raycast = () => {};
+  band.renderOrder = 5;
+  const drop = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineDashedMaterial({ color: 0xc8d2df, dashSize: 0.8, gapSize: 0.5, transparent: true, opacity: 0.4, depthTest: false }),
+  );
+  drop.raycast = () => {};
+  drop.renderOrder = 4;
+  g.add(tip, band, drop);
+  g.userData = { tip, band, drop };
+  scene.add(g);
+  tipGhost = g;
+  return g;
+}
+
+/** 幽灵：针尖球（新位置）＋ 针根到新针尖的预演杆（没有针根时从原针尖拉过来）＋ 新针尖落到平台 / 底板顶面的引导线。
+ *  invalid 时整套变红。预演杆让支撑看起来是绕针根转过去的，不用等格架重算完才知道落点。 */
+function placeTipGhost(pos, valid) {
+  const d = tipDrag;
+  if (!d) return;
+  const g = ensureTipGhost();
+  const { tip, band, drop } = g.userData;
+  const col = valid ? TIP_DRAG_COLOR : 0xff4d4d;
+  tip.position.set(pos.x, pos.y, pos.z);
+  tip.material.color.setHex(col);
+  const from = d.root || d.from;
+  const bp = band.geometry.attributes.position;
+  bp.setXYZ(0, from.x, from.y, from.z);
+  bp.setXYZ(1, pos.x, pos.y, pos.z);
+  bp.needsUpdate = true;
+  band.geometry.computeBoundingSphere();
+  band.material.color.setHex(col);
+  const footY = Math.min(baseY(), pos.y - 0.01);
+  const dp = drop.geometry.attributes.position;
+  dp.setXYZ(0, pos.x, pos.y, pos.z);
+  dp.setXYZ(1, pos.x, footY, pos.z);
+  dp.needsUpdate = true;
+  drop.geometry.computeBoundingSphere();
+  drop.computeLineDistances();
+}
+
+function disposeTipGhost() {
+  if (!tipGhost) return;
+  scene.remove(tipGhost);
+  tipGhost.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) o.material.dispose();
+  });
+  tipGhost = null;
+}
+
+function beginTipDrag(e, index) {
+  if (tipDrag) cancelTipDrag();           // 第二根手指 / 上一次没收尾的拖动：先收干净
+  if (tipGhost) disposeTipGhost();        // 上一次落点还在重建：撤掉预演杆，换这一根
+  const pts = state.supportPoints || [];
+  const pt = pts[index];
+  if (!pt) return false;
+  clearSupportHover();
+  tipDrag = {
+    pt, pid: e.pointerId, x0: e.clientX, y0: e.clientY,
+    active: false, hasHit: false, valid: false,
+    from: { x: pt.x, y: pt.y, z: pt.z },
+    root: rootOfPoint(index),
+    pos: { x: pt.x, y: pt.y, z: pt.z },
+    normal: null, face: -1, partId: pt.partId,
+    prevSel: [...supportSelection()],
+  };
+  setSupportSelection([index]);          // 整根支撑先变洋红：确认抓住的是哪一根
+  canvas.style.cursor = 'grab';
+  // 捕获指针：拖到画布外（甚至拖过窗口标题栏）也能收到 pointermove / pointerup，幽灵不会卡在画面上
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* 触屏浏览器可能不支持，退回 window 监听 */ }
+  return true;
+}
+
+function moveTipDrag(e) {
+  const d = tipDrag;
+  if (!d) return;
+  if (!d.active && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 4) return;
+  d.active = true;
+  const hits = state.mesh ? pointerRay(e).intersectObject(state.mesh) : [];
+  const h = hits[0];
+  if (!h) { d.hasHit = false; d.valid = false; placeTipGhost(d.pos, false); canvas.style.cursor = 'not-allowed'; return; }
+  const fn = h.face ? h.face.normal : null;
+  const prot = state.protectedFaces.has(h.faceIndex);
+  const up = !fn || fn.y > 0.3;
+  d.valid = !prot && !up;
+  d.hasHit = true;
+  d.pos = { x: h.point.x, y: h.point.y, z: h.point.z };
+  d.normal = fn ? [fn.x, fn.y, fn.z] : [0, -1, 0];
+  d.face = h.faceIndex;
+  const loc = localFaceOf(h.faceIndex);
+  if (loc) d.partId = loc.part.id;
+  placeTipGhost(d.pos, d.valid);
+  canvas.style.cursor = d.valid ? 'grabbing' : 'not-allowed';
+}
+
+function finishTipDrag() {
+  const d = tipDrag;
+  tipDrag = null;
+  if (!d) return;
+  if (canvas) { try { canvas.releasePointerCapture(d.pid); } catch { /* 没捕获或已自动释放 */ } }
+  canvas.style.cursor = state.mode === 'add' ? 'crosshair' : 'default';
+  if (!d.active) { disposeTipGhost(); return; }   // 只点了一下：保持选中，不重建
+  if (!d.hasHit) { disposeTipGhost(); toast('请把针尖拖到模型表面上再松手'); return; }
+  if (!d.valid) {
+    disposeTipGhost();
+    toast(state.protectedFaces.has(d.face) ? '该面为保护面，已阻止移动支撑' : '只能把针尖拖到朝下（悬空）的表面上');
+    return;
+  }
+  const idx = (state.supportPoints || []).indexOf(d.pt);
+  if (idx < 0) { disposeTipGhost(); return; }     // 拖动期间点集被清空 / 重建替换：放弃这次落点
+  const moved = Math.hypot(d.pos.x - d.from.x, d.pos.y - d.from.y, d.pos.z - d.from.z);
+  if (moved < 0.05) { disposeTipGhost(); return; } // 手抖几像素：不值得整次重建
+  if (!acceptSupportFace(d.face)) { disposeTipGhost(); return; } // 多件时只接受当前选中零件的面（与手动加点同一条规则）
+  // 重算格架要一两秒：预演杆留在画面上，等新结构上屏再撤，免得支撑先「弹回原位」再跳过去
+  const pendingGhost = tipGhost;
+  canvas.style.cursor = 'progress';
+  moveSupportPoint(idx, d.pos, d.normal, d.partId).finally(() => {
+    if (tipGhost === pendingGhost) {
+      disposeTipGhost();
+      if (canvas) canvas.style.cursor = state.mode === 'add' ? 'crosshair' : 'default';
+    }
+  });
+}
+
+function cancelTipDrag() {
+  const d = tipDrag;
+  if (!d) return;
+  tipDrag = null;
+  if (canvas) { try { canvas.releasePointerCapture(d.pid); } catch { /* 没捕获或已自动释放 */ } }
+  disposeTipGhost();
+  setSupportSelection(d.prevSel);
+  if (canvas) canvas.style.cursor = state.mode === 'add' ? 'crosshair' : 'default';
+}
+
 function ensureSupBox() {
   if (supBoxEl) return supBoxEl;
   supBoxEl = document.createElement('div');
@@ -362,8 +780,10 @@ function cancelSupBox() {
   if (supBoxEl) supBoxEl.hidden = true;
 }
 
-/** 单击：优先打在支撑杆身上，其次才是屏幕上的支撑点。只选中，不删除。 */
+/** 单击：优先按针身认（看得见哪根点哪根），其次打支撑杆身，最后才是屏幕上的支撑点。只选中，不删除。 */
 function pickClickedSupport(x, y) {
+  const byNeedle = supportIndexAtPointer({ clientX: x, clientY: y }, true);
+  if (byNeedle >= 0) return byNeedle;
   const screen = supportIndexNear(x, y, 16);
   const hits = pointerRay({ clientX: x, clientY: y }).intersectObjects(supportGroup.children, false);
   const hit = hits.find(h => h.object.userData.kind === 'ground' || h.object.userData.kind === 'anchor');
@@ -406,6 +826,13 @@ function typingTarget() {
 function onSupportKey(e) {
   if (e.isComposing || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
   const k = (e.key || '').toLowerCase();
+  // 拖拽针尖中按 Esc：放弃这次移动，结构保持原样
+  if (tipDrag && (k === 'escape' || e.code === 'Escape')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    cancelTipDrag();
+    return;
+  }
   // 接触点间距面板会把焦点放进数字框。多线段的回车 / Esc 仍要生效，不能当成在打字。
   if (state.mode === 'poly' && (k === 'enter' || e.code === 'Enter')) {
     const el = document.activeElement;
@@ -705,6 +1132,14 @@ export function initScene(canvasEl) {
     if (e.button !== 0) return;   // 仅左键触发涂画/加/删支撑；右键（旋转）/ 中键（平移）交给 OrbitControls
     if (state.mode === 'paint') { state.painting = true; paintAt(e); }
     else if (state.mode === 'add' && state.mesh) {
+      // 先认支撑：按在针身或针尖附近都算抓住这一根（射线优先，看见哪根抓哪根），否则才是新增点
+      const tip = supportIndexAtPointer(e, true);
+      if (tip >= 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        beginTipDrag(e, tip);
+        return;
+      }
       const hits = pointerRay(e).intersectObject(state.mesh);
       if (!hits.length) return;   // 没点到模型：不加支撑。旋转改由右键，平移改由中键
       e.stopPropagation();
@@ -746,15 +1181,41 @@ export function initScene(canvasEl) {
   window.addEventListener('keydown', onSupportKey, true);
   canvas.addEventListener('pointermove', e => {
     if (state.painting && state.mode === 'paint') paintAt(e);
+    if (e.buttons !== 0) clearSupportHover();   // 拖视角 / 拖支撑时不挂悬停环
     // 加支撑时画高度线。多线段只画贴在表面上的折线，不再叠高度线。
     if ((state.mode === 'add' || state.mode === 'poly') && state.mesh && e.buttons === 0) {
       const hits = pointerRay(e).intersectObject(state.mesh);
-      canvas.style.cursor = hits.length ? 'crosshair' : 'default';
-      if (state.mode === 'add') showHeightLine(hits[0] || null, polyView());
-      if (state.mode === 'poly') movePolyLine(hits[0] || null, polyView());
+      if (state.mode === 'add') {
+        // 悬停先认针身 / 针尖：光标立即变抓，蓝环等指针停 55ms 再用射线确认（见 scheduleSupportHover）
+        const cand = supportIndexAtPointer(e, false);
+        canvas.style.cursor = cand >= 0 ? 'grab' : (hits.length ? 'crosshair' : 'default');
+        if (cand >= 0) {
+          showHeightLine(null, polyView());
+          scheduleSupportHover(e.clientX, e.clientY, cand);
+        } else {
+          clearSupportHover();
+          showHeightLine(hits[0] || null, polyView());
+        }
+      } else {
+        canvas.style.cursor = hits.length ? 'crosshair' : 'default';
+        movePolyLine(hits[0] || null, polyView());
+      }
+    } else if (state.mode !== 'add') {
+      clearSupportHover();
     }
   });
+  canvas.addEventListener('pointerleave', () => clearSupportHover());
   window.addEventListener('pointerup', () => { state.painting = false; });
+  // 拖拽针尖：指针可能在画布外松开，统一听 window，按 pointerId 认这一根手指 / 鼠标
+  window.addEventListener('pointermove', e => {
+    if (tipDrag && e.pointerId === tipDrag.pid) moveTipDrag(e);
+  });
+  window.addEventListener('pointerup', e => {
+    if (tipDrag && e.pointerId === tipDrag.pid) finishTipDrag();
+  });
+  window.addEventListener('pointercancel', e => {
+    if (tipDrag && e.pointerId === tipDrag.pid) cancelTipDrag();
+  });
 
   /* 拖放 STL / OBJ / 3MF。不支持的文件直接提示，不清掉板上已有的模型。
      浏览器走 HTML5 drop。Windows 桌面壳会换成自己的投放目标，并关掉 WebView2 的外部拖放，
@@ -784,6 +1245,7 @@ export function initScene(canvasEl) {
     controls.update();
     stepCamera(tWork);
     tickManipulate();
+    tickSupportHover();
     renderer.render(scene, camera);
     tickViewCube();
     samplePerf(tWork);

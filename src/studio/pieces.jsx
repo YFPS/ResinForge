@@ -281,7 +281,7 @@ export function ViewportDock({ trailing }) {
       active: manualMode || undefined,
       icon: manualIcon,
       items: [
-        { id: 'add', label: '添加支撑', icon: <AddIcon {...tip} state={mode === 'add'} /> },
+        { id: 'add', label: '加点 / 拖针尖', icon: <AddIcon {...tip} state={mode === 'add'} /> },
         { id: 'del', label: '删除支撑', icon: <DelIcon {...tip} state={mode === 'del'} /> },
         { id: 'poly', label: '多线段', icon: <PolyIcon {...tip} state={mode === 'poly'} /> },
       ],

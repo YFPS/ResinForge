@@ -20,12 +20,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
+        // 根路径转到 Studio。Studio 是正式界面，redesign 是独立的新界面设计稿（同一套 core）。
         main: path.resolve(root, 'index.html'),
-        demo: path.resolve(root, 'demo.html'),
         studio: path.resolve(root, 'studio.html'),
-        library: path.resolve(root, 'library.html'),
-        projects: path.resolve(root, 'projects.html'),
-        login: path.resolve(root, 'login.html'),
+        redesign: path.resolve(root, 'redesign.html'),
       },
     },
   },

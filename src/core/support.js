@@ -352,6 +352,29 @@ function islandCoverage() {
   return { fail, noPoint, open: fail + noPoint };
 }
 
+/** 手动挪点（拖拽针尖）后重新认孤岛：点落在某个孤岛节点首层的像素上、高度也在那层附近，
+ *  才算这个孤岛的支撑点；认不出来就返回 null，统计按「未托住」如实报。
+ *  不这么做的话，把孤岛种子拖到别处后统计仍显示已托住，是最危险的一种假绿。 */
+function islandAtPoint(x, y, z) {
+  const A = state.analysis;
+  const g = A && A.grid;
+  const nodes = (A && A.graph && A.graph.nodes) || [];
+  if (!g || !nodes.length) return null;
+  const ci = Math.floor((x - g.x0) / g.sx), cj = Math.floor((z - g.z0) / g.sz);
+  if (ci < 0 || cj < 0 || ci >= g.W || cj >= g.H) return null;
+  const key = cj * g.W + ci;
+  const tol = Math.max(1.5, (g.layerH || 0.05) * 2);
+  let best = null, bd = tol;
+  for (const nd of nodes) {
+    if (!nd.island || !nd.pixels || !nd.pixels.length) continue;
+    const dy = Math.abs(nd.y - y);
+    if (dy > bd) continue;
+    if (nd.pixels.indexOf(key) < 0) continue;     // 孤岛保留的像素表：Array / TypedArray 都有 indexOf
+    bd = dy; best = nd.id;
+  }
+  return best;
+}
+
 /* 参数快照（结构生成器只读快照，缺省值兜底） */
 function paramSnapshot() {
   const p = params, num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -1403,6 +1426,29 @@ export async function addSupportPoint(p, n, partId) {
   state.supportPoints.push(pt);
   if (!(await rebuildStructure())) return;            // 被更新的重建取代（连点加点时只有最后一次出日志）
   log(`手动支撑点 @ (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) → ${STATE_TEXT[pt.state] || '未生成'}`, pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro' ? 'ok' : 'warn');
+}
+
+/* 拖拽针尖：把一个已有支撑点挪到新的接触点，再整体重建结构。
+   p 为世界系接触点，n 为被托面外法线，partId 为命中的零件。
+   写回布点位置 ax / ay / az（建塔时从这里重新算针）与接触点 x / y / z；手动点标记保留，
+   套用模板重布点时不会被清掉。格架杆件互相连接，不能只改这一根针，所以走整次重建。
+   拖动过程中的视觉反馈在 scene.js（幽灵针尖 + 橡皮筋），数据只在这一步落库。 */
+export async function moveSupportPoint(index, p, n, partId) {
+  if (!state.analysis || !state.mesh) { toast('请先运行逐层分析'); return false; }
+  const pts = state.supportPoints || [];
+  const pt = pts[index];
+  if (!pt || !p) return false;
+  pt.ax = p.x; pt.ay = p.y; pt.az = p.z;
+  pt.x = p.x; pt.y = p.y; pt.z = p.z;
+  if (n && (n[0] || n[1] || n[2])) pt.n = [n[0], n[1], n[2]];
+  pt.manual = true;
+  if (partId != null) pt.partId = partId;
+  pt.island = islandAtPoint(p.x, p.y, p.z);          // 挪出孤岛就不再算它的支撑点（统计如实报）
+  if (!(await rebuildStructure())) return false;     // 被更新的重建取代
+  const ok = pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro';
+  log(`拖拽针尖 → (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) · ${STATE_TEXT[pt.state] || '未生成'}`, ok ? 'ok' : 'warn');
+  if (!ok) toast('这个位置生成不了支撑（标红），可以再拖一次');
+  return ok;
 }
 
 /* 多线段一次加一串点，只重建一次结构。 */

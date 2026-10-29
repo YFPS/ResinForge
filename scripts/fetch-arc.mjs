@@ -52,7 +52,7 @@ const ITEMS = [
   'theme-switch',
   'command-palette',
   'icon-morph',
-  /* redesign.html 的支撑模板选择用 */
+  /* 目前没有页面使用（原先给 redesign.html 的支撑模板选择用） */
   'chip-group',
 ];
 
@@ -73,7 +73,20 @@ const PATCHED = {
   'number-field/number-field.tsx':
     'scrub 的指针事件同时绑在数值区域上（不只是标签），拖完一次后抑制紧接着的点击，避免把输入框重新选中。',
   'command-palette/command-palette.tsx':
-    '界面文案本地化：默认分组 Actions → 操作、空结果提示与清除 / 关闭按钮的中文名；右侧快捷键徽标按平台显示 ⌘ K 或 Ctrl K。',
+    '界面文案本地化：默认分组 Actions → 操作、空结果提示与清除 / 关闭按钮的中文名；右侧快捷键徽标按平台显示 ⌘ K 或 Ctrl K。' +
+    '外壳不做入场动画（Ctrl/⌘ K 高频）；筛选不做行布局滑动，清空按钮只淡入不缩放。',
+  'motion-tokens.ts':
+    'ease.exit 从 ease-in 改为强 ease-out；补 ease.drawer 与 duration.panel（280ms）。',
+  'popover/popover.module.css':
+    '弹层 transform 从 580ms 弹簧改为 160ms ease-out；硬边框改为阴影环。',
+  'drawer/drawer.module.css':
+    '进场 480ms 改为 280ms ease-drawer，退出更快；浮层硬边框改为阴影环，容器内抽屉仍留实线。',
+  'toast/toast.tsx':
+    'ToastProps 增加 tone（"success" | "danger"，命名与 alert.tsx 的 AlertTone 对齐）：danger 时图标换成叉、' +
+    'role 改 alert / aria-live 改 assertive；成功样式不变。',
+  'toast/toast.module.css':
+    '硬边框改为阴影环；进场用 translate/scale 的 CSS 过渡，不跟拖拽的 transform 抢属性；' +
+    '图标圈增加 [data-tone="danger"] 变体（边框 24% / 底色 10% 换成 --danger），整张 toast 的底色与边框不变。',
   'card/card.tsx':
     '快速查看的遮罩不再用 AnimatePresence 包 Radix Dialog.Overlay（React 18 下会给函数组件传 ref 报警告），改为静态 Overlay；' +
     '面板 morph 与关闭回落逻辑不变。',

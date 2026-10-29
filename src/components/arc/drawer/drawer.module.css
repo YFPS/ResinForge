@@ -8,8 +8,6 @@
 
 .content {
   --drawer-size: min(30rem, calc(100vw - var(--space-4)));
-  /* Critically damped, like a sheet spring: it never overshoots past the edge it is anchored to. */
-  --ease-drawer: cubic-bezier(.32,.72,0,1);
   --drawer-from: translateX(100%);
   position: fixed;
   z-index: 51;
@@ -19,10 +17,10 @@
   max-width: 100vw;
   max-height: 100dvh;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: var(--surface-raised);
   color: var(--foreground);
-  box-shadow: var(--shadow-floating);
+  box-shadow: var(--shadow-edge), var(--shadow-floating);
 }
 /* While a layer leaves it lets clicks through, so pressing the trigger again during the close reopens the drawer from wherever it is. */
 /* Radix writes pointer-events inline on the overlay, so the closing state has to win over it. */
@@ -38,15 +36,15 @@
 .content[data-side="left"] { --drawer-from: translateX(-100%); }
 .content[data-side="top"] { --drawer-from: translateY(-100%); }
 .content[data-side="bottom"] { --drawer-from: translateY(100%); }
-.keyframes.overlay[data-state="open"] { animation: overlay-in var(--duration-standard) var(--ease-enter) both; }
-.keyframes.overlay[data-state="closed"] { animation: overlay-out var(--duration-fast) var(--ease-standard) both; }
-.keyframes.content[data-state="open"] { animation: drawer-in var(--duration-considered) var(--ease-drawer) both; }
-.keyframes.content[data-state="closed"] { animation: drawer-out var(--duration-standard) var(--ease-standard) both; }
+.keyframes.overlay[data-state="open"] { animation: overlay-in var(--duration-panel) var(--ease-enter) both; }
+.keyframes.overlay[data-state="closed"] { animation: overlay-out var(--duration-fast) var(--ease-enter) both; }
+.keyframes.content[data-state="open"] { animation: drawer-in var(--duration-panel) var(--ease-drawer) both; }
+.keyframes.content[data-state="closed"] { animation: drawer-out var(--duration-fast) var(--ease-enter) both; }
 .content:focus { outline: none; }
 /* Inside a container the layers anchor to that element instead of the viewport. */
 .overlay[data-contained], .content[data-contained] { position: absolute; }
 .overlay[data-contained] { z-index: 1; background: oklch(10% 0 0 / .16); backdrop-filter: none; }
-.content[data-contained] { --drawer-size: min(22rem, calc(100% - var(--space-8))); z-index: 2; max-height: 100%; box-shadow: none; }
+.content[data-contained] { --drawer-size: min(22rem, calc(100% - var(--space-8))); z-index: 2; max-height: 100%; border-color: var(--border); box-shadow: none; }
 .content[data-contained][data-side="top"], .content[data-contained][data-side="bottom"] { max-height: min(32rem, calc(100% - var(--space-8))); }
 /* The container already draws the outer edges, so only the inner edge keeps a border. */
 .content[data-contained][data-side] { border-width: 0; }
@@ -65,7 +63,7 @@
 .title { margin: 0; font-family: var(--font-body); font-size: var(--text-lg); font-weight: 500; letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
 .description { max-width: 32rem; margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); }
 /* Centered on the first line of the title rather than its top edge. */
-.close { display: grid; flex: 0 0 auto; width: var(--space-8); height: var(--space-8); margin-top: calc((var(--text-lg) * var(--leading-body) - var(--space-8)) / 2); place-items: center; border: 1px solid var(--border); border-radius: var(--radius-control); background: color-mix(in oklab, var(--surface-muted) 65%, transparent); color: var(--text-secondary); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-spring) var(--ease-spring); }
+.close { display: grid; flex: 0 0 auto; width: var(--space-8); height: var(--space-8); margin-top: calc((var(--text-lg) * var(--leading-body) - var(--space-8)) / 2); place-items: center; border: 1px solid var(--border); border-radius: var(--radius-control); background: color-mix(in oklab, var(--surface-muted) 65%, transparent); color: var(--text-secondary); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); }
 @media (hover: hover) and (pointer: fine) { .close:hover { background: var(--surface-muted); color: var(--foreground); } }
 .close:active { transform: scale(.96); transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
 .body { min-height: 0; overflow: auto; padding: var(--space-6); font-size: var(--text-sm); line-height: var(--leading-body); overscroll-behavior: contain; scrollbar-width: thin; }

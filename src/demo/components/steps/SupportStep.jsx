@@ -11,6 +11,7 @@ import { setMode } from '../../../core/scene.js';
 import { handleRaiseHChange } from '../../../core/model.js';
 import { SUPPORT_TEMPLATES, getSupportTemplate, trunkLinkage } from '../../../core/supportTemplates.js';
 import { joinLiftWanted } from '../../../core/joinPlate.js';
+import { scopeHasSupports } from '../../../core/support.js';
 import { useBusLatest, useBusValue, useParams } from '../../bridge.js';
 import { activeSupportTemplate, applySupportTemplate, doClearSupports, doGenSupports, doRebuild, doSetSupView, focusModel, splitModelName } from '../../actions.js';
 import { STEPS, runTask, useDone, useUI } from '../../ui.js';
@@ -155,12 +156,13 @@ export default function SupportStep() {
   const info = useBusLatest('modelInfo', null);
   const supView = useBusLatest('supView', 'full');
   const points = useBusValue(['supStats', 'sliceStats', 'modelInfo'], () => (state.supportPoints || []).length);
+  /* 选中的模型都已经有支撑才叫「重新生成」。还有没支撑的，按钮保持「生成支撑」，只补那几件。 */
+  const again = useBusValue(['supStats', 'selection', 'modelInfo'], () => scopeHasSupports());
   const done = useDone();
   const { busy } = useUI();
   const running = busy.startsWith('sup');
 
-  /* 底部一行要放下 SplitButton + 「下一步：导出」（共 320px），完成态文案用短的「重新生成」，刷新图标已说明是再来一次 */
-  const label = running ? '正在生成…' : done.support ? '重新生成' : '生成支撑';
+  const label = running ? '正在生成…' : again ? '重新生成' : '生成支撑';
   const actions = [
     { label: '只补孤岛支撑', icon: <ShieldAlert size={16} strokeWidth={1.75} />, onSelect: () => runTask('sup-isl', () => doGenSupports({ islandsOnly: true })) },
     { label: '按当前参数重建结构', icon: <RefreshCw size={16} strokeWidth={1.75} />, disabled: !points, onSelect: () => runTask('sup-rebuild', doRebuild) },
@@ -174,7 +176,7 @@ export default function SupportStep() {
         <>
           <SplitButton
             label={label}
-            icon={done.support && !running ? <RefreshCw size={16} strokeWidth={1.75} /> : <Sparkles size={16} strokeWidth={1.75} />}
+            icon={again && !running ? <RefreshCw size={16} strokeWidth={1.75} /> : <Sparkles size={16} strokeWidth={1.75} />}
             disabled={!!busy}
             onClick={() => runTask('sup-auto', () => doGenSupports())}
             actions={actions}
@@ -195,7 +197,7 @@ export default function SupportStep() {
           onChange={setMode}
         />
         {info && info.parts && info.parts.length > 1 ? (
-          <div className="partList" role="list" aria-label="跳到模型">
+          <div className="partList" role="list" aria-label="选择模型">
             {info.parts.map(p => (
               <button
                 key={p.id}
@@ -206,7 +208,7 @@ export default function SupportStep() {
               >
                 <Crosshair size={15} strokeWidth={1.75} aria-hidden="true" />
                 <span className="partName">{splitModelName(p.name).name}</span>
-                <span className="partMeta">跳转</span>
+                <span className="partMeta">选中</span>
               </button>
             ))}
           </div>

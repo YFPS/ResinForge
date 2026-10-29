@@ -1,4 +1,5 @@
-/* 桌面版（Tauri）自定义标题栏：36px 独立一条，左 = 应用图标 + 名称，右 = 最小化 / 最大化 / 关闭。
+/* 桌面版（Tauri）自定义标题栏：36px 独立一条，左 = 名称，右 = 最小化 / 最大化 / 关闭。
+   标志只留在侧栏，标题栏不再放。
    无边框窗口（tauri.conf.json 的 decorations: false）下代替系统标题栏；整条可按住拖动，
    双击最大化/还原由 Tauri 内置（drag region 的系统行为），窗口按钮走 @tauri-apps/api。
    data-tauri-drag-region 只对直接标记的元素生效——纯视觉子元素用 pointer-events: none 让点击落到容器上，
@@ -6,14 +7,26 @@
 import React, { useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
-/** 品牌标记。标题栏和 Studio 顶栏共用。 */
-export function BrandMark() {
+/* 对角波纹：左上先亮，逐格推迟 100ms，右下最晚。只在加载时用。 */
+const RIPPLE_DELAY = ['', 'd-1', 'd-2', 'd-1', 'd-2', 'd-3', 'd-2', 'd-3', 'd-4'];
+
+/** 品牌标记。侧栏传 spin 才转；标题栏保持静图，和任务栏一致。 */
+export function BrandMark({ spin = false }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="1.2" y="1.2" width="29.6" height="29.6" rx="9" fill="none" stroke="currentColor" strokeWidth="2.4" />
-      <path d="M9 23V16.2C9 11.2 12.2 8 16 8s7 3.2 7 8.2V23" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M12.2 23v-6.2c0-2.4 1.6-4 3.8-4s3.8 1.6 3.8 4V23" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-    </svg>
+    <span className="rfLogo" data-spin={spin || undefined} aria-hidden="true">
+      <span className="rfLogoRing" />
+    </span>
+  );
+}
+
+/** 九宫格波纹，只用于加载，不当标志。 */
+export function RippleLoader() {
+  return (
+    <span className="rfLoader" aria-hidden="true">
+      {RIPPLE_DELAY.map((delay, i) => (
+        <span key={i} className={delay ? `rfCell ${delay}` : 'rfCell'} />
+      ))}
+    </span>
   );
 }
 
@@ -50,7 +63,6 @@ export default function TitleBar() {
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="tbApp" data-tauri-drag-region>
-        <span className="tbAppMark"><BrandMark /></span>
         <span className="tbAppName">ResinForge</span>
       </div>
       <div className="tbWin">

@@ -13,7 +13,8 @@ export default function ToastHost() {
           key={t.id}
           title={t.title}
           description={t.description}
-          duration={t.duration || 3000}
+          tone={t.tone}
+          duration={t.duration || (t.tone === 'danger' ? 6000 : 3000)}
           /* 先让 Toast 播完退场动画再摘除 */
           onOpenChange={open => { if (!open) setTimeout(() => dismissToast(t.id), 360); }}
         />

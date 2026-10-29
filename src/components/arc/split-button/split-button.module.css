@@ -1,6 +1,6 @@
 /* One pill, two actions. The whole pill presses in for the main action; the menu half answers in color only, because Radix measures it on pointerdown to place the menu. */
-.group { display: inline-flex; align-items: stretch; border: 1px solid var(--foreground); border-radius: var(--radius-control); background: var(--foreground); transition: transform var(--duration-spring) var(--ease-spring); }
-.group:has(> .primary:active:not(:disabled)) { transform: scale(.97); transition-duration: var(--duration-instant); transition-timing-function: var(--ease-standard); }
+.group { display: inline-flex; align-items: stretch; border: 1px solid var(--foreground); border-radius: var(--radius-control); background: var(--foreground); transition: transform var(--duration-fast) var(--ease-standard); }
+.group:has(> .primary:active:not(:disabled)) { transform: scale(.97); transition-duration: 100ms; }
 .primary, .trigger { border: 0; background: var(--foreground); color: var(--background); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard); }
 .primary { position: relative; display: inline-grid; min-height: var(--control-height-md); place-items: center; padding: 0 var(--space-4); border-radius: calc(var(--radius-control) - 1px) 0 0 calc(var(--radius-control) - 1px); font-size: var(--text-sm); font-weight: 500; }
 /* The slot springs to the width of the next label; the content leads from the start edge and is clipped only while it morphs. */
@@ -12,7 +12,7 @@
 .glyphs { position: relative; display: inline-flex; flex: none; white-space: pre; }
 .glyph { display: inline-block; }
 .trigger { display: grid; width: 38px; min-height: var(--control-height-md); place-items: center; border-left: 1px solid color-mix(in oklab, var(--background) 18%, var(--foreground)); border-radius: 0 calc(var(--radius-control) - 1px) calc(var(--radius-control) - 1px) 0; }
-.chevron { transition: transform var(--duration-spring) var(--ease-spring); }
+.chevron { transition: transform var(--duration-fast) var(--ease-standard); }
 .trigger[data-state="open"] .chevron { transform: rotate(180deg); }
 @media (hover: hover) and (pointer: fine) {
   .primary:hover:not(:disabled), .trigger:hover:not(:disabled) { background: color-mix(in oklab, var(--foreground) 88%, var(--background)); }
@@ -29,7 +29,7 @@
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The menu grows from the trigger edge: offset toward the trigger, scale from the Radix origin, fade quickly; it leaves faster than it arrives.
    Transitions instead of keyframes, so a close that interrupts the open reverses from where the menu is instead of snapping to rest first. */
-.menu { --menu-x: 0px; --menu-y: -5px; z-index: 60; min-width: min(12rem, var(--radix-dropdown-menu-content-available-width)); max-width: var(--radix-dropdown-menu-content-available-width); padding: 5px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-floating); transform-origin: var(--radix-dropdown-menu-content-transform-origin); transition: opacity var(--duration-fast) var(--ease-enter), transform var(--duration-spring) var(--ease-spring); }
+.menu { --menu-x: 0px; --menu-y: -5px; z-index: 60; min-width: min(12rem, var(--radix-dropdown-menu-content-available-width)); max-width: var(--radix-dropdown-menu-content-available-width); padding: 5px; border: 1px solid transparent; border-radius: var(--radius-panel); background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-edge), var(--shadow-floating); transform-origin: var(--radix-dropdown-menu-content-transform-origin); transition: opacity var(--duration-fast) var(--ease-enter), transform var(--duration-fast) var(--ease-enter); }
 .menu[data-side="top"] { --menu-y: 5px; }
 .menu[data-side="left"] { --menu-x: 5px; --menu-y: 0px; }
 .menu[data-side="right"] { --menu-x: -5px; --menu-y: 0px; }

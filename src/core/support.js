@@ -12,8 +12,8 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast, setProgress, nextFrame } from '../store.js';
 import { supportGroup, supMat, supMatAnchor, supMatBase, supMatGlass, supMatAnchorGlass } from './scene.js';
 import { ldiGapAt } from './slicer.js';
-import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, raftObject, localFaceOf, supportScopeIds, supportScopeNote, partAtWorld } from './model.js';
-import { drawLayer, shiftAnalysisY } from './inspect.js';
+import { baseY, raiseH, placeModelAtLift, updateRaft, setRaftVisible, raftObject, localFaceOf, supportScopeIds, supportScopeNote, partAtWorld, partBounds } from './model.js';
+import { drawLayer, shiftAnalysisY, runSliceAnalysis } from './inspect.js';
 import { joinLiftWanted, joinPlateHeight } from './joinPlate.js';
 import { buildBVH, raycast, ldiInside } from './collide.js';
 import { buildEStageTowers } from './supportTower.js';
@@ -39,6 +39,41 @@ function clearMeshes() {
   for (const s of state.supports) { supportGroup.remove(s.mesh); s.mesh.geometry.dispose(); }
   state.supports = [];
   clearPointMarkers();
+}
+
+/** 换到另一个已打开的工程：支撑网格从场景摘下，几何留着，回来直接挂上。进行中的重建作废。 */
+export function detachSupportVisuals() {
+  buildSeq++;
+  genSeq++;
+  clearPointMarkers();
+  const supports = state.supports.splice(0);
+  for (const s of supports) {
+    if (s.mesh && s.mesh.parent) s.mesh.parent.remove(s.mesh);
+  }
+  return supports;
+}
+
+/** 把摘下的支撑网格挂回去。调用前场上不该还有别的支撑。 */
+export function attachSupportVisuals(supports) {
+  for (const s of state.supports) {
+    if (s.mesh && s.mesh.parent) s.mesh.parent.remove(s.mesh);
+    if (s.mesh && s.mesh.geometry) s.mesh.geometry.dispose();
+  }
+  state.supports = supports || [];
+  for (const s of state.supports) if (s.mesh) supportGroup.add(s.mesh);
+  syncSupportView();
+  updateSupStats();
+}
+
+export function discardSupportVisuals(supports) {
+  for (const s of supports || []) {
+    const mesh = s && s.mesh;
+    if (!mesh) continue;
+    if (mesh.parent) mesh.parent.remove(mesh);
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material;
+    if (mat && mesh.userData && mesh.userData.matKey && mat.dispose) mat.dispose();
+  }
 }
 
 const SEL_COLOR = 0xff3df2;   // 框选 / 点选中的支撑点：洋红，和落板黑灰、短小支撑红、失败亮红都分开
@@ -333,6 +368,70 @@ export function supportsFollowParts(partIds) {
   return !!((state.supportPoints && state.supportPoints.length) || (state.supports && state.supports.length));
 }
 
+function partIdSet(partIds) {
+  return partIds instanceof Set ? partIds : new Set(partIds || []);
+}
+
+/** 还没记过归属的支撑网格，归到当前支撑点所在的零件。必须在复制出新点之前调用。 */
+export function tagSupportOwners() {
+  const ids = [];
+  const seen = new Set();
+  for (const p of state.supportPoints || []) {
+    const id = p.partId != null ? p.partId : partIdOfPoint(p);
+    if (id == null || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  for (const s of state.supports || []) {
+    if (!s.ownerIds || !s.ownerIds.length) s.ownerIds = ids.slice();
+  }
+  return ids;
+}
+
+function exclusiveMeshes(partIds) {
+  const ids = partIdSet(partIds);
+  return (state.supports || []).filter(s => s.ownerIds && s.ownerIds.length && s.ownerIds.every(id => ids.has(id)) && s.mesh);
+}
+
+/** all：整组网格能跟着走。owned：只挪这些零件自己的网格。rebuild：网格是混在一起的，松手后重做。 */
+export function supportShiftMode(partIds) {
+  if (supportsFollowParts(partIds)) return 'all';
+  if (exclusiveMeshes(partIds).length) return 'owned';
+  const ids = partIdSet(partIds);
+  if ((state.supportPoints || []).some(p => p.partId != null && ids.has(p.partId))) return 'rebuild';
+  return 'none';
+}
+
+function shiftPointsOf(partIds, dx, dy, dz) {
+  const ids = partIdSet(partIds);
+  let moved = false;
+  for (const p of state.supportPoints || []) {
+    if (p.partId == null || !ids.has(p.partId)) continue;
+    p.x += dx;
+    p.y += dy;
+    p.z += dz;
+    if (p.ax !== undefined) {
+      p.ax += dx;
+      p.ay = (p.ay || 0) + dy;
+      p.az += dz;
+    }
+    moved = true;
+  }
+  if (moved && pointMesh) paintPointMarkers(state.supportPoints);
+  return moved;
+}
+
+/** 拖动时只挪这些零件自己的支撑网格，别的零件的留在原地。 */
+export function previewOwnedSupportShift(partIds, dx, dy, dz) {
+  previewSupportShift(0, 0, 0);
+  const owned = new Set(exclusiveMeshes(partIds));
+  for (const s of state.supports || []) {
+    if (!s.mesh) continue;
+    if (owned.has(s)) s.mesh.position.set(dx, dy, dz);
+    else s.mesh.position.set(0, 0, 0);
+  }
+}
+
 /** 把支撑点和支撑网格平移。有别的零件的支撑时只挪属于这些零件的点，网格留在原地。 */
 export function shiftSupports(partIds, dx, dy, dz) {
   if (Math.hypot(dx, dy, dz) < 1e-4) return false;
@@ -358,15 +457,195 @@ export function shiftSupports(partIds, dx, dy, dz) {
     const raft = raftObject();
     if (raft && raft.geometry) shiftPositionAttr(raft.geometry, dx, 0, dz);
     moved = moved || (state.supports || []).length > 0;
+  } else {
+    for (const s of exclusiveMeshes(partIds)) shiftPositionAttr(s.mesh.geometry, dx, dy, dz);
+    if (supportShiftMode(partIds) === 'rebuild') refreshSupportsForPlate();
+    else updateRaft();
   }
   if (pointMesh) paintPointMarkers(pts);
   if (moved) updateSupStats();
   return moved;
 }
 
+/** 排版前把还能认领的支撑点写上零件 id。模型挪走之后就认不回来了。 */
+export function stampSupportPartIds() {
+  for (const p of state.supportPoints || []) {
+    if (p.partId != null) continue;
+    const id = partIdOfPoint(p);
+    if (id != null) p.partId = id;
+  }
+}
+
+function supportPoseMap(moves) {
+  const byId = new Map();
+  for (const m of moves || []) {
+    const yaw = m.yaw || 0;
+    byId.set(m.id, {
+      ...m,
+      c: Math.cos(yaw),
+      s: Math.sin(yaw),
+      dy: (m.oy1 || 0) - (m.oy0 || 0),
+    });
+  }
+  return byId;
+}
+
+/* 绕零件中心的竖直旋转，和平移一起做。公式与 three.js 绕 +Y 一致。 */
+function mapSupportXZ(x, z, m) {
+  const lx = x - m.ox0;
+  const lz = z - m.oz0;
+  return [m.ox1 + m.c * lx + m.s * lz, m.oz1 - m.s * lx + m.c * lz];
+}
+
+function transformSupportGeom(geom, m) {
+  if (!geom || !geom.attributes || !geom.attributes.position) return;
+  const pos = geom.attributes.position;
+  const a = pos.array;
+  for (let i = 0; i < a.length; i += 3) {
+    const xz = mapSupportXZ(a[i], a[i + 2], m);
+    a[i] = xz[0];
+    a[i + 1] += m.dy;
+    a[i + 2] = xz[1];
+  }
+  pos.needsUpdate = true;
+  const nrm = geom.attributes.normal;
+  if (nrm) {
+    const b = nrm.array;
+    for (let i = 0; i < b.length; i += 3) {
+      const nx = b[i];
+      const nz = b[i + 2];
+      b[i] = m.c * nx + m.s * nz;
+      b[i + 2] = -m.s * nx + m.c * nz;
+    }
+    nrm.needsUpdate = true;
+  }
+  geom.computeBoundingBox();
+  geom.computeBoundingSphere();
+}
+
+/* 共用网格按三角形重心归到挪动前离得最近的零件，再整块跟着那件走。 */
+function closestMove(x, z, moves) {
+  let best = null;
+  let bestD = Infinity;
+  for (const m of moves) {
+    const p = (state.parts || []).find(part => part.id === m.id);
+    const hx = p && p.base ? p.base.x / 2 : 0;
+    const hz = p && p.base ? p.base.z / 2 : 0;
+    const dx = Math.max(Math.abs(x - m.ox0) - hx, 0);
+    const dz = Math.max(Math.abs(z - m.oz0) - hz, 0);
+    const d = dx * dx + dz * dz;
+    if (d < bestD) { bestD = d; best = m; }
+  }
+  return best;
+}
+
+function transformSharedGeom(geom, moves) {
+  const pos = geom.attributes.position;
+  const a = pos.array;
+  const nrm = geom.attributes.normal;
+  const b = nrm ? nrm.array : null;
+  const tris = (a.length / 9) | 0;
+  for (let t = 0; t < tris; t++) {
+    const o = t * 9;
+    let cx = 0;
+    let cz = 0;
+    for (let k = 0; k < 9; k += 3) { cx += a[o + k]; cz += a[o + k + 2]; }
+    const m = closestMove(cx / 3, cz / 3, moves);
+    if (!m) continue;
+    for (let k = 0; k < 9; k += 3) {
+      const xz = mapSupportXZ(a[o + k], a[o + k + 2], m);
+      a[o + k] = xz[0];
+      a[o + k + 1] += m.dy;
+      a[o + k + 2] = xz[1];
+      if (b) {
+        const nx = b[o + k];
+        const nz = b[o + k + 2];
+        b[o + k] = m.c * nx + m.s * nz;
+        b[o + k + 2] = -m.s * nx + m.c * nz;
+      }
+    }
+  }
+  pos.needsUpdate = true;
+  if (nrm) nrm.needsUpdate = true;
+  geom.computeBoundingBox();
+  geom.computeBoundingSphere();
+}
+
+/**
+ * 排版后把支撑跟着各自的零件走。
+ * moves: [{ id, ox0, oy0, oz0, ox1, oy1, oz1, yaw }]。
+ * 只属于一个零件的网格直接变过去。几件共用的按三角形拆开各自跟着走，不再整张丢掉重生成。
+ */
+export function relocateSupports(moves, opts = {}) {
+  const points = opts.points !== false;
+  const meshes = opts.meshes !== false;
+  const byId = supportPoseMap(moves);
+  let moved = false;
+  if (points) {
+    for (const p of state.supportPoints || []) {
+      const id = p.partId != null ? p.partId : partIdOfPoint(p);
+      const m = id != null ? byId.get(id) : null;
+      if (!m) continue;
+      if (p.partId == null) p.partId = id;
+      const xz = mapSupportXZ(p.x, p.z, m);
+      p.x = xz[0];
+      p.y += m.dy;
+      p.z = xz[1];
+      if (p.ax !== undefined) {
+        const axz = mapSupportXZ(p.ax, p.az, m);
+        p.ax = axz[0];
+        p.ay = (p.ay || 0) + m.dy;
+        p.az = axz[1];
+      }
+      if (Array.isArray(p.n)) {
+        const nx = p.n[0];
+        const nz = p.n[2];
+        p.n = [m.c * nx + m.s * nz, p.n[1], -m.s * nx + m.c * nz];
+      }
+      p.island = null;
+      moved = true;
+    }
+  }
+  let shared = false;
+  if (meshes) {
+    for (const s of state.supports || []) {
+      if (!s.mesh || !s.mesh.geometry) continue;
+      const owners = s.ownerIds || [];
+      if (owners.length === 1) {
+        const m = byId.get(owners[0]);
+        if (m) { transformSupportGeom(s.mesh.geometry, m); moved = true; }
+        continue;
+      }
+      const ids = owners.length ? owners : [...byId.keys()];
+      const mine = ids.map(id => byId.get(id)).filter(Boolean);
+      if (mine.length < 2 || s.mesh.geometry.index) {
+        shared = true;
+        continue;
+      }
+      transformSharedGeom(s.mesh.geometry, mine);
+      moved = true;
+    }
+  }
+  if (points && pointMesh) paintPointMarkers(state.supportPoints);
+  if (moved) updateSupStats();
+  return { moved, shared };
+}
+
+/** 把上面的位移倒回去。中心对调，旋转角取反。 */
+export function relocateSupportsInverse(moves, opts) {
+  const inv = (moves || []).map(m => ({
+    id: m.id,
+    ox0: m.ox1, oy0: m.oy1, oz0: m.oz1,
+    ox1: m.ox0, oy1: m.oy0, oz1: m.oz0,
+    yaw: -(m.yaw || 0),
+  }));
+  return relocateSupports(inv, opts);
+}
+
 /** 松手：去掉拖动时的显示偏移，把同一段位移写进支撑。 */
 export function bakeSupportShift(partIds, dx, dy, dz) {
   previewSupportShift(0, 0, 0);
+  for (const s of state.supports || []) if (s.mesh) s.mesh.position.set(0, 0, 0);
   return shiftSupports(partIds, dx, dy, dz);
 }
 
@@ -615,10 +894,37 @@ function facePartId(f) {
   const loc = localFaceOf(f);
   return loc ? loc.part.id : null;
 }
-function faceInScope(f, scope) {
-  if (!scope) return true;
-  const id = facePartId(f);
-  return id != null && scope.has(id);
+/* 这一次布点实际作用的模型。空着就用视口选中。
+   选中里还有没生成过支撑的模型时，只布那些，不把已经有支撑的模型清掉再合成一座塔。 */
+let genScopeOverride = null;
+function genScope() {
+  return genScopeOverride || supportScopeIds();
+}
+/* 当前选中范围的占地。面序号对不上时，仍用世界坐标判断这个点落在哪一件上。 */
+function scopeBoxes(scope) {
+  if (!scope) return null;
+  const boxes = [];
+  for (const p of state.parts) {
+    const b = partBounds(p);
+    boxes.push({ id: p.id, minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z, inScope: scope.has(p.id) });
+  }
+  return boxes;
+}
+function boxesAt(boxes, x, z, pad = 1.2) {
+  if (!boxes) return null;
+  const hits = [];
+  for (const b of boxes) {
+    if (x >= b.minX - pad && x <= b.maxX + pad && z >= b.minZ - pad && z <= b.maxZ + pad) hits.push(b);
+  }
+  return hits;
+}
+/* 点落在未选中模型的占地里，就不能因为面序号认错而收下。 */
+function xzAllowed(boxes, x, z, partId) {
+  if (!boxes) return true;
+  const hits = boxesAt(boxes, x, z);
+  if (hits.length && hits.every(b => !b.inScope)) return false;
+  if (partId != null && boxes.some(b => b.id === partId && b.inScope)) return true;
+  return hits.some(b => b.inScope);
 }
 /* 孤岛属于哪个零件。分析时已经记过 owner 就直接用。 */
 function islandOwner(nd, A, bvh) {
@@ -641,10 +947,16 @@ function islandOwner(nd, A, bvh) {
   nd.owner = id;
   return id;
 }
-function islandInScope(nd, A, bvh, scope) {
+function islandInScope(nd, A, bvh, scope, boxes) {
   if (!scope) return true;
   const id = islandOwner(nd, A, bvh);
-  return id != null && scope.has(id);
+  let x = nd.cx, z = nd.cz;
+  if (nd.pixels && nd.pixels.length && A && A.grid) {
+    const cc = nd.pixels[0];
+    x = A.grid.x0 + (cc % A.grid.W + 0.5) * A.grid.sx;
+    z = A.grid.z0 + (((cc / A.grid.W) | 0) + 0.5) * A.grid.sz;
+  }
+  return xzAllowed(boxes || scopeBoxes(scope), x, z, id);
 }
 function partIdOfPoint(p) {
   if (p.partId != null) return p.partId;
@@ -659,13 +971,174 @@ function partIdOfPoint(p) {
   const part = partAtWorld(p.x, p.z);
   return part ? part.id : null;
 }
+
+function offsetSupportPoint(p, dx, dy, dz, partId) {
+  const q = { ...p };
+  q.x += dx;
+  q.y += dy;
+  q.z += dz;
+  if (q.ax !== undefined) {
+    q.ax += dx;
+    q.ay = (q.ay || 0) + dy;
+    q.az += dz;
+  }
+  if (Array.isArray(q.n)) q.n = q.n.slice();
+  q.partId = partId;
+  q.island = null;
+  return q;
+}
+
+/**
+ * 把来源零件上的支撑点复制到新零件，并按粘贴位移挪开。
+ * pairs: [{ fromId, toId, dx, dy, dz }]。已写入 supportPoints，不重建结构。
+ */
+export function cloneSupportsOnto(pairs) {
+  const list = pairs || [];
+  if (!list.length) return [];
+  const byFrom = new Map();
+  for (const pair of list) {
+    let arr = byFrom.get(pair.fromId);
+    if (!arr) byFrom.set(pair.fromId, arr = []);
+    arr.push(pair);
+  }
+  const src = (state.supportPoints || []).slice();
+  const made = [];
+  for (const p of src) {
+    const id = p.partId != null ? p.partId : partIdOfPoint(p);
+    const hits = byFrom.get(id);
+    if (!hits) continue;
+    for (const pair of hits) made.push(offsetSupportPoint(p, pair.dx || 0, pair.dy || 0, pair.dz || 0, pair.toId));
+  }
+  if (made.length) {
+    if (!state.supportPoints) state.supportPoints = [];
+    state.supportPoints.push(...made);
+  }
+  return made;
+}
+
+/** 把只属于来源零件的支撑网格复制一份，平移到副本上。立刻能看见，不必等重建。 */
+export function cloneSupportVisuals(pairs) {
+  const list = pairs || [];
+  if (!list.length || !(state.supports && state.supports.length)) return 0;
+  const groups = new Map();
+  for (const pair of list) {
+    const key = `${pair.dx || 0}|${pair.dy || 0}|${pair.dz || 0}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = { dx: pair.dx || 0, dy: pair.dy || 0, dz: pair.dz || 0, from: new Set(), map: new Map() });
+    g.from.add(pair.fromId);
+    g.map.set(pair.fromId, pair.toId);
+  }
+  const srcMeshes = state.supports.slice();
+  let n = 0;
+  for (const g of groups.values()) {
+    for (const s of srcMeshes) {
+      const owners = s.ownerIds || [];
+      if (!owners.length || !s.mesh || !owners.every(id => g.from.has(id))) continue;
+      const geom = s.mesh.geometry.clone();
+      shiftPositionAttr(geom, g.dx, g.dy, g.dz);
+      const mesh = new THREE.Mesh(geom, s.mesh.material);
+      mesh.userData.kind = s.mesh.userData.kind;
+      mesh.userData.matKey = s.mesh.userData.matKey;
+      supportGroup.add(mesh);
+      const ownerIds = owners.map(id => g.map.get(id)).filter(id => id != null);
+      state.supports.push({ mesh, kind: s.kind, part: s.part, ownerIds });
+      n++;
+    }
+  }
+  if (n) syncSupportView();
+  return n;
+}
+
+/** 删掉只属于这些零件的支撑网格。 */
+export function dropSupportMeshesOf(ids) {
+  const want = ids instanceof Set ? ids : new Set(ids || []);
+  if (!want.size || !state.supports) return 0;
+  const keep = [];
+  let n = 0;
+  for (const s of state.supports) {
+    const owners = s.ownerIds || [];
+    if (owners.length && owners.every(id => want.has(id))) {
+      if (s.mesh) {
+        if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+        if (s.mesh.geometry) s.mesh.geometry.dispose();
+      }
+      n++;
+    } else keep.push(s);
+  }
+  if (n) state.supports = keep;
+  return n;
+}
+
+/* 针尖列表用点集下标。删点、重做之前先把下标钉到点对象上，后面数组缩短也不会指错。 */
+function pinNeedles() {
+  const list = state.supportStats && state.supportStats.needleList;
+  const pts = state.supportPoints || [];
+  if (!Array.isArray(list)) return;
+  for (const nd of list) {
+    if (nd && !nd._pt && pts[nd.pi]) nd._pt = pts[nd.pi];
+  }
+}
+
+/** 属于这些零件的支撑点（只读，不改点集）。归属口径与 dropSupportsOf 一致。 */
+export function supportPointsOf(ids) {
+  const want = ids instanceof Set ? ids : new Set(ids || []);
+  if (!want.size) return [];
+  const out = [];
+  for (const p of state.supportPoints || []) {
+    const id = p.partId != null ? p.partId : partIdOfPoint(p);
+    if (want.has(id)) out.push(p);
+  }
+  return out;
+}
+
+/** 拿掉属于这些零件的支撑点。网格先留着，由调用方决定要不要重建。 */
+export function dropSupportsOf(ids) {
+  pinNeedles();
+  const want = ids instanceof Set ? ids : new Set(ids || []);
+  if (!want.size) return [];
+  const keep = [];
+  const gone = [];
+  for (const p of state.supportPoints || []) {
+    const id = p.partId != null ? p.partId : partIdOfPoint(p);
+    if (want.has(id)) gone.push(p);
+    else keep.push(p);
+  }
+  if (gone.length) state.supportPoints = keep;
+  return gone;
+}
+
+let supportRefreshSeq = 0;
+
+/** 零件增删之后按剩下的支撑点重做分析和结构。没有点就清掉网格。后来的调用作废先开始的。 */
+export function refreshSupportsForPlate() {
+  const seq = ++supportRefreshSeq;
+  buildSeq++;
+  const job = (async () => {
+    if (!state.parts.length || !(state.supportPoints && state.supportPoints.length)) {
+      clearSupports(false);
+      updateSupStats();
+      return;
+    }
+    if (!state.mesh) return;
+    await runSliceAnalysis({ all: true });
+    if (seq !== supportRefreshSeq) return;
+    if (!state.analysis || !state.mesh) return;
+    await rebuildStructure();
+  })();
+  job.catch(err => {
+    if (seq !== supportRefreshSeq) return;
+    log(`支撑更新失败：${err && err.message ? err.message : err}`, 'warn');
+  });
+  return job;
+}
 /** 支撑区域 → 图块。返回 { faces（候选面的全局面号）, charts: [{ reg, faces（候选序号）, tris2 }], rep } */
 async function buildCharts(ctx, tick) {
   const A = state.analysis, p = A.p, { bvh, groundY } = ctx;
   const rep = { heldFaces: 0, protFaces: 0, regions: 0, charts: 0, areaPruned: 0 };
   // 1. 候选面：顶点法线越过自支撑角的部分，沿等值线切开。整张三角面收进来时，斜边界就变成台阶。
   const faces = [], clips = [], cyArr = [], areaArr = [], cutArr = [];
-  const scope = supportScopeIds();
+  const scope = genScope();
+  const boxes = scopeBoxes(scope);
   const nf = p.length / 9;
   const fd = state.faces;
   const cosv = Math.cos((Number.isFinite(params.selfAngle) ? params.selfAngle : 45) * Math.PI / 180);
@@ -673,7 +1146,6 @@ async function buildCharts(ctx, tick) {
     ? overhangScalars(p, fd.nrm, fd.area, cosv) : null;
   const consider = (f, parts, cut) => {
     if (!parts.length) return;
-    if (!faceInScope(f, scope)) return;
     if (state.protectedFaces.has(f)) { rep.protFaces++; return; }
     let cx = 0, cy = 0, cz = 0, n = 0, area = 0;
     for (const t of parts) {
@@ -681,6 +1153,7 @@ async function buildCharts(ctx, tick) {
       for (let k = 0; k < 9; k += 3) { cx += t[k]; cy += t[k + 1]; cz += t[k + 2]; n++; }
     }
     cx /= n; cy /= n; cz /= n;
+    if (!xzAllowed(boxes, cx, cz, facePartId(f))) return;
     const hit = raycast(bvh, cx, cy - 0.05, cz, 0, -1, 0, 0.1, 1e9);
     if (Math.min(hit ? hit.t + 0.05 : cy - groundY, ldiGapBelow(A.ld, cx, cy, cz)) < 0.8) { rep.heldFaces++; return; }
     faces.push(f); clips.push(parts); cyArr.push(cy); areaArr.push(area); cutArr.push(cut ? 1 : 0);
@@ -881,7 +1354,7 @@ async function collectContactPoints(ctx, islandsOnly) {
   if (A.graph && ld) {
     const floorY = A.grid.minY - A.raiseH, { W: GW, H: GH, layerH } = A.grid;
     const vkey = (x, y, z) => `${Math.floor(x / spacing)},${Math.floor(y / spacing)},${Math.floor(z / spacing)}`;
-    const scope = supportScopeIds();
+    const scope = genScope();
     for (const nd of A.graph.nodes) {
       if (!nd.island || !nd.pixels) continue;
       if (!islandInScope(nd, A, bvh, scope)) continue;
@@ -975,7 +1448,11 @@ async function collectContactPoints(ctx, islandsOnly) {
       const part = partAtWorld(c.x, c.z);
       partId = part ? part.id : null;
     }
-    const scope = supportScopeIds();
+    const scope = genScope();
+    const boxes = scopeBoxes(scope);
+    const hits = boxesAt(boxes, c.x, c.z);
+    if (hits && hits.length === 1) partId = hits[0].id;
+    if (!xzAllowed(boxes, c.x, c.z, partId)) return null;
     if (scope && (partId == null || !scope.has(partId))) return null;
     return { x: c.x, y: c.y, z: c.z, n, island: c.island !== undefined ? c.island : null, reg: c.reg, partId };
   };
@@ -1362,8 +1839,268 @@ export async function syncModelLift() {
   return true;
 }
 
-/** 按当前模式从支撑点集重建结构；被更新的重建取代时返回 null */
-export async function rebuildStructure() {
+/* 支撑点记在哪一件上。没记过的按接触点认一次并写回，后面换选中才不会把别的模型算进来。 */
+function pointPartId(p) {
+  if (!p) return null;
+  if (p.partId != null) return p.partId;
+  const id = partIdOfPoint(p);
+  if (id != null) p.partId = id;
+  return id;
+}
+
+/** 当前选中的模型是不是都已经有支撑。
+ *  有一件还没有，按钮就是「生成支撑」，只补那一件，不把已经生成过的模型一起重做。
+ *  多件都有、或板上只有一件且已经有支撑，才是「重新生成」。一个都没选中时不算。 */
+export function scopeHasSupports() {
+  const pts = state.supportPoints || [];
+  if (!pts.length) return false;
+  const scope = supportScopeIds();
+  if (!scope) return true;
+  if (!scope.size) return false;
+  const has = new Set();
+  for (const p of pts) {
+    if (p.partId != null && scope.has(p.partId)) has.add(p.partId);
+  }
+  for (const id of scope) if (!has.has(id)) return false;
+  return true;
+}
+
+/* 选中里还有没支撑的模型：只生成那些。全都有了：重新生成选中的这些。别的模型不进这次。 */
+function pickGenTargets(scope) {
+  const ids = [...scope];
+  const has = new Set();
+  for (const p of state.supportPoints || []) {
+    const id = pointPartId(p);
+    if (id != null) has.add(id);
+  }
+  const bare = ids.filter(id => !has.has(id));
+  return bare.length ? bare : ids;
+}
+
+function resetAnchors(pts) {
+  for (const p of pts) {
+    if (p.ax === undefined) { p.ax = p.x; p.ay = p.y; p.az = p.z; }
+    else { p.x = p.ax; p.y = p.ay; p.z = p.az; }
+  }
+}
+
+function groupPointsByPart() {
+  const map = new Map();
+  for (const p of state.supportPoints || []) {
+    const id = pointPartId(p);
+    let g = map.get(id);
+    if (!g) map.set(id, g = []);
+    g.push(p);
+  }
+  return map;
+}
+
+const STAT_SKIP = new Set(['needleList', 'vertexList', 'alignWhy', 'byPart', 'ok', 'ms', 'mode', 'islFail', 'islNoPoint', 'islOpen']);
+
+function countSnapshot(s) {
+  const out = {};
+  if (!s) return out;
+  for (const k of Object.keys(s)) {
+    if (STAT_SKIP.has(k)) continue;
+    const v = s[k];
+    if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+  }
+  return out;
+}
+
+function sumSnapshots(map) {
+  const into = {};
+  for (const s of Object.values(map)) {
+    if (!s) continue;
+    for (const k of Object.keys(s)) {
+      const v = s[k];
+      if (typeof v === 'boolean') { if (v) into[k] = true; continue; }
+      if (typeof v !== 'number') continue;
+      if (k === 'shiftMax') into[k] = into[k] == null ? v : Math.max(into[k], v);
+      else if (k === 'bandH' || k === 'stripH') into[k] = v;
+      else into[k] = (into[k] || 0) + v;
+    }
+  }
+  return into;
+}
+
+/* 已经分开记在各模型上的统计留着。只有「整盘一份、且网格只属于剩下那一件」时，才把旧统计记到那一件上。 */
+function seedKeptStats(want) {
+  const prev = state.supportStats && state.supportStats.byPart;
+  if (prev && Object.keys(prev).length) return { ...prev };
+  const stats = state.supportStats;
+  if (!stats) return {};
+  const remain = new Set();
+  for (const s of state.supports || []) {
+    const owners = s.ownerIds || [];
+    if (owners.length !== 1 || want.has(owners[0])) return {};
+    remain.add(owners[0]);
+  }
+  if (remain.size !== 1) return {};
+  return { [[...remain][0]]: countSnapshot(stats) };
+}
+
+/* 要重做的模型如果和别的模型共用一张网格，那几件一起重做，免得拆掉网格后另一件的支撑消失。 */
+function expandRebuildIds(ids, groups) {
+  const want = new Set(ids);
+  const all = [...groups.keys()].filter(id => id != null);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const s of state.supports || []) {
+      const owners = s.ownerIds || [];
+      if (!owners.length) {
+        for (const id of all) if (!want.has(id)) { want.add(id); grew = true; }
+        continue;
+      }
+      if (!owners.some(id => want.has(id))) continue;
+      for (const id of owners) if (!want.has(id)) { want.add(id); grew = true; }
+    }
+  }
+  return [...want];
+}
+
+function dropMeshesOf(ids) {
+  const want = ids instanceof Set ? ids : new Set(ids);
+  const keep = [];
+  for (const s of state.supports || []) {
+    const owners = s.ownerIds || [];
+    if (owners.length && !owners.some(id => want.has(id))) { keep.push(s); continue; }
+    if (s.mesh) {
+      if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+      if (s.mesh.geometry) s.mesh.geometry.dispose();
+    }
+  }
+  state.supports = keep;
+}
+
+function addTowerMeshes(res, ownerIds) {
+  const add = (g, mat, kind, part) => {
+    if (!g) return;
+    const m = new THREE.Mesh(g, mat);
+    m.userData.kind = kind;
+    supportGroup.add(m);
+    state.supports.push({ mesh: m, kind, part, ownerIds: ownerIds.slice() });
+  };
+  add(res.geomGround, supMat, 'ground', 'tower');
+  add(res.geomNeedle, supMat, 'ground', 'needle');
+  add(res.geomGround2, supMat, 'ground', 'needle');
+  add(res.geomAnchor, supMatAnchor, 'anchor', 'needle');
+  add(res.geomBase, supMatBase, 'base', 'base');
+}
+
+function finishTower(stats, t0, needles) {
+  const cov = islandCoverage();
+  const pts = state.supportPoints || [];
+  const ok = pts.filter(p => p.state === 'ground' || p.state === 'mesh' || p.state === 'micro').length;
+  for (const s of state.supports || []) {
+    const g = s.mesh && s.mesh.geometry;
+    if (!g || !g.userData) continue;
+    g.userData.triOf = null;
+    g.userData.ownerPts = 0;
+    g.userData.triOfJob = null;
+  }
+  state.supportStats = {
+    mode: 'tower', ...stats, needleList: needles, ok,
+    ms: Math.round(performance.now() - t0),
+    islFail: cov.fail, islNoPoint: cov.noPoint, islOpen: cov.open,
+  };
+  syncSupportView();
+  prepareSupportColors();
+  setProgress(null);
+  updateSupStats();
+  drawLayer();
+  updateRaft();
+}
+
+/* 多件各算各的塔。partIds 有值时只换这几件的网格，其余模型的支撑留在画面上。
+   只有一件有点、又没指定范围时返回 false，走原来的整盘一条路。 */
+async function rebuildSplit(seq, t0, ctx, P, A0, M0, limit) {
+  const groups = groupPointsByPart();
+  const distinct = [...groups.keys()].filter(id => id != null);
+  if (!limit && distinct.length < 2) return false;
+  let ids = limit ? [...limit] : distinct.slice();
+  if (limit) ids = expandRebuildIds(ids, groups);
+  const want = new Set(ids);
+  const byPart = seedKeptStats(want);
+  for (const id of want) delete byPart[id];
+  const built = [];
+  const disposeBuilt = () => { for (const b of built) disposeResult(b.res); };
+  try {
+    for (const id of ids) {
+      const pts = groups.get(id) || [];
+      if (!pts.length) continue;
+      resetAnchors(pts);
+      if (seq !== buildSeq || state.analysis !== A0 || state.mesh !== M0) { disposeBuilt(); return null; }
+      const res = await buildEStageTowers(ctx, pts, P);
+      if (seq !== buildSeq || state.analysis !== A0 || state.mesh !== M0) {
+        disposeResult(res);
+        disposeBuilt();
+        return null;
+      }
+      built.push({ id, pts, res });
+    }
+  } catch (err) {
+    disposeBuilt();
+    if (err && err.aborted) return null;
+    if (seq === buildSeq) setProgress(null);
+    throw err;
+  }
+  if (seq !== buildSeq || state.analysis !== A0 || state.mesh !== M0) { disposeBuilt(); return null; }
+  if (limit) dropMeshesOf(want);
+  else clearMeshes();
+  const just = {};
+  const needles = [];
+  const rebuilt = new Set();
+  for (const b of built) {
+    for (const p of b.pts) rebuilt.add(p);
+    b.pts.forEach((p, k) => { p.state = b.res.pointState[k] || ''; });
+    addTowerMeshes(b.res, [b.id]);
+    byPart[b.id] = countSnapshot(b.res.stats);
+    const snap = countSnapshot(b.res.stats);
+    for (const k of Object.keys(snap)) {
+      const v = snap[k];
+      if (typeof v === 'boolean') { if (v) just[k] = true; continue; }
+      if (k === 'shiftMax') just[k] = just[k] == null ? v : Math.max(just[k], v);
+      else if (k === 'bandH' || k === 'stripH') just[k] = v;
+      else if (typeof v === 'number') just[k] = (just[k] || 0) + v;
+    }
+  }
+  const ptsNow = state.supportPoints || [];
+  const at = new Map();
+  ptsNow.forEach((p, i) => at.set(p, i));
+  const old = (state.supportStats && state.supportStats.needleList) || [];
+  if (limit) {
+    for (const nd of old) {
+      let p = nd._pt && at.has(nd._pt) ? nd._pt : null;
+      if (!p) {
+        p = ptsNow[nd.pi];
+        if (p && nd.C && Math.hypot(nd.C[0] - p.x, nd.C[1] - p.y, nd.C[2] - p.z) > 1.5) p = null;
+      }
+      if (!p || rebuilt.has(p)) continue;
+      const gi = at.get(p);
+      if (gi == null) continue;
+      needles.push({ ...nd, pi: gi, _pt: p });
+    }
+  }
+  for (const b of built) {
+    const list = (b.res.stats && b.res.stats.needleList) || [];
+    for (const nd of list) {
+      const p = b.pts[nd.pi];
+      const gi = at.get(p);
+      if (gi == null) continue;
+      needles.push({ ...nd, pi: gi, _pt: p });
+    }
+  }
+  const plate = sumSnapshots(byPart);
+  plate.byPart = byPart;
+  finishTower(plate, t0, needles);
+  return { stats: just };
+}
+
+/** 按当前模式从支撑点集重建结构；被更新的重建取代时返回 null。
+ *  opts.partIds：只重建这些模型的塔，别的模型已有的网格留着。 */
+export async function rebuildStructure(opts = {}) {
   if (!state.analysis || !state.mesh) return null;
   await syncModelLift();                              // 板高 / 连接底板变了：先挪模型、平移支撑点、重跑分析
   if (!state.analysis || !state.mesh) return null;
@@ -1376,6 +2113,11 @@ export async function rebuildStructure() {
   ctx.yieldUI = makeYielder();
   ctx.progress = (p, text) => { if (seq === buildSeq) setProgress(p, text); };
   const P = paramSnapshot();
+  const limit = opts.partIds && opts.partIds.length ? new Set(opts.partIds) : null;
+  if ((state.parts || []).length > 1) {
+    const split = await rebuildSplit(seq, t0, ctx, P, A0, M0, limit);
+    if (split !== false) return split;
+  }
   const pts = state.supportPoints.slice();            // 快照：后台计算期间点集可能被改
   // 支撑点的布点位置（锚点 ax / ay / az）：支撑塔会把点挪到针尖的接触点（≤ 接触宽），每次重建都从布点位置重新算——
   // 多次重建之间不累积漂移
@@ -1399,7 +2141,14 @@ export async function rebuildStructure() {
     const m = new THREE.Mesh(g, mat);
     m.userData.kind = kind;
     supportGroup.add(m);
-    state.supports.push({ mesh: m, kind, part });      // part：'tower' 格架塔 / 'needle' 连接体（针 / 兜底件）——显示模式分流用
+    const ownerIds = [];
+    const seen = new Set();
+    for (const p of state.supportPoints || []) {
+      if (p.partId == null || seen.has(p.partId)) continue;
+      seen.add(p.partId);
+      ownerIds.push(p.partId);
+    }
+    state.supports.push({ mesh: m, kind, part, ownerIds });
   };
   add(res.geomGround, supMat, 'ground', 'tower');
   add(res.geomNeedle, supMat, 'ground', 'needle');   // 十字针 / 转接块凸包（从格架塔几何里拆出）
@@ -1409,10 +2158,25 @@ export async function rebuildStructure() {
   pts.forEach((p, k) => { p.state = res.pointState[k] || ''; });
   const ok = pts.filter(p => p.state === 'ground' || p.state === 'mesh' || p.state === 'micro').length;
   const cov = islandCoverage();
+  const owners = [];
+  const seenOwner = new Set();
+  for (const p of pts) {
+    const id = p.partId != null ? p.partId : pointPartId(p);
+    if (id == null || seenOwner.has(id)) continue;
+    seenOwner.add(id);
+    owners.push(id);
+  }
   state.supportStats = {
     mode: 'tower', ...res.stats, ok, ms: Math.round(performance.now() - t0),
     islFail: cov.fail, islNoPoint: cov.noPoint, islOpen: cov.open,
+    byPart: owners.length === 1 ? { [owners[0]]: countSnapshot(res.stats) } : undefined,
   };
+  if (Array.isArray(state.supportStats.needleList)) {
+    for (const nd of state.supportStats.needleList) {
+      const p = pts[nd.pi];
+      if (p) nd._pt = p;
+    }
+  }
   syncSupportView();
   prepareSupportColors();
   setProgress(null);
@@ -1422,6 +2186,14 @@ export async function rebuildStructure() {
   return res;
 }
 
+function namesNote(ids, verb) {
+  if (!ids || !ids.length) return '';
+  const set = new Set(ids);
+  const names = [];
+  for (const p of state.parts) if (set.has(p.id)) names.push(`「${p.name}」`);
+  return names.length ? `（${verb}${names.join('、')}）` : '';
+}
+
 export async function runGenSup(opts = {}) {
   const islandsOnly = !!opts.islandsOnly;
   if (!state.analysis) return toast('请先运行逐层分析');
@@ -1429,37 +2201,64 @@ export async function runGenSup(opts = {}) {
   if (scope && scope.size === 0) return toast('先选中模型，再生成支撑');
   await syncModelLift();                              // 先按连接底板挪好模型（已有点同步平移），再布点
   if (state.analysis && !state.analysis._bvh) state.analysis._bvh = buildBVH(state.analysis.p);
-  // 没选中的模型上已经有的支撑留下。选中模型上的手动点在换参数重布时保留。
-  const foreign = [];
+  // 多件时：选中里还有没支撑的，只给那些布点。全都有了才重新生成选中的这几件。
+  // 没被选中的、以及这次不重做的，点和网格都留着，不合成一座塔。
+  const targets = !islandsOnly && scope ? pickGenTargets(scope) : null;
+  const replace = targets ? new Set(targets) : null;
   const keep = [];
   if (!islandsOnly) {
-    for (const p of state.supportPoints || []) {
-      const id = partIdOfPoint(p);
-      if (scope && !scope.has(id)) foreign.push(p);
-      else if (opts.keepManual && p.manual) keep.push(p);
+    if (replace) {
+      for (const p of state.supportPoints || []) {
+        const id = pointPartId(p);
+        if (opts.keepManual && p.manual && replace.has(id)) keep.push(p);
+      }
+      buildSeq++;                                     // 先作废还在算的重建，再改点集
+      dropSupportsOf(replace);
+      if (!state.supportPoints) state.supportPoints = [];
+      if (keep.length) state.supportPoints.push(...keep);
+    } else {
+      for (const p of state.supportPoints || []) if (opts.keepManual && p.manual) keep.push(p);
+      clearSupports(false);
+      if (!state.supportPoints) state.supportPoints = [];
+      if (keep.length) state.supportPoints.push(...keep);
     }
   }
-  if (!islandsOnly) clearSupports(false);
-  if (!state.supportPoints) state.supportPoints = [];
-  if (foreign.length) state.supportPoints.push(...foreign);
-  if (keep.length) state.supportPoints.push(...keep);
   setProgress(0.2, '提取支撑点…'); await nextFrame();
   const ctx = makeCtx();
   const gen = ++genSeq;
-  const { points, rep } = await collectContactPoints(ctx, islandsOnly);
-  // 布点期间又发起了新一次生成（它已清空点集）：旧的结果作废，不再写入——否则两次生成的点叠在一起，点数翻倍
-  if (gen !== genSeq) return;
-  state.supportPoints.push(...points);
+  genScopeOverride = islandsOnly ? (scope && scope.size ? scope : null) : replace;
+  let points, rep;
+  try {
+    const got = await collectContactPoints(ctx, islandsOnly);
+    // 布点期间又发起了新一次生成（它已清空点集）：旧的结果作废，不再写入——否则两次生成的点叠在一起，点数翻倍
+    if (gen !== genSeq) return;
+    points = got.points;
+    rep = got.rep;
+  } finally {
+    genScopeOverride = null;
+  }
+  const gate = islandsOnly ? scope : replace;
+  const placed = points.filter(pt => xzAllowed(scopeBoxes(gate), pt.x, pt.z, pt.partId));
+  state.supportPoints.push(...placed);
+  if (!placed.length) {
+    if (replace) await rebuildStructure({ partIds: [...replace] });
+    setProgress(null); updateSupStats();
+    log(islandsOnly ? '自动孤岛支撑：没有需要补打的孤岛' : '没有检测到需要支撑的悬空区域', 'warn');
+    return;
+  }
   if (!state.supportPoints.length) {
     setProgress(null); updateSupStats();
     log(islandsOnly ? '自动孤岛支撑：没有需要补打的孤岛' : '没有检测到需要支撑的悬空区域', 'warn');
     return;
   }
-  const res = await rebuildStructure();
+  const partIds = islandsOnly
+    ? [...new Set(placed.map(p => p.partId).filter(id => id != null))]
+    : (replace ? [...replace] : null);
+  const res = await rebuildStructure(partIds && partIds.length ? { partIds } : undefined);
   if (!res) return;                                   // 计算期间又发起了新的重建，日志交给那一次
   const s = res.stats;
-  const scopeNote = supportScopeNote('只给');
-  const head = islandsOnly ? `自动孤岛支撑：新增 ${points.length} 个支撑点${scopeNote}` : `支撑点 ${state.supportPoints.length} 个${scopeNote}`;
+  const scopeNote = islandsOnly ? supportScopeNote('只补') : namesNote(targets, '只给');
+  const head = islandsOnly ? `自动孤岛支撑：新增 ${placed.length} 个支撑点${scopeNote}` : `支撑点 ${state.supportPoints.length} 个${scopeNote}`;
   log(islandsOnly
     ? `${head}（孤岛种子 ${rep.seeds}，已托住 ${rep.held}，贴面 ${rep.flush}，保护面 ${rep.prot}）`
     : `${head}（支撑区域 ${rep.regions} 片 / 图块 ${rep.charts}，面积滤除 ${rep.areaPruned} 片；边缘环 ${rep.edgePts} 点、内部 ${rep.innerPts} 点、孤岛种子 ${rep.seeds}、兜底补点 ${rep.filled}；`
@@ -1485,50 +2284,71 @@ export async function runGenSup(opts = {}) {
   if (rep.capped) log(`⚠ 支撑点达到上限 ${MAX_POINTS}，其余 ${rep.capped} 个候选未放置（可增大支撑间距）`, 'warn');
 }
 
-/* 手动加支撑点：点击模型表面 → 加点 → 重建结构 */
+/* 多件时只重建这几件的塔。单件或没给出零件时走整盘（单件仍是原来的一座塔）。 */
+function structureOpts(ids) {
+  const list = [];
+  const seen = new Set();
+  for (const id of ids || []) {
+    if (id == null || seen.has(id)) continue;
+    seen.add(id);
+    list.push(id);
+  }
+  if ((state.parts || []).length > 1 && list.length) return { partIds: list };
+  return undefined;
+}
+
+/* 手动加支撑点：点击模型表面 → 加点 → 重建结构。多件时只重做这一件。 */
 export async function addSupportPoint(p, n, partId) {
   if (!state.analysis) { toast('请先运行逐层分析'); return; }
   if (!state.supportPoints) state.supportPoints = [];
-  const pt = { x: p.x, y: p.y, z: p.z, n: n || [0, -1, 0], manual: true, island: null, partId: partId != null ? partId : null };
+  const id = partId != null ? partId : null;
+  const pt = { x: p.x, y: p.y, z: p.z, n: n || [0, -1, 0], manual: true, island: null, partId: id };
   state.supportPoints.push(pt);
-  if (!(await rebuildStructure())) return;            // 被更新的重建取代（连点加点时只有最后一次出日志）
+  if (!(await rebuildStructure(structureOpts([id])))) return;   // 被更新的重建取代（连点加点时只有最后一次出日志）
   log(`手动支撑点 @ (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) → ${STATE_TEXT[pt.state] || '未生成'}`, pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro' ? 'ok' : 'warn');
 }
 
-/* 拖拽针尖：把一个已有支撑点挪到新的接触点，再整体重建结构。
+/* 拖拽针尖：把一个已有支撑点挪到新的接触点，再重建结构。
    p 为世界系接触点，n 为被托面外法线，partId 为命中的零件。
    写回布点位置 ax / ay / az（建塔时从这里重新算针）与接触点 x / y / z；手动点标记保留，
-   套用模板重布点时不会被清掉。格架杆件互相连接，不能只改这一根针，所以走整次重建。
+   套用模板重布点时不会被清掉。格架杆件互相连接，不能只改这一根针，所以这一件整塔重建。
+   多件时别的模型不动；点从一件挪到另一件时，两件都重建。
    拖动过程中的视觉反馈在 scene.js（幽灵针尖 + 橡皮筋），数据只在这一步落库。 */
 export async function moveSupportPoint(index, p, n, partId) {
   if (!state.analysis || !state.mesh) { toast('请先运行逐层分析'); return false; }
   const pts = state.supportPoints || [];
   const pt = pts[index];
   if (!pt || !p) return false;
+  const prevId = pt.partId;
   pt.ax = p.x; pt.ay = p.y; pt.az = p.z;
   pt.x = p.x; pt.y = p.y; pt.z = p.z;
   if (n && (n[0] || n[1] || n[2])) pt.n = [n[0], n[1], n[2]];
   pt.manual = true;
   if (partId != null) pt.partId = partId;
   pt.island = islandAtPoint(p.x, p.y, p.z);          // 挪出孤岛就不再算它的支撑点（统计如实报）
-  if (!(await rebuildStructure())) return false;     // 被更新的重建取代
+  if (!(await rebuildStructure(structureOpts([prevId, pt.partId])))) return false;
   const ok = pt.state === 'ground' || pt.state === 'mesh' || pt.state === 'micro';
   log(`拖拽针尖 → (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) · ${STATE_TEXT[pt.state] || '未生成'}`, ok ? 'ok' : 'warn');
   if (!ok) toast('这个位置生成不了支撑（标红），可以再拖一次');
   return ok;
 }
 
-/* 多线段一次加一串点，只重建一次结构。 */
+/* 多线段一次加一串点，只重建一次结构。多件时只重做点到的这几件。 */
 export async function addSupportPoints(list) {
   if (!state.analysis) { toast('请先运行逐层分析'); return; }
   if (!list || !list.length) return;
   if (!state.supportPoints) state.supportPoints = [];
+  const ids = [];
+  let missing = false;
   for (const p of list) {
+    const id = p.partId != null ? p.partId : null;
+    if (id == null) missing = true;
+    else ids.push(id);
     state.supportPoints.push({
-      x: p.x, y: p.y, z: p.z, n: p.n || [0, -1, 0], manual: true, island: null, partId: p.partId != null ? p.partId : null,
+      x: p.x, y: p.y, z: p.z, n: p.n || [0, -1, 0], manual: true, island: null, partId: id,
     });
   }
-  if (!(await rebuildStructure())) return;
+  if (!(await rebuildStructure(missing ? undefined : structureOpts(ids)))) return;
   const start = state.supportPoints.length - list.length;
   let ok = 0;
   for (let i = 0; i < list.length; i++) {
@@ -1543,9 +2363,12 @@ export async function deleteSupportIndices(indices) {
   const pts = state.supportPoints || [];
   const drop = [...new Set(indices)].filter(i => i >= 0 && i < pts.length).sort((a, b) => b - a);
   if (!drop.length) { toast('没有选中的支撑点'); return false; }
+  pinNeedles();
+  const touched = [];
+  for (const i of drop) if (pts[i]) touched.push(pts[i].partId);
   for (const i of drop) pts.splice(i, 1);
   if (state.supportSel) state.supportSel.clear();
-  if (state.analysis && state.mesh) await rebuildStructure();
+  if (state.analysis && state.mesh) await rebuildStructure(structureOpts(touched));
   else { syncSupportView(); updateSupStats(); }
   log(`已删除 ${drop.length} 个支撑点`, 'ok');
   return true;

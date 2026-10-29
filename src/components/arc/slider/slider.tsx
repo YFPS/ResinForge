@@ -32,6 +32,8 @@ export interface SliderProps<T extends SliderValue = number> {
   showValue?: boolean;
   /** Accessible names for the two range thumbs. */
   thumbLabels?: [string, string];
+  /** One-row track for a toolbar. Hides the label row. */
+  compact?: boolean;
   /** Content beside the track, such as an icon or a mute button. */
   start?: ReactNode;
   end?: ReactNode;
@@ -153,7 +155,7 @@ function Thumb({ quiet, index, shown, value, text, low, high, ariaLabel, labelle
  * the velocity of the release; pressing the track springs the nearest thumb there. A bubble with rolling digits rides the thumb while
  * it is dragged or keyboard focused. Arrows, Shift+arrows, PageUp, PageDown, Home, and End work as in a native range input.
  */
-export function Slider<T extends SliderValue = number>({ label, value, defaultValue, onValueChange, onValueCommit, min = 0, max = 100, step: stepProp = 1, largeStep, marks, minStepsBetweenThumbs = 0, format, showValue = true, thumbLabels, start, end, name, disabled, className }: SliderProps<T>) {
+export function Slider<T extends SliderValue = number>({ label, value, defaultValue, onValueChange, onValueCommit, min = 0, max = 100, step: stepProp = 1, largeStep, marks, minStepsBetweenThumbs = 0, format, showValue = true, thumbLabels, start, end, name, disabled, className, compact }: SliderProps<T>) {
   const reduced = useReducedMotion();
   const labelId = useId();
   const step = stepProp > 0 ? stepProp : 1;
@@ -374,7 +376,7 @@ export function Slider<T extends SliderValue = number>({ label, value, defaultVa
   const inRange = (mark: number) => isRange ? mark >= values[0]! && mark <= values[1]! : mark <= values[0]!;
   const names = thumbLabels ?? [`${label}, minimum`, `${label}, maximum`];
 
-  return <div className={[styles.root, className].filter(Boolean).join(" ")} data-disabled={disabled || undefined} data-dragging={dragging !== null || undefined} data-marks={labelled.length > 0 || undefined}>
+  return <div className={[styles.root, className].filter(Boolean).join(" ")} data-compact={compact || undefined} data-disabled={disabled || undefined} data-dragging={dragging !== null || undefined} data-marks={labelled.length > 0 || undefined}>
     <div className={styles.header}>
       <span id={labelId} className={styles.label}>{label}</span>
       {showValue && <span className={styles.readout} aria-hidden="true">

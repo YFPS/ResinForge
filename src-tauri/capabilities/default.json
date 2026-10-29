@@ -16,6 +16,7 @@
     "fs:default",
     "fs:allow-write-file",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "allow-open-external"
   ]
 }

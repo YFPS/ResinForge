@@ -34,6 +34,11 @@
 .markLabel[data-edge="end"] { translate: min(-50%, calc(-100% + var(--slider-thumb) / 2)) 0; }
 .markLabel[data-on] { color: var(--text-secondary); }
 @media (hover: hover) and (pointer: fine) { .markLabel:hover { color: var(--foreground); } }
+.root[data-compact] { display: flex; align-items: center; gap: 8px; width: 220px; font-size: 12px; --slider-thumb: 16px; --slider-track: 4px; }
+.root[data-compact] .header { display: contents; }
+.root[data-compact] .label { display: none; }
+.root[data-compact] .body { flex: 1; min-width: 96px; }
+.root[data-compact] .control { height: 28px; }
 .root[data-disabled] { opacity: .5; }
 .root[data-disabled] .control, .root[data-disabled] .thumb, .root[data-disabled] .markLabel { cursor: not-allowed; }
 /* Rolling digits: each is a wheel whose window reaches a little past the line box and feathers out, so a turning digit fades at the edge. */

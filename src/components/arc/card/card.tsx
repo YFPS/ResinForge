@@ -142,10 +142,12 @@ export function Card({ title, description, media, action, avatar, meta, status, 
     style={{ ...style, borderRadius: geometry.card ?? style?.borderRadius }}
     data-hover={hovered || undefined}
     whileHover={reduced ? undefined : { y: -2 }}
+    /* 按下缩小走调用方传入的 whileTap。减少动效时不缩放。时长单独指定，不带动悬停抬起。 */
+    whileTap={reduced ? undefined : (props as HTMLMotionProps<"article">).whileTap}
     onHoverStart={() => setHovered(true)}
     onHoverEnd={() => setHovered(false)}
     {...shared("card", "card")}
-    transition={{ default: spring.snappy, layout: settle }}
+    transition={{ default: spring.snappy, layout: settle, scale: { duration: 0.14, ease: [0.23, 1, 0.32, 1] } }}
   >
     {media ? <motion.div className={styles.media} {...shared("media", "card")}><motion.div className={styles.zoom} initial={false} animate={{ scale: hovered && !reduced ? ZOOM : 1 }} transition={hovered ? zoomIn : zoomOut}>{media}</motion.div></motion.div> : null}
     <div className={styles.content}>

@@ -9,19 +9,147 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state, params, bus, log, toast, setProgress } from '../store.js';
-import { loadDemo, loadModelFiles, localFaceOf, raiseH, baseY, plateAxisOrigin, acceptSupportFace } from './model.js';
+import { loadModelFiles, localFaceOf, raiseH, baseY, plateAxisOrigin, acceptSupportFace, requestLayOnFace, sliceViewMeshes } from './model.js';
+import { rasterizeSection } from './slicer.js';
 import { modelKind } from './meshio.js';
 import { addSupportPoint, moveSupportPoint, setSupportSelection, supportSelection, supportIndexNearHit, deleteSupportIndices, prepareSupportColors, setSupportView } from './support.js';
 import { showHeightLine, clearHeightLine } from './heightLine.js';
 import { downPolyLine, movePolyLine, finishPolyLine, cancelPolyLine } from './polyLine.js';
+import { downCutLine, moveCutLine, clearCutHover, cutKey, enterCutMode, leaveCutMode } from './cutLine.js';
 import { initManipulate, tickManipulate } from './manipulate.js';
 import { initViewCube, tickViewCube } from './viewCube.js';
 
+const layPts = new Float32Array(9);
+const layGeom = new THREE.BufferGeometry();
+layGeom.setAttribute('position', new THREE.BufferAttribute(layPts, 3));
+const layMark = new THREE.LineLoop(layGeom, new THREE.LineBasicMaterial({ color: 0x3d8bfd, depthTest: false, toneMapped: false }));
+layMark.frustumCulled = false;
+layMark.renderOrder = 8;
+layMark.visible = false;
+const _layV = new THREE.Vector3();
+function showLayFace(hit) {
+  if (!hit || !state.mesh) { layMark.visible = false; return; }
+  const fi = hit.faceIndex != null ? hit.faceIndex : (hit.face ? hit.face.a / 3 : -1);
+  const attr = state.mesh.geometry.attributes.position;
+  if (fi < 0 || !attr || fi * 3 + 2 >= attr.count) { layMark.visible = false; return; }
+  for (let k = 0; k < 3; k++) {
+    _layV.fromBufferAttribute(attr, fi * 3 + k);
+    state.mesh.localToWorld(_layV);
+    layPts[k * 3] = _layV.x;
+    layPts[k * 3 + 1] = _layV.y;
+    layPts[k * 3 + 2] = _layV.z;
+  }
+  layGeom.attributes.position.needsUpdate = true;
+  layGeom.computeBoundingSphere();
+  layMark.visible = true;
+}
+function clearLayFace() { layMark.visible = false; }
+
+/* 黑格「选择面」只认朝向相机的面：射线先穿过的背面不算，取第一个正面命中。
+   返回命中和它的世界系面法线（模型只有平移，局部法线就是世界法线）。 */
+function frontHit(rc, hits) {
+  const dir = rc.ray.direction;
+  for (const h of hits) {
+    if (!h.face) continue;
+    const n = h.face.normal.clone().transformDirection(state.mesh.matrixWorld);
+    if (n.dot(dir) < 0) return { hit: h, normal: n };
+  }
+  return null;
+}
+
+/* 跟着光标的一行小提示（黑格的鼠标提示「选择面」）。直接挂在 body 上，和框选矩形同一做法 */
+let layTipEl = null;
+function layTipText() { return params.layFace === 'up' ? '选择面 · 朝上' : '选择面 · 朝下'; }
+function moveLayTip(e) {
+  if (!layTipEl) {
+    layTipEl = document.createElement('div');
+    layTipEl.className = 'layTip';
+    layTipEl.hidden = true;
+    layTipEl.setAttribute('aria-hidden', 'true');
+    Object.assign(layTipEl.style, { position: 'fixed', left: '0', top: '0', zIndex: '70', pointerEvents: 'none' });
+    document.body.appendChild(layTipEl);
+  }
+  const text = layTipText();
+  if (layTipEl.textContent !== text) layTipEl.textContent = text;
+  layTipEl.style.transform = `translate(${Math.round(e.clientX + 14)}px, ${Math.round(e.clientY + 16)}px)`;
+  layTipEl.hidden = false;
+}
+function hideLayTip() { if (layTipEl) layTipEl.hidden = true; }
+/* 放置进行中（等确认框的回答）不接新的点击 */
+let layBusy = false;
+
 export const scene = new THREE.Scene();
+scene.add(layMark);
 scene.background = new THREE.Color(0x0d1117);
 scene.fog = new THREE.Fog(0x0d1117, 300, 900);
 export const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
 camera.position.set(95, 75, 95);
+const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3000);
+let orthoOn = false;
+export function viewCamera() { return orthoOn ? orthoCam : camera; }
+export function isOrthographic() { return orthoOn; }
+
+function syncOrtho() {
+  if (!orthoOn) return;
+  const target = controls ? controls.target : new THREE.Vector3(0, 22, 0);
+  const dist = Math.max(camera.position.distanceTo(target), 1);
+  const halfH = Math.tan((camera.fov * Math.PI / 180) / 2) * dist;
+  const aspect = camera.aspect || 1;
+  orthoCam.left = -halfH * aspect;
+  orthoCam.right = halfH * aspect;
+  orthoCam.top = halfH;
+  orthoCam.bottom = -halfH;
+  orthoCam.near = camera.near;
+  orthoCam.far = camera.far;
+  orthoCam.position.copy(camera.position);
+  orthoCam.quaternion.copy(camera.quaternion);
+  orthoCam.up.copy(camera.up);
+  orthoCam.lookAt(target);
+  orthoCam.updateProjectionMatrix();
+}
+
+export function setOrthographic(on) {
+  orthoOn = !!on;
+  syncOrtho();
+  bus.emit('projection', orthoOn ? 'ortho' : 'perspective');
+}
+
+/* 清掉轨道控制器里还没走完的旋转 / 平移余量。
+   阻尼开着时，这些余量会在下一帧继续推镜头；切工程前先清掉，才不会滑进另一个工程。 */
+function flushControlInertia() {
+  if (!controls) return;
+  const damp = controls.enableDamping;
+  controls.enableDamping = false;
+  controls.update();
+  controls.enableDamping = damp;
+}
+
+/** 记下当前镜头：机位、注视点、上方向、正交还是透视。数值拷出来，之后转动不影响这份记录。 */
+export function takeView() {
+  camTween = null;
+  const p = camera.position;
+  const u = camera.up;
+  const t = controls ? controls.target : null;
+  return {
+    px: p.x, py: p.y, pz: p.z,
+    ux: u.x, uy: u.y, uz: u.z,
+    tx: t ? t.x : 0, ty: t ? t.y : 22, tz: t ? t.z : 0,
+    ortho: orthoOn,
+  };
+}
+
+/** 摆回先前记下的镜头。进行中的缓动停掉。 */
+export function putView(view) {
+  if (!view || !controls) return;
+  camTween = null;
+  flushControlInertia();
+  camera.up.set(view.ux, view.uy, view.uz);
+  camera.position.set(view.px, view.py, view.pz);
+  controls.target.set(view.tx, view.ty, view.tz);
+  controls.update();
+  if (!!view.ortho !== orthoOn) setOrthographic(!!view.ortho);
+  else if (orthoOn) syncOrtho();
+}
 
 /* 光照：用户转到任意角度都不能出现纯黑面。
    世界光从四周围过来（上 / 对侧 / 下 / 斜前），环境光再抬一层底；
@@ -160,17 +288,223 @@ export const supportGroup = new THREE.Group(); scene.add(supportGroup);
 export const modelMat = new THREE.MeshStandardMaterial({
   color: 0xa7b0bd, roughness: 0.55, metalness: 0.15, vertexColors: true, envMapIntensity: 0.95
 });
+/* 切片预览：平面法线朝下，constant 是世界高度。高于这条线的模型与支撑被裁掉。 */
+const slicePlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e6);
+const slicePlanes = [slicePlane];
+let sliceOn = false;
+const clipMats = new Set();
+export function bindClip(mat) {
+  if (!mat) return mat;
+  clipMats.add(mat);
+  mat.clippingPlanes = sliceOn ? slicePlanes : [];
+  mat.clipShadows = true;
+  return mat;
+}
+function refreshClip() {
+  const list = sliceOn ? slicePlanes : [];
+  for (const m of clipMats) m.clippingPlanes = list;
+}
+const _sliceV = new THREE.Vector3();
+const sliceWorldCache = new WeakMap();
+
+function matrixKey(e) {
+  let s = '';
+  for (let i = 0; i < 16; i++) s += (e[i] * 1e3 | 0) + ',';
+  return s;
+}
+
+/** 顶点变到和画面上一样的世界坐标。矩阵没变就复用，拖进度条不再每帧乘一遍。 */
+function worldSlice(mesh) {
+  const geom = mesh && mesh.geometry;
+  const attr = geom && geom.attributes && geom.attributes.position;
+  if (!attr) return null;
+  mesh.updateMatrixWorld(true);
+  const e = mesh.matrixWorld.elements;
+  const key = matrixKey(e);
+  const hit = sliceWorldCache.get(geom);
+  if (hit && hit.key === key) return hit;
+  const src = attr.array;
+  const arr = new Float32Array(src.length);
+  const m = mesh.matrixWorld;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < src.length; i += 3) {
+    _sliceV.set(src[i], src[i + 1], src[i + 2]).applyMatrix4(m);
+    const x = _sliceV.x, y = _sliceV.y, z = _sliceV.z;
+    arr[i] = x; arr[i + 1] = y; arr[i + 2] = z;
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  const nf = (arr.length / 9) | 0;
+  const y0 = new Float32Array(nf);
+  const y1 = new Float32Array(nf);
+  for (let i = 0; i < nf; i++) {
+    const o = i * 9;
+    const a = arr[o + 1], b = arr[o + 4], c = arr[o + 7];
+    y0[i] = a < b ? (a < c ? a : c) : (b < c ? b : c);
+    y1[i] = a > b ? (a > c ? a : c) : (b > c ? b : c);
+  }
+  const packed = { key, arr, minX, maxX, minY, maxY, minZ, maxZ, y0, y1, nf };
+  sliceWorldCache.set(geom, packed);
+  return packed;
+}
+
+function sliceWorldParts() {
+  const parts = [];
+  for (const mesh of sliceViewMeshes()) {
+    const w = worldSlice(mesh);
+    if (w) parts.push(w);
+  }
+  return parts;
+}
+
+/** 切片滑杆用的世界高度。按画面上的矩阵算，移动后不再停在旧位置。 */
+export function sliceMeshSpan() {
+  const parts = sliceWorldParts();
+  if (!parts.length) return null;
+  let y0 = Infinity, y1 = -Infinity;
+  for (const p of parts) {
+    if (p.minY < y0) y0 = p.minY;
+    if (p.maxY > y1) y1 = p.maxY;
+  }
+  if (!Number.isFinite(y0) || y1 - y0 < 0.4) return null;
+  return { y0, y1 };
+}
+
+const sliceCapMat = new THREE.MeshStandardMaterial({
+  color: 0x8ea0b8, roughness: 0.55, metalness: 0.08, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+});
+const sliceCap = new THREE.Mesh(new THREE.BufferGeometry(), sliceCapMat);
+sliceCap.visible = false;
+sliceCap.raycast = () => {};
+sliceCap.frustumCulled = false;
+scene.add(sliceCap);
+let sliceCapToken = 0;
+let sliceCapFrame = 0;
+let sliceCapQueued = null;
+
+function hideSliceCap() {
+  sliceCap.visible = false;
+  modelMat.side = THREE.FrontSide;
+  modelMat.needsUpdate = true;
+}
+
+/* 裁切面本身没有厚度，只开正面会看成一层空壳。把这一层截面挤出层厚，补上实心。
+   顶点先变到画面上的世界坐标再切，移动后矩阵里的位移不会把截面留在原地。 */
+function rebuildSliceCap(worldY) {
+  const token = ++sliceCapToken;
+  const parts = sliceWorldParts();
+  if (!parts.length) { hideSliceCap(); return; }
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of parts) {
+    if (p.minX < minX) minX = p.minX;
+    if (p.maxX > maxX) maxX = p.maxX;
+    if (p.minZ < minZ) minZ = p.minZ;
+    if (p.maxZ > maxZ) maxZ = p.maxZ;
+  }
+  const spanX = Math.max(1, maxX - minX);
+  const spanZ = Math.max(1, maxZ - minZ);
+  const cell = Math.max(0.45, Math.max(spanX, spanZ) / 160);
+  const W = Math.min(180, Math.max(2, Math.ceil(spanX / cell) + 2));
+  const H = Math.min(180, Math.max(2, Math.ceil(spanZ / cell) + 2));
+  const sx = spanX / Math.max(1, W - 2);
+  const sz = spanZ / Math.max(1, H - 2);
+  const grid = { W, H, sx, sz, x0: minX - sx, z0: minZ - sz };
+  const occ = new Uint8Array(W * H);
+  const rowXs = new Array(H);
+  for (let j = 0; j < H; j++) rowXs[j] = [];
+  for (const p of parts) {
+    const tris = [];
+    for (let i = 0; i < p.nf; i++) {
+      if (p.y0[i] <= worldY && p.y1[i] >= worldY) tris.push(i);
+    }
+    if (tris.length) rasterizeSection(p.arr, tris, worldY, occ, { arr: new Int32Array(W * H), n: 0 }, grid, rowXs);
+    if (token !== sliceCapToken) return;
+  }
+  const thick = Math.max(params.layerH || 0.05, 0.28);
+  const y0 = worldY - thick;
+  const y1 = worldY;
+  const verts = [];
+  const push = (x, y, z) => { verts.push(x, y, z); };
+  const quad = (x0, z0, x1, z1, y, n) => {
+    if (n < 0) {
+      push(x0, y, z0); push(x1, y, z0); push(x1, y, z1);
+      push(x0, y, z0); push(x1, y, z1); push(x0, y, z1);
+    } else {
+      push(x0, y, z0); push(x1, y, z1); push(x1, y, z0);
+      push(x0, y, z0); push(x0, y, z1); push(x1, y, z1);
+    }
+  };
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      if (!occ[j * W + i]) continue;
+      const x0 = grid.x0 + i * sx;
+      const z0 = grid.z0 + j * sz;
+      const x1 = x0 + sx;
+      const z1 = z0 + sz;
+      quad(x0, z0, x1, z1, y1, 1);
+      quad(x0, z0, x1, z1, y0, -1);
+      const edge = (ni, nj, ax, az, bx, bz) => {
+        if (ni < 0 || nj < 0 || ni >= W || nj >= H || !occ[nj * W + ni]) {
+          push(ax, y0, az); push(bx, y0, bz); push(bx, y1, bz);
+          push(ax, y0, az); push(bx, y1, bz); push(ax, y1, az);
+        }
+      };
+      edge(i - 1, j, x0, z0, x0, z1);
+      edge(i + 1, j, x1, z1, x1, z0);
+      edge(i, j - 1, x0, z0, x1, z0);
+      edge(i, j + 1, x1, z1, x0, z1);
+    }
+  }
+  if (!verts.length) { hideSliceCap(); return; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.computeVertexNormals();
+  if (sliceCap.geometry) sliceCap.geometry.dispose();
+  sliceCap.geometry = g;
+  sliceCap.position.set(0, 0, 0);
+  sliceCap.visible = true;
+  modelMat.side = THREE.DoubleSide;
+  modelMat.needsUpdate = true;
+}
+
+export function setSlicePreview(y) {
+  if (y == null || !Number.isFinite(y)) {
+    sliceOn = false;
+    sliceCapQueued = null;
+    if (sliceCapFrame) { cancelAnimationFrame(sliceCapFrame); sliceCapFrame = 0; }
+    sliceCapToken++;
+    hideSliceCap();
+    refreshClip();
+    bus.emit('slicePreview', null);
+    return;
+  }
+  sliceOn = true;
+  slicePlane.constant = y;
+  refreshClip();
+  sliceCapQueued = y;
+  if (!sliceCapFrame) {
+    sliceCapFrame = requestAnimationFrame(() => {
+      sliceCapFrame = 0;
+      const at = sliceCapQueued;
+      sliceCapQueued = null;
+      if (sliceOn && at != null) rebuildSliceCap(at);
+    });
+  }
+  bus.emit('slicePreview', y);
+}
+bindClip(modelMat);
 /** 落板支撑（格架塔、落到平台的短杆与底板）：#312F32 */
 export const SUP_COLOR = 0x312f32;
 /** 短小支撑（锚在模型表面上的十字短杆 / 分叉头）：红 */
 export const SUP_ANCHOR_COLOR = 0xe0242c;
-export const supMat = new THREE.MeshStandardMaterial({ color: SUP_COLOR, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.95 });
-export const supMatAnchor = new THREE.MeshStandardMaterial({ color: SUP_ANCHOR_COLOR, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.95 });
-export const supMatBase = new THREE.MeshStandardMaterial({ color: SUP_COLOR, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.95 });   // 格架底座整板，与落板支撑同色
+export const supMat = bindClip(new THREE.MeshStandardMaterial({ color: SUP_COLOR, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.95 }));
+export const supMatAnchor = bindClip(new THREE.MeshStandardMaterial({ color: SUP_ANCHOR_COLOR, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.95 }));
+export const supMatBase = bindClip(new THREE.MeshStandardMaterial({ color: SUP_COLOR, roughness: 0.7, metalness: 0.05, envMapIntensity: 0.95 }));   // 格架底座整板，与落板支撑同色
 /* 「连接体」显示模式下针的半透明材质（玻璃感：能看穿、留轮廓；2026-10-14 用户定）。
    这里用同色相的亮一档：顶点色是实心 #312F32，再乘 0.5 透明度会融进深色视口。 */
-export const supMatGlass = new THREE.MeshStandardMaterial({ color: 0xb0b1b1, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.7, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
-export const supMatAnchorGlass = new THREE.MeshStandardMaterial({ color: 0xff4d55, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.7, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+export const supMatGlass = bindClip(new THREE.MeshStandardMaterial({ color: 0xb0b1b1, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.7, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }));
+export const supMatAnchorGlass = bindClip(new THREE.MeshStandardMaterial({ color: 0xff4d55, roughness: 0.5, metalness: 0.05, envMapIntensity: 0.7, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }));
 
 /* 预览渲染器（朝向候选缩略图；preserveDrawingBuffer 供 toDataURL 出图，React 渲染 <img>） */
 export const prevRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -198,6 +532,7 @@ function resize() {
   const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix();
+  syncOrtho();
 }
 
 /* ================================================================
@@ -210,7 +545,8 @@ export function pointerRay(e) {
     ((e.clientX - rect.left) / rect.width) * 2 - 1,
     -((e.clientY - rect.top) / rect.height) * 2 + 1
   );
-  raycaster.setFromCamera(ndc, camera);
+  if (orthoOn) syncOrtho();
+  raycaster.setFromCamera(ndc, viewCamera());
   return raycaster;
 }
 export function paintAt(e) {
@@ -284,6 +620,12 @@ export function setMode(m) {
   clearSupportHover();
   if (m !== 'add') clearHeightLine();
   if (m !== 'poly') cancelPolyLine();
+  if (m !== 'lay') { clearLayFace(); hideLayTip(); }
+  if (m !== 'cut' && prev === 'cut') leaveCutMode();
+  if (m === 'cut' && prev !== 'cut') enterCutMode();
+  if (m === 'lay' && prev !== 'lay') {
+    log(`按面放置：点模型上朝向你的一个面，这个面转到${params.layFace === 'up' ? '朝上' : '朝下'}，整件最低点落到平台。右键仍可转视角，按 F 或 Esc 退出`);
+  }
   if (m === 'del') prepareSupportColors();
   else setSupportSelection([]);
   cancelSupBox();
@@ -850,6 +1192,12 @@ function onSupportKey(e) {
   }
   if (typingTarget()) return;
   if (document.querySelector('dialog[open], [role="dialog"][data-state="open"]')) return;
+  // 画线切割：Enter 封口 / 切割、Backspace 退一点、Esc 取消这一条、Delete 删选中的线（不误删模型）
+  if (state.mode === 'cut' && cutKey(e)) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return;
+  }
   const hot = supportHotkeys || state.mode === 'add' || state.mode === 'del';
   // V：循环切换支撑显示（全部 → 仅连接体 → 仅接触点，黑格同款快捷键）
   if (!e.shiftKey && (k === 'v' || e.code === 'KeyV')) {
@@ -1100,13 +1448,86 @@ async function loadDroppedModelPaths(paths) {
   } catch (e) {
     setProgress(null);
     log(`读取拖入的模型失败：${e && e.message || e}`, 'warn');
-    toast('无法读取拖入的文件');
+    toast('无法读取拖入的文件', { tone: 'danger' });
   }
+}
+
+/* 项目卡片用的镜头快照：就是当前摄影机看到的画面，不是另摆机位重渲。
+   把手、选框、悬停环这些操作装饰先藏起来，拍完再放回，避免卡片上留着界面。 */
+const THUMB_CHROME = ['partGizmo', 'partScaleCage', 'partSelection', 'supportHover', 'polyLine', 'heightLine', 'cutLines'];
+let viewThumbTarget = null;
+let viewThumbCanvas = null;
+let viewThumbBuf = null;
+
+function hideViewChrome() {
+  const hidden = [];
+  const stash = obj => {
+    if (!obj || !obj.visible) return;
+    obj.visible = false;
+    hidden.push(obj);
+  };
+  for (const name of THUMB_CHROME) stash(scene.getObjectByName(name));
+  stash(layMark);
+  stash(sliceCap);
+  stash(focusRing);
+  stash(hoverMark);
+  return hidden;
+}
+
+export function captureViewThumb(maxW = 640, aspect) {
+  if (!renderer || !canvas) return '';
+  const srcW = canvas.width;
+  const srcH = canvas.height;
+  if (srcW < 2 || srcH < 2) return '';
+  /* 不传比例就用视口。项目卡片更扁，按卡片比例拍，画面才能贴满上下，不会左右留空再被裁一刀。 */
+  const frameAspect = Number.isFinite(aspect) && aspect > 0.25 && aspect < 4 ? aspect : srcW / srcH;
+  const w = Math.max(2, Math.min(maxW, srcW));
+  const h = Math.max(2, Math.round(w / frameAspect));
+  if (!viewThumbTarget || viewThumbTarget.width !== w || viewThumbTarget.height !== h) {
+    if (viewThumbTarget) viewThumbTarget.dispose();
+    viewThumbTarget = new THREE.WebGLRenderTarget(w, h, { colorSpace: THREE.SRGBColorSpace });
+    viewThumbBuf = new Uint8Array(w * h * 4);
+  }
+  const hidden = hideViewChrome();
+  const prevTarget = renderer.getRenderTarget();
+  const prevAspect = camera.aspect;
+  camera.aspect = frameAspect;
+  camera.updateProjectionMatrix();
+  if (orthoOn) syncOrtho();
+  try {
+    renderer.setRenderTarget(viewThumbTarget);
+    renderer.render(scene, viewCamera());
+    renderer.readRenderTargetPixels(viewThumbTarget, 0, 0, w, h, viewThumbBuf);
+  } finally {
+    renderer.setRenderTarget(prevTarget);
+    camera.aspect = prevAspect;
+    camera.updateProjectionMatrix();
+    if (orthoOn) syncOrtho();
+    for (const obj of hidden) obj.visible = true;
+  }
+  if (!viewThumbCanvas) viewThumbCanvas = document.createElement('canvas');
+  viewThumbCanvas.width = w;
+  viewThumbCanvas.height = h;
+  const ctx = viewThumbCanvas.getContext('2d');
+  const image = ctx.createImageData(w, h);
+  const row = w * 4;
+  for (let y = 0; y < h; y++) {
+    const src = (h - 1 - y) * row;
+    image.data.set(viewThumbBuf.subarray(src, src + row), y * row);
+  }
+  ctx.putImageData(image, 0, 0);
+  let url = '';
+  try { url = viewThumbCanvas.toDataURL('image/webp', 0.82); } catch { /* 不支持 webp 时退回 png */ }
+  if (!url || !url.startsWith('data:image/')) {
+    try { url = viewThumbCanvas.toDataURL('image/png'); } catch { url = ''; }
+  }
+  return url;
 }
 
 export function initScene(canvasEl) {
   canvas = canvasEl;
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.localClippingEnabled = true;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   /* 环境光照（IBL ≈ 简易全局光照）：主场景与缩略图场景各自 PMREM（纹理绑定 GL 上下文，不能跨 renderer 共享） */
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -1156,6 +1577,25 @@ export function initScene(canvasEl) {
       if (!hits.length) return;
       e.stopPropagation();
       downPolyLine(hits[0], polyView());
+    } else if (state.mode === 'cut' && state.mesh) {
+      // 画线切割：左键点一个点；没点到模型也不让别的处理接走
+      e.preventDefault();
+      e.stopPropagation();
+      downCutLine(e);
+    } else if (state.mode === 'lay' && state.mesh) {
+      if (layBusy) { e.stopPropagation(); return; }
+      const rc = pointerRay(e);
+      const f = frontHit(rc, rc.intersectObject(state.mesh, false));
+      if (!f) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const fi = f.hit.faceIndex != null ? f.hit.faceIndex : f.hit.face.a / 3;
+      clearLayFace();
+      // 放完模式不退出，可以接着点下一个面；有支撑时先弹确认框，等回答
+      layBusy = true;
+      requestLayOnFace(fi, f.normal, { dir: params.layFace })
+        .catch(err => log(`按面放置失败：${err && err.message ? err.message : err}`, 'warn'))
+        .finally(() => { layBusy = false; });
     } else if (state.mode === 'del') {
       // 左键留给点选和框选支撑点，不让后面的模型框选把这次拖动接走
       e.stopImmediatePropagation();
@@ -1180,6 +1620,21 @@ export function initScene(canvasEl) {
   window.addEventListener('pointercancel', () => cancelSupBox());
   window.addEventListener('keydown', onSupportKey, true);
   canvas.addEventListener('pointermove', e => {
+    if (state.mode === 'cut') {
+      // 拖视角时不挂橡皮筋；只有在画线时才跟着指针算贴面线
+      if (e.buttons !== 0) { clearCutHover(); return; }
+      moveCutLine(e);
+      return;
+    }
+    if (state.mode === 'lay') {
+      moveLayTip(e);
+      if (!state.mesh || e.buttons !== 0) { clearLayFace(); return; }
+      const rc = pointerRay(e);
+      const f = frontHit(rc, rc.intersectObject(state.mesh, false));
+      showLayFace(f ? f.hit : null);
+      canvas.style.cursor = f ? 'crosshair' : 'default';
+      return;
+    }
     if (state.painting && state.mode === 'paint') paintAt(e);
     if (e.buttons !== 0) clearSupportHover();   // 拖视角 / 拖支撑时不挂悬停环
     // 加支撑时画高度线。多线段只画贴在表面上的折线，不再叠高度线。
@@ -1204,7 +1659,7 @@ export function initScene(canvasEl) {
       clearSupportHover();
     }
   });
-  canvas.addEventListener('pointerleave', () => clearSupportHover());
+  canvas.addEventListener('pointerleave', () => { clearSupportHover(); clearLayFace(); hideLayTip(); clearCutHover(); });
   window.addEventListener('pointerup', () => { state.painting = false; });
   // 拖拽针尖：指针可能在画布外松开，统一听 window，按 pointerId 认这一根手指 / 鼠标
   window.addEventListener('pointermove', e => {
@@ -1246,15 +1701,14 @@ export function initScene(canvasEl) {
     stepCamera(tWork);
     tickManipulate();
     tickSupportHover();
-    renderer.render(scene, camera);
+    syncOrtho();
+    renderer.render(scene, viewCamera());
     tickViewCube();
     samplePerf(tWork);
   })();
 
-  /* 启动 */
+  /* 启动：空场景。演示模型由用户从菜单载入，不在打开时自动放上环面结。 */
   resize();
   updateBuildVolume();
-  loadDemo('knot');
-  log('ResinForge v0.1 就绪：像素级切片 + 多目标朝向优化 + 孤岛检测 + 语义保护面权重', 'ok');
-  log('流程：载入模型 → 朝向优化 → (涂保护面) → 逐层分析 → 生成支撑 → 导出 STL');
+  log('ResinForge 就绪', 'ok');
 }

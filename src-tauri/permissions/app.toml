@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-open-external"
+description = "在系统浏览器打开本仓库的 GitHub 页面"
+commands.allow = ["open_external"]

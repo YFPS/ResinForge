@@ -4,10 +4,11 @@
    - 移动 / 旋转 / 缩放工具作用于当前全部选中：同一位移、绕整组中心转、从整组中心按同一比例缩放
    - 从空白处或未选中的模型上按住左键拖动，出现框线，松开后选中框到的模型
    - Ctrl/⌘ 再点是加减选中，再框是追加；Ctrl/⌘ A 全选，不选中网页文字
+   - Ctrl/⌘ C 复制选中模型，Ctrl/⌘ V 粘贴到旁边。输入框里仍是复制粘贴文字。
    - Delete 删除当前选中的模型。Ctrl/⌘ Z 撤回，Ctrl/⌘ Shift Z 或 Ctrl/⌘ Y 重做
    - M 开启移动，R 开启旋转，S 开启缩放。再按一次同一个键关掉。输入框里打字时不抢
    - 中键拖动平移视角，右键拖动旋转视角；右键点在单个模型上（没有拖开）弹出菜单
-   - 菜单：沿坐标轴移动 / 拖圆环旋转 / 放大缩小
+   - 菜单：沿坐标轴移动 / 拖圆环旋转 / 放大缩小 / 添加到零件库
    - 放大缩小打开面板：毫米和百分比、锁定等比、还原、适应机型。选中多件时面板仍在，数值作用在全部选中上。拖拽时三色方块沿轴拉，每件各画一个包围盒
    - 切片 Z 是高度：沿 Z 下移或旋转扫进平台时，底面停在 Z = 0，不能为负
    - 缩放烤进局部顶点。切片 X = 局部 x，切片 Y = 局部 z，切片 Z（高度）= 局部 y，从底面向上长
@@ -17,13 +18,13 @@ import * as THREE from 'three';
 import { state, params, bus, log, toast } from '../store.js';
 import { scene, camera, pointerRay, setMode } from './scene.js';
 import {
-  raiseH, localFaceOf, setSelection, syncPlateMesh, commitPartEdit, removeParts, previewPartPose, meshPick, scheduleMeshBVH,
-  partBounds, clampPartsToPrintZ, seatPartsOnPlate, bakePartRotation, applyPartScale, finishPartScale, discardStaleWork, uniformScaleFactor,
+  raiseH, localFaceOf, setSelection, syncPlateMesh, commitPartEdit, removeParts, copySelectedParts, pasteParts, previewPartMotion, paintMovedParts, resyncPlateForPaint, meshPick, scheduleMeshBVH,
+  partBounds, clampPartsToPrintZ, seatPartsOnPlate, bakePartRotation, applyPartScale, finishPartScale, discardStaleWork, uniformScaleFactor, clampScale,
   scalePartTo, scalePartToFit,
   capturePoses, capturePartSnaps, restorePartSnap, releaseSnaps, commitPoseHistory, commitGeomHistory,
 } from './model.js';
 import { undo, redo, pushHistory } from './history.js';
-import { bakeSupportShift, clearSupports, previewSupportShift, supportsFollowParts, updateSupStats } from './support.js';
+import { bakeSupportShift, clearSupports, previewSupportShift, previewOwnedSupportShift, supportShiftMode, updateSupStats } from './support.js';
 import { hideInspector } from './inspect.js';
 
 /* 切片软件坐标：X / Y 在板面上，Z 向上。场景本身是 Y 朝上，所以切片 Y = 世界 +Z，切片 Z = 世界 +Y。 */
@@ -69,6 +70,15 @@ const _quat = new THREE.Quaternion();
 const _inv = new THREE.Matrix4();
 const _local = new THREE.Vector3();
 const _axisZ = new THREE.Vector3(0, 0, 1);
+const _mot = new THREE.Matrix4();
+const _motA = new THREE.Matrix4();
+const _motB = new THREE.Matrix4();
+const _partBox = new THREE.Box3();
+const _partMin = new THREE.Vector3();
+const _partMax = new THREE.Vector3();
+const _partPt = new THREE.Vector3();
+let motionFrame = 0;
+let motionPoint = null;
 
 function ghostMat() {
   return new THREE.MeshBasicMaterial({
@@ -433,9 +443,86 @@ function pickGizmo(e) {
   return null;
 }
 
+const _rayO = new THREE.Vector3();
+const _rayD = new THREE.Vector3();
+const _rayM = new THREE.Matrix4();
+
+/* 射线先套进外接盒，通常只有一两件。盒子套中多件时，只扫这几件的三角，避免整板逐面扫描。 */
+function partsAlongRay(ray) {
+  const lift = raiseH();
+  const hits = [];
+  for (const p of state.parts) {
+    const b = partBounds(p);
+    _partMin.set(b.min.x, b.min.y + lift, b.min.z);
+    _partMax.set(b.max.x, b.max.y + lift, b.max.z);
+    _partBox.set(_partMin, _partMax);
+    if (ray.intersectBox(_partBox, _partPt)) hits.push(p);
+  }
+  return hits;
+}
+
+function rayTriT(ox, oy, oz, dx, dy, dz, pos, i) {
+  const ax = pos[i], ay = pos[i + 1], az = pos[i + 2];
+  const e1x = pos[i + 3] - ax, e1y = pos[i + 4] - ay, e1z = pos[i + 5] - az;
+  const e2x = pos[i + 6] - ax, e2y = pos[i + 7] - ay, e2z = pos[i + 8] - az;
+  const px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+  const det = e1x * px + e1y * py + e1z * pz;
+  // 只要朝向相机的正面，和模型材质 FrontSide 一致。背面会先碰到旁边零件的内壁。
+  if (det <= 1e-14) return null;
+  const inv = 1 / det;
+  const tx = ox - ax, ty = oy - ay, tz = oz - az;
+  const u = (tx * px + ty * py + tz * pz) * inv;
+  if (u < 0 || u > 1) return null;
+  const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+  const v = (dx * qx + dy * qy + dz * qz) * inv;
+  if (v < 0 || u + v > 1) return null;
+  const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+  return t > 1e-6 ? t : null;
+}
+
+function closestOnParts(ray, parts) {
+  const mesh = state.mesh;
+  const pos = mesh.geometry.attributes.position.array;
+  if (_rayM.copy(mesh.matrixWorld).invert().determinant() === 0) return null;
+  _rayO.copy(ray.origin).applyMatrix4(_rayM);
+  _rayD.copy(ray.direction).transformDirection(_rayM);
+  let bestT = Infinity;
+  let best = null;
+  const ox = _rayO.x, oy = _rayO.y, oz = _rayO.z;
+  const dx = _rayD.x, dy = _rayD.y, dz = _rayD.z;
+  for (const p of parts) {
+    const floats = p.geom.attributes.position.count * 3;
+    const start = (p.faceStart || 0) * 9;
+    if (start < 0 || start + floats > pos.length) continue;
+    for (let i = start; i < start + floats; i += 9) {
+      const t = rayTriT(ox, oy, oz, dx, dy, dz, pos, i);
+      if (t != null && t < bestT) { bestT = t; best = p; }
+    }
+  }
+  if (!best) return null;
+  _partPt.set(ox + dx * bestT, oy + dy * bestT, oz + dz * bestT).applyMatrix4(mesh.matrixWorld);
+  return { part: best, point: _partPt.clone() };
+}
+
 function pickModel(e, allowBuild) {
   if (!state.mesh) return null;
   const ray = pointerRay(e).ray;
+  if (state.parts.length > 1) {
+    const near = partsAlongRay(ray);
+    if (!near.length) return null;
+    // 只有一件套中时用盒面落点，不再扫这件的全部三角。
+    if (near.length === 1) {
+      const p = near[0];
+      const b = partBounds(p);
+      const lift = raiseH();
+      _partMin.set(b.min.x, b.min.y + lift, b.min.z);
+      _partMax.set(b.max.x, b.max.y + lift, b.max.z);
+      _partBox.set(_partMin, _partMax);
+      ray.intersectBox(_partBox, _partPt);
+      return { part: p, point: _partPt.clone() };
+    }
+    return closestOnParts(ray, near);
+  }
   let hit = meshPick(ray);
   if (!hit && allowBuild) {
     scheduleMeshBVH();
@@ -524,6 +611,10 @@ function partsOf(g) {
 function applyGesture(e) {
   const g = gesture;
   if (!g) return;
+  if ((g.kind === 'free' || g.kind === 'move') && !g.frameReady) {
+    bus.emit('framePrepare');
+    g.frameReady = true;
+  }
   const ray = pointerRay(e).ray;
   if (g.kind === 'free') {
     if (!planePoint(ray, _tmp.set(0, g.planeY, 0), WORLD_UP, _hit)) return;
@@ -542,7 +633,7 @@ function applyGesture(e) {
       s.part.oy = s.oy + g.dir.y * delta;
       s.part.oz = s.oz + g.dir.z * delta;
     }
-    clampPartsToPrintZ(partsOf(g));
+    g.liftFix = clampPartsToPrintZ(partsOf(g));
   } else if (g.kind === 'rotate') {
     if (!planePoint(ray, g.origin, g.dir, _hit)) return;
     _tmp.copy(_hit).sub(g.origin);
@@ -562,7 +653,7 @@ function applyGesture(e) {
       s.part.oy = g.origin.y + _local.y - lift - s.part.base.y / 2;
       s.part.q.copy(s.q).premultiply(_quat).normalize();
     }
-    clampPartsToPrintZ(partsOf(g));
+    g.liftFix = clampPartsToPrintZ(partsOf(g));
   } else if (g.kind === 'scale') {
     applyScaleGesture(g, e, ray);
     return;
@@ -570,22 +661,76 @@ function applyGesture(e) {
   if (!g.moved && reallyMoved(g.snaps)) {
     g.moved = true;
     if (g.kind === 'free' || g.kind === 'move') {
-      g.followSupports = supportsFollowParts(g.snaps.map(s => s.part.id));
+      g.supportShift = supportShiftMode(g.snaps.map(s => s.part.id));
+      g.followSupports = g.supportShift === 'all' || g.supportShift === 'owned';
       clearAnalysisOnly();
       log(g.followSupports
         ? '模型已移动，支撑跟随。分析结果已清除，请重新分析'
-        : '模型已移动，支撑保留。分析结果已清除，请重新分析', 'warn');
+        : g.supportShift === 'rebuild'
+          ? '模型已移动，松手后支撑会跟过去。分析结果已清除，请重新分析'
+          : '模型已移动，支撑保留。分析结果已清除，请重新分析', 'warn');
     } else invalidateWork();
   }
-  if (g.moved && g.followSupports && (g.kind === 'free' || g.kind === 'move')) {
+  if (g.moved && (g.kind === 'free' || g.kind === 'move')) {
     const s0 = g.snaps[0];
-    previewSupportShift(s0.part.ox - s0.ox, s0.part.oy - s0.oy, s0.part.oz - s0.oz);
+    const dx = s0.part.ox - s0.ox;
+    const dy = s0.part.oy - s0.oy;
+    const dz = s0.part.oz - s0.oz;
+    const ids = g.snaps.map(s => s.part.id);
+    if (g.supportShift && g.supportShift !== 'none') {
+      if (g.supportShift === 'owned') previewOwnedSupportShift(ids, dx, dy, dz);
+      else previewSupportShift(dx, dy, dz);
+    }
+    bus.emit('frameShift', { partIds: ids, dx, dy, dz });
   }
   if (g.moved) {
-    if (!previewPartPose()) syncPlateMesh({ faces: false });
+    // 平移和旋转都是刚体。矩阵预览不重写顶点，也不在每一帧重建 BVH。
+    if (!previewPartMotion(partsOf(g), motionMatrixFor(g, _mot), g.kind)) syncPlateMesh({ faces: false });
     syncSelectionBoxes();
     canvas.style.cursor = 'grabbing';
   }
+}
+
+function motionMatrixFor(g, out) {
+  const s0 = g.snaps[0];
+  if (g.kind === 'rotate') return rotationMotion(g.origin, _quat, g.liftFix || 0, out);
+  return out.makeTranslation(s0.part.ox - s0.ox, (s0.part.oy || 0) - s0.oy, s0.part.oz - s0.oz);
+}
+
+function rotationMotion(origin, quat, fixY, out) {
+  out.makeTranslation(origin.x, origin.y + fixY, origin.z);
+  _motA.makeRotationFromQuaternion(quat);
+  out.multiply(_motA);
+  _motB.makeTranslation(-origin.x, -origin.y, -origin.z);
+  out.multiply(_motB);
+  return out;
+}
+
+function scaleMotion(origin, fx, fy, fz, fixY, quat, out) {
+  out.makeTranslation(origin.x, origin.y + fixY, origin.z);
+  if (quat) {
+    _motA.makeRotationFromQuaternion(quat);
+    out.multiply(_motA);
+  }
+  _motB.makeScale(fx, fy, fz);
+  out.multiply(_motB);
+  if (quat) {
+    _motA.makeRotationFromQuaternion(quat).invert();
+    out.multiply(_motA);
+  }
+  _motB.makeTranslation(-origin.x, -origin.y, -origin.z);
+  out.multiply(_motB);
+  return out;
+}
+
+function scaleFactorsOf(g, it, factor) {
+  if (g.uniform) {
+    const f = uniformScaleFactor(factor, it.base);
+    return { fx: f, fy: f, fz: f };
+  }
+  if (g.axis === 'x') return { fx: clampScale(factor, it.base.x), fy: 1, fz: 1 };
+  if (g.axis === 'y') return { fx: 1, fy: 1, fz: clampScale(factor, it.base.z) };
+  return { fx: 1, fy: clampScale(factor, it.base.y), fz: 1 };
 }
 
 function beginFree(picked, e) {
@@ -624,38 +769,57 @@ function applyScaleGesture(g, e, ray) {
   const factor = scaleFactor(g, ray);
   let any = false;
   let maxDelta = 0;
+  let same = true;
+  let seen = false;
+  let fx = 1;
+  let fy = 1;
+  let fz = 1;
   for (const it of g.items) {
-    let f = factor;
-    let fx = 1;
-    let fy = 1;
-    let fz = 1;
-    if (g.uniform) {
-      f = uniformScaleFactor(f, it.base);
-      fx = fy = fz = f;
-    } else if (g.axis === 'x') fx = f;
-    else if (g.axis === 'y') fz = f;   // 切片 Y = 局部 z
-    else if (g.axis === 'z') fy = f;   // 切片 Z = 局部 y，从底面乘
-    const applied = applyPartScale(it.part, fx, fy, fz, it.src, it.base, it.srcSource);
-    if (!applied) continue;
+    const f = scaleFactorsOf(g, it, factor);
+    if (!Number.isFinite(f.fx) || !Number.isFinite(f.fy) || !Number.isFinite(f.fz)) continue;
     any = true;
-    placeScaled(it, g.origin, applied.fx, applied.fy, applied.fz);
-    g.fx = applied.fx;
-    g.fy = applied.fy;
-    g.fz = applied.fz;
-    maxDelta = Math.max(maxDelta, Math.abs(applied.fx - 1), Math.abs(applied.fy - 1), Math.abs(applied.fz - 1));
+    it.fx = f.fx;
+    it.fy = f.fy;
+    it.fz = f.fz;
+    if (!seen) { fx = f.fx; fy = f.fy; fz = f.fz; seen = true; }
+    else if (Math.abs(f.fx - fx) > 1e-4 || Math.abs(f.fy - fy) > 1e-4 || Math.abs(f.fz - fz) > 1e-4) same = false;
+    maxDelta = Math.max(maxDelta, Math.abs(f.fx - 1), Math.abs(f.fy - 1), Math.abs(f.fz - 1));
   }
   if (!any) return;
   if (maxDelta <= 0.002 && !g.moved) {
-    for (const it of g.items) applyPartScale(it.part, 1, 1, 1, it.src, it.base, it.srcSource);
     writeFromSnapshot(g.snaps);
     return;
   }
+  for (const it of g.items) {
+    it.part.base = { x: it.base.x * it.fx, y: it.base.y * it.fy, z: it.base.z * it.fz };
+    it.part.size = { x: it.part.base.x, y: it.part.base.y, z: it.part.base.z };
+    placeScaled(it, g.origin, it.fx, it.fy, it.fz);
+  }
+  g.fx = fx;
+  g.fy = fy;
+  g.fz = fz;
   if (!g.moved) {
     g.moved = true;
+    g.vertScale = !same;
     discardStaleWork('模型尺寸已变，分析结果与支撑已清除，请重新分析');
+  } else if (!same) g.vertScale = true;
+  const parts = g.items.map(it => it.part);
+  const fix = clampPartsToPrintZ(parts);
+  if (g.vertScale) {
+    // 各件比例被钳成不一样时，一张矩阵盖不住，只改选中件的顶点。
+    for (const it of g.items) applyPartScale(it.part, it.fx, it.fy, it.fz, it.src, it.base, it.srcSource);
+    for (const it of g.items) placeScaled(it, g.origin, it.fx, it.fy, it.fz);
+    clampPartsToPrintZ(parts);
+    if (!g.vertReady) {
+      resyncPlateForPaint();
+      g.vertReady = true;
+    } else if (!paintMovedParts(parts)) syncPlateMesh({ faces: false });
+  } else {
+    const quat = g.objectSpace ? g.items[0].part.q : null;
+    if (!previewPartMotion(parts, scaleMotion(g.origin, fx, fy, fz, fix, quat, _mot), 'scale')) {
+      syncPlateMesh({ faces: false });
+    }
   }
-  clampPartsToPrintZ(g.items.map(it => it.part));
-  syncPlateMesh({ faces: false });
   syncSelectionBoxes();
   syncScaleCage();
   syncScalePanel();
@@ -691,6 +855,7 @@ function beginScale(parts, group, e) {
     dir,
     axis,
     uniform: scaleUniform,
+    objectSpace,
     startParam,
     items: list.map(part => ({
       part,
@@ -746,6 +911,7 @@ function beginGizmo(group, e) {
 }
 
 function endGesture() {
+  flushGesture();
   const g = gesture;
   gesture = null;
   setHover(null);
@@ -756,8 +922,18 @@ function endGesture() {
       releaseSnaps(g.before);
       return;
     }
+    if (g.moved) {
+      for (const it of g.items) {
+        const fx = it.fx || g.fx || 1;
+        const fy = it.fy || g.fy || 1;
+        const fz = it.fz || g.fz || 1;
+        applyPartScale(it.part, fx, fy, fz, it.src, it.base, it.srcSource);
+        placeScaled(it, g.origin, fx, fy, fz);
+      }
+      clampPartsToPrintZ(g.items.map(it => it.part));
+      seatPartsOnPlate(g.items.map(it => it.part));
+    }
     for (const it of g.items) finishPartScale(it.part);
-    if (g.moved) seatPartsOnPlate(g.items.map(it => it.part));
     if (g.moved) {
       if (g.items.length === 1) {
         const p = g.items[0].part;
@@ -775,9 +951,14 @@ function endGesture() {
     return;
   }
   if (g.kind === 'rotate') seatPartsOnPlate(partsOf(g));
-  if (g.followSupports && (g.kind === 'free' || g.kind === 'move')) {
+  if (g.kind === 'free' || g.kind === 'move') {
     const s0 = g.snaps[0];
-    bakeSupportShift(g.snaps.map(s => s.part.id), s0.part.ox - s0.ox, s0.part.oy - s0.oy, s0.part.oz - s0.oz);
+    const dx = s0.part.ox - s0.ox;
+    const dy = s0.part.oy - s0.oy;
+    const dz = s0.part.oz - s0.oz;
+    const ids = g.snaps.map(s => s.part.id);
+    if (g.supportShift && g.supportShift !== 'none') bakeSupportShift(ids, dx, dy, dz);
+    bus.emit('frameShift', { partIds: ids, dx, dy, dz, bake: true });
   }
   commitPartEdit(g.kind === 'rotate');
   syncSelectionBoxes();
@@ -1394,6 +1575,9 @@ function ensureMenu() {
     ['move', '模型移动', '沿坐标轴'],
     ['rotate', '模型旋转', '拖动圆环'],
     ['scale', '放大缩小', '尺寸与比例'],
+    ['copy', '复制', 'Ctrl+C'],
+    ['paste', '粘贴', 'Ctrl+V'],
+    ['library', '添加到零件库', '存进库里'],
   ];
   for (const [tool, title, hint] of items) {
     const b = document.createElement('button');
@@ -1408,6 +1592,21 @@ function ensureMenu() {
     b.append(s, h);
     b.addEventListener('click', ev => {
       ev.stopPropagation();
+      if (tool === 'library') {
+        hideMenu();
+        bus.emit('addToLibrary');
+        return;
+      }
+      if (tool === 'copy') {
+        hideMenu();
+        copySelectedParts();
+        return;
+      }
+      if (tool === 'paste') {
+        hideMenu();
+        pasteParts();
+        return;
+      }
       chooseTool(tool);
     });
     menuEl.appendChild(b);
@@ -1420,7 +1619,7 @@ function showMenu(x, y) {
   if ((state.selectedIds || []).length !== 1) return;
   const el = ensureMenu();
   for (const b of el.querySelectorAll('button')) {
-    if (b.dataset.tool === state.transformTool) b.dataset.active = '1';
+    if (b.dataset.tool !== 'library' && b.dataset.tool === state.transformTool) b.dataset.active = '1';
     else b.removeAttribute('data-active');
   }
   el.hidden = false;
@@ -1472,6 +1671,18 @@ function typingTarget() {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
+function textSelectedOutsideCanvas() {
+  const sel = window.getSelection && window.getSelection();
+  if (!sel || sel.isCollapsed) return false;
+  if (!sel.toString()) return false;
+  const node = sel.anchorNode;
+  if (!node) return false;
+  const el = node.nodeType === 1 ? node : node.parentElement;
+  if (!el) return false;
+  if (canvas && (el === canvas || canvas.contains(el))) return false;
+  return true;
+}
+
 function dialogOpen() {
   return !!document.querySelector('dialog[open], [role="dialog"][data-state="open"]');
 }
@@ -1498,10 +1709,25 @@ function onKeyDown(e) {
       else redo();
       return;
     }
+    const copyKey = k === 'c' || e.code === 'KeyC';
+    const pasteKey = k === 'v' || e.code === 'KeyV';
+    if (!e.shiftKey && !e.repeat && !e.isComposing && !dialogOpen() && (copyKey || pasteKey)) {
+      if (copyKey && textSelectedOutsideCanvas()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (marquee) cancelMarquee();
+      if (gesture) endGesture();
+      hideMenu();
+      if (copyKey) copySelectedParts();
+      else pasteParts();
+      return;
+    }
   }
   if (e.key === 'Escape') {
     if (marquee) { cancelMarquee(); return; }
     if (menuEl && !menuEl.hidden) { hideMenu(); return; }
+    // 按面放置 / 画线切割开着：Esc 先退出它，不动选中（画线切割正在画时 Esc 已先被 scene.js 用来取消这一条）
+    if (state.mode === 'lay' || state.mode === 'cut') { setMode('orbit'); return; }
     if (scaleEl && !scaleEl.hidden && scaleEl.contains(document.activeElement)) {
       document.activeElement.blur();
       return;
@@ -1518,9 +1744,25 @@ function onKeyDown(e) {
     if ((state.selectedIds || []).length) setSelection([]);
     return;
   }
-  // M 移动，R 旋转，S 缩放。再按一次关掉。输入框、命令面板和带修饰键的组合不抢。
+  // M 移动，R 旋转，S 缩放，F 按面放置（黑格同款快捷键）。再按一次关掉。输入框、命令面板和带修饰键的组合不抢。
   if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !typingTarget() && !dialogOpen()) {
     const k = (e.key || '').toLowerCase();
+    if (k === 'f' || e.code === 'KeyF') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (state.transformTool) setTransformTool(state.transformTool);   // 同一个工具再点一次 = 收起
+      setMode(state.mode === 'lay' ? 'orbit' : 'lay');
+      return;
+    }
+    if (k === 'c' || e.code === 'KeyC') {
+      // C 画线切割（没有模型时不进，免得点不到东西）
+      e.preventDefault();
+      e.stopPropagation();
+      if (state.transformTool) setTransformTool(state.transformTool);
+      if (!state.parts.length && state.mode !== 'cut') { toast('先打开一个模型，再画线切割'); return; }
+      setMode(state.mode === 'cut' ? 'orbit' : 'cut');
+      return;
+    }
     if (k === 'm' || e.code === 'KeyM') {
       e.preventDefault();
       e.stopPropagation();
@@ -1700,6 +1942,16 @@ function onPointerDown(e) {
   };
 }
 
+function flushGesture() {
+  if (motionFrame) {
+    cancelAnimationFrame(motionFrame);
+    motionFrame = 0;
+  }
+  const point = motionPoint;
+  motionPoint = null;
+  if (point && gesture) applyGesture(point);
+}
+
 function onPointerMove(e) {
   if (rightArm && e.pointerId === rightArm.pid) {
     if (Math.hypot(e.clientX - rightArm.x, e.clientY - rightArm.y) > 6) hideMenu();
@@ -1713,7 +1965,16 @@ function onPointerMove(e) {
   }
   if (gesture && e.pointerId === gesture.pid) {
     if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4 && !gesture.moved) return;
-    applyGesture(e);
+    // 指针事件比帧率密。堆在同一帧里会把重活做很多遍，这里一帧只算一次。
+    motionPoint = { clientX: e.clientX, clientY: e.clientY };
+    if (!motionFrame) {
+      motionFrame = requestAnimationFrame(() => {
+        motionFrame = 0;
+        const point = motionPoint;
+        motionPoint = null;
+        if (point && gesture) applyGesture(point);
+      });
+    }
     return;
   }
   if (gesture || marquee || state.mode !== 'orbit' || e.target !== canvas) return;
@@ -1745,7 +2006,10 @@ function onPointerUp(e) {
     return;
   }
   if (e.button !== 0) return;
-  if (gesture && e.pointerId === gesture.pid) endGesture();
+  if (gesture && e.pointerId === gesture.pid) {
+    flushGesture();
+    endGesture();
+  }
   if (marquee && e.pointerId === marquee.pid) finishMarquee(e);
 }
 
@@ -1768,7 +2032,10 @@ export function initManipulate(canvasEl) {
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', () => {
-    if (gesture) endGesture();
+    if (gesture) {
+      flushGesture();
+      endGesture();
+    }
     if (marquee) cancelMarquee();
   });
   window.addEventListener('keydown', onKeyDown, true);

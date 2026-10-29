@@ -101,9 +101,20 @@ function emitSliceStats(scopeOnly) {
   return islands;
 }
 
-export async function runSliceAnalysis() {
+/** 换回已打开的工程时，把留下的分析结果重新发给界面。 */
+export function publishSliceStats() {
+  return emitSliceStats(false);
+}
+
+let sliceSeq = 0;
+/** 换工程时作废还没写回的逐层分析，免得结果落到下一盘上。 */
+export function invalidateSlice() { sliceSeq++; }
+
+export async function runSliceAnalysis(opts = {}) {
   if (!state.mesh) return toast('请先载入模型');
-  const scope = supportScopeIds();
+  const seq = ++sliceSeq;
+  // all：复制 / 删除之后整板重算，不因为当前没选中就停住
+  const scope = opts.all ? null : supportScopeIds();
   if (scope && scope.size === 0) return toast('先选中模型，再运行分析');
   const layerH = params.layerH;
   const gapThresh = params.gapThresh;
@@ -119,8 +130,10 @@ export async function runSliceAnalysis() {
     gridRes: 288, layerH, gapThresh, detail: true, raiseH: rh,
     minIslArea: params.minIslArea, minAttachArea: params.minAttach
   });
+  if (seq !== sliceSeq) { setProgress(null); return; }
   setProgress(0.85, '陡峭悬空面分析…');
   await nextFrame();
+  if (seq !== sliceSeq) { setProgress(null); return; }
   const sf = steepFaces(state.faces, idQ, selfAngle, state.protectedFaces, 1, true);
   if (rh > 0) for (const pt of sf.pts) pt.y += rh;   // 面重心为局部坐标，抬到世界系
   r.steepPts = sf.pts;

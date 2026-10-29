@@ -4,7 +4,7 @@ import { AnimatePresence, animate, motion, useIsPresent, useMotionValue, useRedu
 import { X } from "lucide-react";
 import { motionTokens } from "../lib/motion-tokens";
 import styles from "./toast.module.css";
-export interface ToastProps { title: string; description?: string; open?: boolean; onOpenChange?: (open: boolean) => void; duration?: number; }
+export interface ToastProps { title: string; description?: string; open?: boolean; onOpenChange?: (open: boolean) => void; duration?: number; tone?: "success" | "danger"; }
 
 const subscribeHydration = () => () => {};
 const exitFast: Transition = { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.standard] };
@@ -55,7 +55,8 @@ function HeightFrame({ reduce, morphKey, children }: { reduce: boolean | null; m
   </motion.div>;
 }
 
-export default function Toast({ title, description, open = true, onOpenChange, duration = 4500 }: ToastProps) {
+export default function Toast({ title, description, open = true, onOpenChange, duration = 4500, tone = "success" }: ToastProps) {
+  const danger = tone === "danger";
   const reduce = useReducedMotion();
   // Toasts that mount after hydration rise in from their edge; server-rendered ones start settled.
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
@@ -99,15 +100,13 @@ export default function Toast({ title, description, open = true, onOpenChange, d
     shown: { opacity: 1, transition: { duration: motionTokens.duration.instant } },
     exit: fadeOut,
   } : {
-    // x resets here because the drag value outlives a thrown toast; the next one must rise from the center.
-    hidden: { opacity: 0, x: 0, y: 16, scale: .96 },
-    // x returns to center too, in case the toast is raised again while a throw is still leaving.
-    shown: { opacity: 1, x: 0, y: 0, scale: 1, transition: { ...motionTokens.spring.morph, opacity: enter } },
-    // A thrown toast keeps its release velocity; a closed one sinks back toward the edge it came from.
-    // The throw settles loosely: it is invisible once the fade ends, so no long unseen tail keeps it mounted.
+    // 升降和缩放交给 CSS（translate / scale），这里只留拖拽的 x，避免和 transform 字符串抢同一条属性。
+    // 进场不写 opacity：写了就会盖掉 @starting-style，长任务结束时又回到主线程。
+    hidden: { x: 0 },
+    shown: { x: 0 },
     exit: (to: number) => to
-      ? { x: to, opacity: 0, transition: { x: { type: "spring", visualDuration: .3, bounce: 0, velocity: releaseVelocity.current, restDelta: 2, restSpeed: 40 }, opacity: { duration: motionTokens.duration.exit } } }
-      : { opacity: 0, y: 8, scale: .97, transition: { duration: motionTokens.duration.exit, ease: [...motionTokens.ease.standard] } },
+      ? { x: to, opacity: 0, transition: { x: { type: "spring", visualDuration: motionTokens.duration.panel, bounce: 0, velocity: releaseVelocity.current, restDelta: 2, restSpeed: 40 }, opacity: { duration: motionTokens.duration.exit, ease: [...motionTokens.ease.enter] } } }
+      : { opacity: 0, transition: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] } },
   };
   const swap: MotionProps = { initial: reduce ? { opacity: 0 } : textIn, animate: textShown, exit: reduce ? fadeOut : textOut, transition: reduce ? { duration: motionTokens.duration.instant } : enter };
 
@@ -116,9 +115,10 @@ export default function Toast({ title, description, open = true, onOpenChange, d
       {visible && <motion.div
         key="toast"
         ref={surface}
-        className={styles.toast}
-        role="status"
-        aria-live="polite"
+        className={[styles.toast, !reduce && dismissed && !throwX ? styles.leaving : "", throwX ? styles.thrown : ""].filter(Boolean).join(" ")}
+        data-no-enter={enterOnMount ? undefined : ""}
+        role={danger ? "alert" : "status"}
+        aria-live={danger ? "assertive" : "polite"}
         aria-atomic="true"
         custom={throwX}
         variants={variants}
@@ -131,9 +131,9 @@ export default function Toast({ title, description, open = true, onOpenChange, d
         dragMomentum={false}
         onDragEnd={handleDragEnd}
       >
-        <span className={styles.icon} aria-hidden="true">
+        <span className={styles.icon} data-tone={tone} aria-hidden="true">
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round">
-            <motion.path d="M4 12.5l5 5L20 6.5" initial={reduce ? false : { pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter], delay: .12 }} />
+            <motion.path d={danger ? "M7 7l10 10M17 7L7 17" : "M4 12.5l5 5L20 6.5"} initial={reduce ? false : { pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter], delay: .12 }} />
           </svg>
         </span>
         {/* The copy column follows its content height, so a longer message grows the toast instead of snapping it. */}

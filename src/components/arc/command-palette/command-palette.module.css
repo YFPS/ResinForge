@@ -1,11 +1,10 @@
 .palette {
   width: 100%;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-panel);
   background: var(--surface);
-  box-shadow: var(--shadow-floating);
-  transform-origin: top center;
+  box-shadow: var(--shadow-edge), var(--shadow-floating);
 }
 
 .searchRow {

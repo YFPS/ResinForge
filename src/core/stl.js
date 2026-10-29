@@ -6,7 +6,7 @@
 ================================================================ */
 import { state, params, log, toast, setProgress } from '../store.js';
 import { placeVertex, raiseH, ensureAutoPlateGeom } from './model.js';
-import { frameGeometry } from './bboxView.js';
+import { frameExportParts } from './bboxView.js';
 import { unionShells } from './union.js';
 
 /* 跑在 Tauri 桌面壳（打包后的 exe）里还是普通浏览器：写出方式不同（见 exportSTL 尾部） */
@@ -86,9 +86,8 @@ export async function exportSTL(includeModel, includeSupports, filename, include
     else arrays.push(...supParts);
   }
   if (includeFrame) {
-    const fg = frameGeometry();
-    const arr = fg && fg.attributes.position && fg.attributes.position.array;
-    if (arr && arr.length >= 9) arrays.push({ arr, dx: 0, dy: 0, dz: 0 });
+    const frames = frameExportParts();
+    if (frames.length) arrays.push(...frames);
     else if (!includeModel && !includeSupports) { /* 下面的空内容提示会接住 */ }
   }
   let count = 0;
@@ -141,7 +140,7 @@ export async function exportSTL(includeModel, includeSupports, filename, include
       return true;
     } catch (e) {
       const msg = (e && e.message) || String(e);
-      toast(`导出失败：${msg}`);
+      toast('导出失败', { tone: 'danger', description: msg });
       log(`导出失败：${msg}`, 'warn');
       return false;
     }

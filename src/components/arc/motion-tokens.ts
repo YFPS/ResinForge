@@ -1,12 +1,15 @@
 /** Motion presets are shared by the gallery and future registry consumers. */
 export const motionTokens = {
-  duration: { instant: 0.12, fast: 0.16, exit: 0.18, standard: 0.24, considered: 0.48 },
+  duration: { instant: 0.12, fast: 0.16, exit: 0.18, standard: 0.24, panel: 0.28, considered: 0.48 },
   ease: {
     enter: [0.16, 1, 0.3, 1],
-    exit: [0.7, 0, 0.84, 0],
+    /* 退出也用 ease-out：旧值 [0.7, 0, 0.84, 0] 是 ease-in，起步慢，界面会发钝。 */
+    exit: [0.23, 1, 0.32, 1],
     standard: [0.22, 1, 0.36, 1],
     /** For elements that move while already on screen. */
     inOut: [0.65, 0, 0.35, 1],
+    /** 抽屉贴边滑入，Ionic 曲线，不回弹。 */
+    drawer: [0.32, 0.72, 0, 1],
   },
   spring: {
     responsive: { type: "spring", stiffness: 520, damping: 38 },

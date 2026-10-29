@@ -11,7 +11,7 @@ import styles from "./command-palette.module.css";
 export interface CommandItem { id: string; label: string; description?: string; group?: string; keywords?: string[]; icon?: ReactNode; shortcut?: string; }
 export interface CommandPaletteProps { items: CommandItem[]; placeholder?: string; onSelect?: (item: CommandItem) => void; onClose?: () => void; label?: string; /** Focus the search field on mount, for a palette that opens on demand. */ autoFocus?: boolean; }
 
-const enter: Transition = { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] };
+const enter: Transition = { duration: 0.08, ease: [...motionTokens.ease.enter] };
 const leave: Transition = { duration: motionTokens.duration.instant, ease: [...motionTokens.ease.standard] };
 const GLIDE_ROWS = 6;
 /* 本地化补丁：快捷键徽标按平台显示（mac 用 ⌘，其余用 Ctrl） */
@@ -54,7 +54,8 @@ export function CommandPalette({ items, placeholder = "Search commands", onSelec
     const before = new Map(shift.list.map((item, index) => [item.id, index]));
     setShift({ list: filtered, glide: filtered.every((item, index) => Math.abs((before.get(item.id) ?? index) - index) <= GLIDE_ROWS) });
   }
-  const glide = shift.glide && !reduced;
+  /* 高频键盘界面：筛选时不做行位移，只留很短的透明度，避免打字时列表在滑。 */
+  const glide = false;
   const safeActiveIndex = activeIndex === null
     ? -1
     : Math.min(activeIndex, Math.max(filtered.length - 1, 0));
@@ -129,18 +130,19 @@ export function CommandPalette({ items, placeholder = "Search commands", onSelec
     }
   }
 
-  return <motion.div className={styles.palette} initial={reduced ? false : { opacity: 0, y: 6, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={reduced ? { duration: 0 } : { default: motionTokens.spring.smooth, opacity: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] } }}>
+  // 命令面板由 Ctrl/⌘ K 打开，一天会开上百次。外壳不做入场动画，筛选时行也不做布局滑动。
+  return <div className={styles.palette}>
     <div className={styles.searchRow}>
       <span className={styles.searchIcon}><Search width={18} height={18} strokeWidth={1.75} aria-hidden="true"/></span>
       <label className={styles.visuallyHidden} htmlFor={inputId}>{label}</label>
       <input ref={inputRef} id={inputId} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls={`${inputId}-results`} aria-activedescendant={activeId ? `${inputId}-${activeId}` : undefined} value={query} onChange={event => { setQuery(event.target.value); setActiveIndex(null); }} onKeyDown={handleKeyDown} placeholder={placeholder} autoComplete="off"/>
       <AnimatePresence mode="popLayout" initial={false}>
-        {query ? <motion.button key="clear" className={styles.clearButton} type="button" aria-label="清空搜索" onClick={() => { setQuery(""); setActiveIndex(null); inputRef.current?.focus(); }} initial={reduced ? false : { opacity: 0, scale: .6, filter: `blur(${motionTokens.blur.subtle}px)` }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, scale: .6, filter: `blur(${motionTokens.blur.subtle}px)`, transition: leave }} transition={reduced ? { duration: 0 } : { default: motionTokens.spring.snappy, opacity: { duration: motionTokens.duration.instant } }}><X width={15} height={15} aria-hidden="true"/></motion.button> : null}
+        {query ? <motion.button key="clear" className={styles.clearButton} type="button" aria-label="清空搜索" onClick={() => { setQuery(""); setActiveIndex(null); inputRef.current?.focus(); }} initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, transition: leave }} transition={reduced ? { duration: 0 } : { duration: motionTokens.duration.instant }}><X width={15} height={15} aria-hidden="true"/></motion.button> : null}
       </AnimatePresence>
       {onClose ? <button className={styles.closeButton} type="button" aria-label="关闭命令面板" onClick={onClose}>Esc</button> : null}
       <kbd className={styles.commandKey}>{COMMAND_KEY}</kbd>
     </div>
-    <motion.div className={styles.resultsFrame} initial={false} animate={{ height: listHeight }} transition={reduced ? { duration: 0 } : motionTokens.spring.smooth}>
+    <div className={styles.resultsFrame} style={{ height: listHeight }}>
       <motion.div ref={listRef} layoutScroll id={`${inputId}-results`} className={styles.results} role="listbox" aria-label="命令结果">
         <motion.span className={styles.highlight} style={{ y: highlightY, height: highlightHeight, opacity: highlightOpacity }} aria-hidden="true"/>
         {/* Results leave before the empty state arrives, so the frame makes one height change instead of two. */}
@@ -158,11 +160,11 @@ export function CommandPalette({ items, placeholder = "Search commands", onSelec
                 }} variants={rowExit} initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit="exit" transition={reduced ? { duration: 0 } : { default: enter, layout: motionTokens.spring.smooth }}><span className={styles.itemIcon} aria-hidden="true">{item.icon ?? <CommandIcon width={16} height={16}/>}</span><span className={styles.resultCopy}><strong>{item.label}</strong>{item.description && <small>{item.description}</small>}</span>{item.shortcut && <kbd className={styles.shortcut}>{item.shortcut}</kbd>}</motion.button>)}</AnimatePresence>
               </motion.div>)}
             </AnimatePresence>
-          </motion.div> : <motion.div key="empty" className={styles.empty} initial={reduced ? false : { opacity: 0, y: 6, filter: `blur(${motionTokens.blur.subtle}px)` }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, y: -4, transition: leave }} transition={enter}><span><Search width={20} height={20} aria-hidden="true"/></span><strong>没有匹配的命令</strong><small>换个关键词，或清空搜索。</small></motion.div>}
+          </motion.div> : <motion.div key="empty" className={styles.empty} initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, transition: leave }} transition={enter}><span><Search width={20} height={20} aria-hidden="true"/></span><strong>没有匹配的命令</strong><small>换个关键词，或清空搜索。</small></motion.div>}
         </AnimatePresence>
       </motion.div>
-    </motion.div>
-  </motion.div>;
+    </div>
+  </div>;
 }
 
 export default CommandPalette;

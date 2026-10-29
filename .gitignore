@@ -28,3 +28,9 @@ installer/target/
 # 本地编辑器状态
 .claude/
 .zcode/
+
+# 本地 agent 指令 / 项目文档（只在本机生效，不入库）
+AGENTS.md
+
+# skills CLI 安装的项目级 skill（源 emilkowalski/skills，锁文件 skills-lock.json 单独管理）
+.agents/

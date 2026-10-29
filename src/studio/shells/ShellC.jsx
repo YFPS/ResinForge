@@ -1,17 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, ChevronDown, Eye, EyeOff } from 'lucide-react';
-import Button from '@/components/arc/button/button';
-import Tooltip from '@/components/arc/tooltip/tooltip';
+import { Box, ChevronDown } from 'lucide-react';
 import MachinePicker from '../../demo/components/MachinePicker.jsx';
-import { BrandMark } from '../../demo/components/TitleBar.jsx';
+import DevicePage from '../devicePage.jsx';
 import { useBusLatest } from '../../demo/bridge.js';
 import { goStep } from '../../demo/ui.js';
 import BedPlate from '../bedPlate.jsx';
 import ParamPanel, { hasParamPanel } from '../ParamPanel.jsx';
 import PerfHud from '../PerfHud.jsx';
 import ResinHud from '../ResinHud.jsx';
+import SideRail from '../SideRail.jsx';
+import Desk, { PartDrawer } from '../desk.jsx';
+import ProjectSider from '../ProjectSider.jsx';
+import { HeaderViewControls } from '../ViewportChrome.jsx';
 import {
-  BottomProgress, ModelMenu, OpenModelButton, PartsCardBody, SearchBtn, StageNext, StagePill, ThemeBtn, ViewportDock,
+  BottomProgress, OpenModelButton, PartsCardBody, SaveProjectButton, SearchBtn, StageNext, StagePill, ViewportDock,
 } from '../pieces.jsx';
 
 /* 卡片拖到哪就待在哪：拖的是标题行，指针挪过 4px 才算拖动，松手时吞掉这一次点击，
@@ -120,41 +122,44 @@ function FloatCard({ title, icon, meta, open, onToggle, className = '', headProp
 }
 
 export default function ShellC({ stage, onOpenPalette }) {
-  const [open, setOpen] = useState({ model: true, panel: true });
+  const [modelOpen, setModelOpen] = useState(true);
+  const [page, setPage] = useState('home');
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    const onOpen = () => setDrawer(true);
+    const onMachine = () => setPage('device');
+    window.addEventListener('resinforge:open-parts', onOpen);
+    window.addEventListener('resinforge:open-machine', onMachine);
+    return () => {
+      window.removeEventListener('resinforge:open-parts', onOpen);
+      window.removeEventListener('resinforge:open-machine', onMachine);
+    };
+  }, []);
   const [modelOff, modelHead, modelDragging] = useDragCard();
-  const toggle = k => setOpen(o => ({ ...o, [k]: !o[k] }));
   const hasPanel = hasParamPanel(stage);
-  /* 没有右侧参数卡的步骤（模型）只看左侧卡片，「全部收起 / 展开」也只算它，免得点了画面没反应 */
-  const allOpen = open.model && (open.panel || !hasPanel);
   const info = useBusLatest('modelInfo', null);
   const partCount = (info && info.parts && info.parts.length) || 0;
 
   return (
-    <div className="stuShell">
+    <div className="stuShell" data-page={page || undefined}>
+      <SideRail page={page} onPage={setPage} />
+      <ProjectSider page={page} onPage={setPage} />
+      <Desk page={page === 'device' || page === 'new' ? null : page} onClose={() => setPage(null)} onPage={setPage} />
+      {page === 'new' || page === 'device' ? (
+        <DevicePage mode={page === 'new' ? 'create' : 'device'} onClose={() => setPage(null)} />
+      ) : null}
+      <PartDrawer open={drawer} onOpenChange={setDrawer} />
       <PerfHud />
       <ResinHud />
       <div className="stuFloatBar">
-        <span className="stuBrand"><BrandMark /></span>
-        <div className="stuModelMenu"><ModelMenu /></div>
         <StagePill stage={stage} onPick={goStep} />
         <span className="stuFloatSep" aria-hidden="true" />
+        <HeaderViewControls />
+        <span className="stuFloatSep" aria-hidden="true" />
         <MachinePicker />
+        <SaveProjectButton />
         <OpenModelButton />
         <SearchBtn onOpenPalette={onOpenPalette} />
-        <ThemeBtn />
-        <Tooltip content={allOpen ? '全部收起，把画布让干净' : '展开全部浮层'} side="bottom">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="stuIconBtn"
-            aria-label={allOpen ? '全部收起' : '展开全部'}
-            onClick={() => setOpen(allOpen
-              ? { model: false, panel: false }
-              : { model: true, panel: true })}
-          >
-            {allOpen ? <EyeOff size={16} strokeWidth={1.75} /> : <Eye size={16} strokeWidth={1.75} />}
-          </Button>
-        </Tooltip>
       </div>
 
       <div className="stuFloatLeft" data-dragging={modelDragging || undefined}>
@@ -162,8 +167,8 @@ export default function ShellC({ stage, onOpenPalette }) {
           title="模型"
           icon={<Box size={14} strokeWidth={1.8} />}
           meta={partCount ? `${partCount} 件` : ''}
-          open={open.model}
-          onToggle={() => toggle('model')}
+          open={modelOpen}
+          onToggle={() => setModelOpen(v => !v)}
           className="stuCard--model"
           headProps={modelHead}
           style={modelOff ? { transform: `translate(${modelOff.x}px, ${modelOff.y}px)` } : undefined}
@@ -172,9 +177,9 @@ export default function ShellC({ stage, onOpenPalette }) {
         </FloatCard>
       </div>
 
-      {/* 参数栏不带标题行：这一步叫什么由面板自己的标题交代，折叠入口收在顶栏的眼睛按钮上 */}
+      {/* 参数栏不带标题行：这一步叫什么由面板自己的标题交代 */}
       <div className="stuFloatRight">
-        {open.panel && hasPanel ? (
+        {hasPanel ? (
           <div className="stuCard stuCard--panel">
             <div className="stuCardBody"><ParamPanel stage={stage} /></div>
           </div>

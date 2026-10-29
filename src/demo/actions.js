@@ -2,7 +2,7 @@
    每个动作只在 core 调用前后做最小的参数同步，重活留给 core。 */
 import { params, state, bus, log, toast } from '../store.js';
 import { isHeatOn, setHeat } from '../core/heat.js';
-import { baseRaiseH, loadDemo, loadModelFiles, placeModelAtLift, raiseH, setActivePart, simplifySelection, supportScopeIds, updateRaft } from '../core/model.js';
+import { baseRaiseH, loadDemo, loadModelFiles, placeModelAtLift, raiseH, setActivePart, setSelection, simplifySelection, supportScopeIds, updateRaft } from '../core/model.js';
 import { runOrient, applyCandidate } from '../core/orient.js';
 import { runSliceAnalysis, shiftAnalysisY } from '../core/inspect.js';
 import { runGenSup, rebuildStructure, clearSupports, setSupportView, syncModelLift } from '../core/support.js';
@@ -47,7 +47,10 @@ export function pickSTL(append = false) {
   input.click();
 }
 
+/** 点零件列表里的一件：选中它，镜头也跳过去。
+ *  只跳镜头不改选中时，支撑按钮仍按上一件显示「重新生成」，一点就把多件当成一整盘重做。 */
 export function focusModel(id) {
+  setSelection([id]);
   setActivePart(id);
 }
 

@@ -32,7 +32,7 @@ export default function CommandPalette({ open, onOpenChange }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className={`${dialogStyles.overlay} ${dialogStyles.keyframes}`} />
+        <DialogPrimitive.Overlay className={dialogStyles.overlay} />
         <DialogPrimitive.Content className="cpShell" aria-describedby={undefined}>
           <DialogPrimitive.Title className="srOnly">命令面板</DialogPrimitive.Title>
           <ArcCommandPalette

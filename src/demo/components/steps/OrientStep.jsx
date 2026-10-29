@@ -23,6 +23,11 @@ const QUALITY = [
   { value: '128', label: '精细', accessory: <span className="segMeta">128</span> },
 ];
 
+const LAY_DIRS = [
+  { value: 'down', label: '面朝下' },
+  { value: 'up', label: '面朝上' },
+];
+
 /* hideQuality：Studio 把采样数这一节收起来了（沿用默认的 64），面板只留候选、保护面与主操作。
    protectInToolbar：Studio 把「涂画保护面」开关与笔刷参数搬进视口工具坞（保护面按钮上方的浮层），面板只留计数与清除。 */
 export default function OrientStep({ hideQuality = false, protectInToolbar = false }) {
@@ -125,6 +130,24 @@ export default function OrientStep({ hideQuality = false, protectInToolbar = fal
         )}
         <div className="rowStart">
           <Button variant="secondary" size="sm" disabled={!protCount} onClick={clearProtectedFaces}>清除保护面</Button>
+        </div>
+      </Section>
+
+      <Section title="按面放置" help="点模型上朝向你的一个面，这个面转到所选方向，整件模型的最低点落到平台，位置不动。只动点中的这一件；它已有支撑时会先问你。快捷键 F。">
+        <Choice
+          label="方向"
+          options={LAY_DIRS}
+          value={params.layFace === 'up' ? 'up' : 'down'}
+          onChange={v => setParam('layFace', v)}
+        />
+        <div className="rowStart">
+          <Button
+            variant={mode === 'lay' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setMode(mode === 'lay' ? 'orbit' : 'lay')}
+          >
+            {mode === 'lay' ? '正在按面放置' : '按面放置'}
+          </Button>
         </div>
       </Section>
     </StepPanel>

@@ -23,7 +23,18 @@ const queue = [];           // 排队的任务 { id, op, payload, resolve, rejec
 let load = 0;               // 本 Worker 已处理的三角形累计（实体化输出 + 布尔并输入输出）
 const LOAD_MAX = 6e6;       // 超过就换新 Worker：约为实测出错时累计量（环面结细模板约 4 千万）的七分之一
 const TRAP = /memory access out of bounds|null function|unreachable|out of memory|table index|signature mismatch|Aborted|RuntimeError/i;
-const loadOf = (op, r) => (!r ? 0 : op === 'solidify' ? (r.stats && r.stats.tris) || 0 : op === 'union' ? (r.inTris || 0) + (r.nTri || 0) : op === 'autoplate' ? (r.tri ? r.tri.length / 3 : 0) : 0);
+const loadOf = (op, r) => {
+  if (!r) return 0;
+  if (op === 'solidify') return (r.stats && r.stats.tris) || 0;
+  if (op === 'union') return (r.inTris || 0) + (r.nTri || 0);
+  if (op === 'autoplate') return r.tri ? r.tri.length / 3 : 0;
+  if (op === 'cut') {
+    /* 走过自动修复时多建了几个 Manifold（修复后的终审、两档焊接），WASM 堆负载记大一点，换新 Worker 的时机才对 */
+    if (r.info) return r.info.tris.src + r.info.tris.upper + r.info.tris.lower + (r.info.repair ? r.info.tris.src : 0);
+    return r.repair ? r.repair.facesIn || 0 : 0;
+  }
+  return 0;
+};
 
 /** 丢掉当前 Worker（下一个任务到来时 pump 再起一个新的） */
 function retire() {
@@ -86,6 +97,7 @@ async function runLocal(job) {
   if (job.op === 'solidify') return kit.solidifySpec(MF, decodeSpec(job.payload));
   if (job.op === 'layout') return kit.layoutPoints(MF, job.payload.charts, job.payload.opts);
   if (job.op === 'autoplate') return kit.buildAutoPlate(MF, job.payload);
+  if (job.op === 'cut') return (await import('./cutKit.js')).cutByPlane(MF, job.payload);
   return kit.unionParts(MF, job.payload.parts);
 }
 
@@ -145,6 +157,14 @@ export function autoPlateAsync(spec) {
     queue.splice(i, 1);
   }
   return submit('autoplate', spec);
+}
+
+/**
+ * 画线切割（cutKit.cutByPlane 的结果：{ ok: true, upper, lower, info } 或 { ok: false, code, reason }）。
+ * 切不开是正常结果而不是异常，调用方按 ok / reason 提示；请求里的网格按值复制，Worker 出错时在主线程重算。
+ */
+export function cutAsync(req) {
+  return submit('cut', req);
 }
 
 /** 调试 / 验收：后台线程状态 */

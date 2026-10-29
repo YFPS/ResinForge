@@ -31,6 +31,22 @@ let lastList = null;   // 最近一次候选（React 点击缩略图 → applyCa
 let lastItems = null;  // 已发给界面的缩略图，点选后只改「当前用的是哪一张」
 let orientBase = null; // 这一轮候选对应的局部几何。再点另一张时从这里换，不在上一次结果上叠加
 
+/** 换工程时把这一轮候选整份拿走。不释放，回来再装上。 */
+export function exchangeOrient(next) {
+  const prev = { list: lastList, items: lastItems, base: orientBase, result: state.orientResult };
+  const n = next || {};
+  lastList = n.list || null;
+  lastItems = n.items || null;
+  orientBase = n.base || null;
+  state.orientResult = n.result || null;
+  return prev;
+}
+
+/** 把当前候选缩略图发给界面。不在朝向步骤时不要发，否则侧栏会被拉回朝向。 */
+export function publishOrientItems() {
+  bus.emit('orientResults', lastItems && lastItems.length ? lastItems : null);
+}
+
 export async function runOrient() {
   orientBase = null;
   lastItems = null;

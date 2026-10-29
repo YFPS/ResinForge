@@ -54,10 +54,12 @@ export interface DrawerContentProps
 }
 
 const fade: Transition = { duration: motionTokens.duration.instant };
-/* A click or Escape returns the panel quickly; a flick keeps its velocity in a spring of the same length. The shadow fades over the last stretch so it leaves with the panel instead of popping away at unmount. */
-const shadowOut: Transition = { duration: motionTokens.duration.standard, times: [0, .65, 1], ease: "linear" };
-const leave: Transition = { default: { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.standard] }, opacity: shadowOut };
-const flingOut: Transition = { default: { ...motionTokens.spring.smooth, visualDuration: motionTokens.duration.standard }, opacity: shadowOut };
+/* 点击或 Esc 用短 ease-out 收回；轻甩保留速度，但视觉时长不超过进场。阴影在末段一起淡掉，避免卸下时突然消失。 */
+const shadowOut: Transition = { duration: motionTokens.duration.fast, times: [0, .65, 1], ease: "linear" };
+const leave: Transition = { default: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] }, opacity: shadowOut };
+const flingOut: Transition = { default: { type: "spring", visualDuration: motionTokens.duration.panel, bounce: 0 }, opacity: shadowOut };
+/* 进场：贴边滑入，不回弹，压在 300ms 以内。拖拽仍走 motion value，手势要能中途折返。 */
+const drawerIn: Transition = { type: "spring", visualDuration: motionTokens.duration.panel, bounce: 0 };
 
 /** When the title or description changes while open, the new copy rises in and the old copy leaves upward. */
 function SwapText({ text }: { text: string }) {
@@ -162,8 +164,8 @@ export function DrawerContent({
               data-contained={container ? "" : undefined}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              exit={{ opacity: 0, transition: reduced ? fade : { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.standard] } }}
-              transition={reduced ? fade : { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] }}
+              exit={{ opacity: 0, transition: reduced ? fade : { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] } }}
+              transition={reduced ? fade : { duration: motionTokens.duration.panel, ease: [...motionTokens.ease.enter] }}
             />
           </DialogPrimitive.Overlay>
           <DialogPrimitive.Content
@@ -186,7 +188,7 @@ export function DrawerContent({
               initial={reduced ? { opacity: 0 } : { ...offscreen, opacity: 1 }}
               animate={reduced ? { opacity: 1 } : { [axis]: 0, opacity: 1 }}
               exit="exit"
-              transition={reduced ? fade : motionTokens.spring.smooth}
+              transition={reduced ? fade : drawerIn}
             >
               {inner}
             </motion.div>

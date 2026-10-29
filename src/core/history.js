@@ -40,6 +40,21 @@ export function clearHistory() {
   bus.emit('history', counts());
 }
 
+/** 换工程时把撤回栈整摞拿走，不释放里面的几何。换回来再装上。 */
+export function exchangeHistory(nextUndo, nextRedo) {
+  const prev = { undo: undoStack.splice(0), redo: redoStack.splice(0) };
+  if (nextUndo && nextUndo.length) undoStack.push(...nextUndo);
+  if (nextRedo && nextRedo.length) redoStack.push(...nextRedo);
+  bus.emit('history', counts());
+  return prev;
+}
+
+export function discardHistoryStacks(pack) {
+  if (!pack) return;
+  for (const cmd of pack.undo || []) if (cmd.dispose) cmd.dispose();
+  for (const cmd of pack.redo || []) if (cmd.dispose) cmd.dispose();
+}
+
 function run(cmd, dir) {
   replaying = true;
   try {
@@ -63,7 +78,7 @@ export function undo() {
   } catch (err) {
     undoStack.push(cmd);
     log(`撤回失败：${err && err.message ? err.message : err}`, 'warn');
-    toast('撤回失败');
+    toast('撤回失败', { tone: 'danger' });
     return false;
   }
   redoStack.push(cmd);
@@ -85,7 +100,7 @@ export function redo() {
   } catch (err) {
     redoStack.push(cmd);
     log(`重做失败：${err && err.message ? err.message : err}`, 'warn');
-    toast('重做失败');
+    toast('重做失败', { tone: 'danger' });
     return false;
   }
   undoStack.push(cmd);

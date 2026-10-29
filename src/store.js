@@ -12,12 +12,27 @@ export const params = {
   plateY: 175,        // 打印高度，切片坐标 Z（mm）。场景里仍是世界 Y
   plateZ: 85,         // 板面另一边，切片坐标 Y（mm）。场景里仍是世界 Z
   pixelUm: 24,        // XY 像素（µm）
+  nestGap: 2,         // 自动排版：零件轮廓之间的净距（mm）
+  nestMargin: 2,      // 自动排版：离板边的净距（mm）
+  nestAlign: 'left',  // 排完整组靠哪边：left 左对齐 / center 居中 / right 右对齐
+  nestSupportOverlap: false, // 已有支撑的占地可以互相重叠。关掉时支撑也要隔开
+  nestFrameOverlap: false,   // 边框可重叠。关掉时按边框宽度和水平间距把外沿隔开
   /* 朝向优化 */
   orientQuality: 64,  // 随机采样数（32/64/128）
   selfAngle: 45,      // 自支撑角（°）
   protW: 8,           // 保护面权重（x）
   /* 保护面笔刷 */
   brushR: 3,          // 笔刷半径（mm）
+  /* 按面放置（对照黑格 BPS「选择面」） */
+  layFace: 'down',    // 点中的面转到哪个方向：down 朝下 / up 朝上；转完整个模型的最低点落到平台
+  /* 画线切割（模型表面画一圈线 → 切成两件；思路参考 Blender 插件 PartCraft，代码独立实现） */
+  cutSurface: 'line', // 切面：line 沿画线（线不平时切口跟着线起伏，默认）/ plane 一律切最佳拟合平面
+  cutPin: 'trapezoid', // 连接件：trapezoid 梯形插销（默认）/ none 只切不加销
+  cutPinSize: 6,      // 插销根部宽（mm）：切面放不下时自动缩小
+  cutPinDepth: 6,     // 插销插入深度（mm）
+  cutPinClear: 0.1,   // 公母单边装配间隙（mm）
+  cutGap: 0,          // 切缝装配间隙（mm）：实验参数，默认 0（不为 0 时薄壁处会切不开，暂不暴露到界面）
+  cutWall: 0,         // 切口下沉量（mm）：实验参数，默认 0（不为 0 时部分零件切不开，暂不暴露到界面）
   /* 切片与孤岛分析 */
   layerH: 0.1,        // 层厚（mm）
   gapThresh: 0.35,    // 悬空阈值（mm）
@@ -127,6 +142,7 @@ export const state = {
   // 支撑显示：'full' 全部支撑（格架 + 连接体 + 接触点）/ 'needle' 仅连接体（针与兜底件）/ 'point' 仅接触点（小球）
   supView: 'full',          // 快捷键 V 循环（黑格同款三视图）
   protectedFaces: new Set(),
+  cutLines: [],             // 画线切割保留的线（cutLine.js 管理；点带零件面锚点，跟着零件走）
   supports: [],             // 结构网格 {mesh, kind: 'ground'|'anchor'|'base'}
   supportPoints: [],        // 支撑点（可编辑数据）{x,y,z,n,island,manual,state}
   supportStats: null,       // 最近一次结构生成统计
@@ -161,5 +177,10 @@ export const bus = {
 /* ---------- 旧基础工具的等价物：UI 副作用一律改发事件 ---------- */
 export const nextFrame = () => new Promise(r => requestAnimationFrame(r));
 export function log(msg, cls = '') { bus.emit('log', { msg, cls }); }
-export function toast(msg) { bus.emit('toast', msg); }
+/** 弹一条提示。opts.tone 为 'danger' 用失败样式（红色叉）；不传是成功样式（绿色勾）。
+ *  opts.description 是第二行说明，会折行；标题只有一行、过长会被省略号截断，长句放这里。opts.duration 毫秒 */
+export function toast(msg, opts) { bus.emit('toast', opts ? { title: msg, ...opts } : msg); }
 export function setProgress(p, text) { bus.emit('progress', { p, text }); }   // p=null 隐藏进度条
+
+
+

@@ -1,5 +1,6 @@
 /* 桌面版在线更新。浏览器里什么都不做。
-   启动时悄悄查一次，只有发现新版本才弹窗。命令面板里的「检查更新」会把「已是最新」也说出来。 */
+   启动时悄悄查一次，只有发现新版本才弹窗。
+   「检查更新」对话框自己显示结果时传 quiet，避免再弹一条提示。 */
 import { IN_TAURI } from '../demo/components/TitleBar.jsx';
 import { pushToast } from '../demo/bridge.js';
 
@@ -23,25 +24,29 @@ export function subscribeUpdate(listener) {
   return () => { if (pending === listener) pending = null; };
 }
 
-/** manual 为真时，没有更新或失败也会提示。 */
-export async function runUpdateCheck({ manual = false } = {}) {
+/** manual 为真时，没有更新或失败也会提示。quiet 为真时不弹提示，由调用方自己显示。 */
+export async function runUpdateCheck({ manual = false, quiet = false } = {}) {
+  const notify = (title, description) => { if (manual && !quiet) say(title, description); };
   if (!IN_TAURI) {
-    if (manual) say('仅桌面版可以检查更新');
-    return;
+    notify('仅桌面版可以检查更新');
+    return { status: 'unsupported' };
   }
-  if (running) return;
+  if (running) return { status: 'busy' };
   running = true;
   try {
     const found = await lookForUpdate();
-    if (found.unsupported) return;
+    if (found.unsupported) return { status: 'unsupported' };
     if (found.update) {
       if (pending) pending(found.update);
-      else say('发现新版本', found.update.version);
-      return;
+      else notify('发现新版本', found.update.version);
+      return { status: 'available', version: found.update.version };
     }
-    if (manual) say('已是最新版本');
+    notify('已是最新版本');
+    return { status: 'latest' };
   } catch (err) {
-    if (manual) say('检查更新失败', err && err.message ? err.message : '请稍后再试');
+    const message = err && err.message ? err.message : '请稍后再试';
+    notify('检查更新失败', message);
+    return { status: 'failed', message };
   } finally {
     running = false;
   }

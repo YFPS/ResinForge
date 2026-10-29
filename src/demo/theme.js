@@ -2,7 +2,7 @@
    UI 走 `:root[data-theme]`（Arc 的 foundation.css 按此切换全套 token）；
    3D 场景背景与模型材质不读 CSS，这里按主题给两套值同步过去。
    主题是「环境配置」，与机器参数一样持久化到 localStorage。
-   顶栏的 Arc ThemeSwitch 与命令面板共用这里的 store，任一处切换另一处同步。 */
+   侧栏底部的 Arc ThemeSwitch 与命令面板共用这里的 store，任一处切换另一处同步。 */
 import { useSyncExternalStore } from 'react';
 import { scene, prevScene, modelMat, updateBuildVolume } from '../core/scene.js';
 import { syncHeatMaterial } from '../core/heat.js';
@@ -35,7 +35,7 @@ function loadThemeMode() {
 }
 
 function loadAccent() {
-  try { return localStorage.getItem(ACCENT_KEY) || 'blue'; } catch { return 'blue'; }
+  try { return localStorage.getItem(ACCENT_KEY) || 'neutral'; } catch { return 'neutral'; }
 }
 
 const resolveTheme = mode => (mode === 'system' ? (media.matches ? 'dark' : 'light') : mode);
@@ -94,7 +94,7 @@ export function setAccent(key) {
   set({ accent: key });
 }
 
-/** 顶栏 ThemeSwitch 的页面过渡（rise：新外观自下而上升起）。
+/** 侧栏 ThemeSwitch 的页面过渡（rise：新外观自下而上升起）。
     减弱动效或浏览器不支持 View Transitions 时直接切换。 */
 export function switchThemeWithTransition(next) {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;

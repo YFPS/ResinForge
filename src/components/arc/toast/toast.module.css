@@ -5,12 +5,43 @@
   align-items: flex-start;
   gap: 0.75rem;
   padding: 0.875rem 0.875rem 0.875rem 1rem;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-panel);
   background: color-mix(in oklab, var(--surface) 94%, var(--background));
   color: var(--foreground);
   letter-spacing: var(--tracking-body);
-  box-shadow: var(--shadow-floating);
+  box-shadow: var(--shadow-edge), var(--shadow-floating);
+  /* 进场走独立的 translate / scale，和拖拽用的 transform 叠在一起，不互相覆盖。长任务结束时主线程忙，这条仍在合成线程上。 */
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition: opacity 200ms var(--ease-enter), translate 200ms var(--ease-enter), scale 200ms var(--ease-enter);
+}
+
+@starting-style {
+  .toast {
+    opacity: 0;
+    translate: 0 12px;
+    scale: 0.96;
+  }
+}
+
+/* 服务端首帧已经在画面上的 toast 不再播进场。 */
+.toast[data-no-enter] {
+  transition: none;
+}
+
+/* 退场的透明度由 Motion 收尾（好让 AnimatePresence 等到播完）。位移仍走 CSS，两边不抢同一条属性。 */
+.toast.leaving {
+  translate: 0 8px;
+  scale: 0.97;
+  transition: translate 160ms var(--ease-enter), scale 160ms var(--ease-enter);
+}
+
+.toast.thrown {
+  translate: 0 0;
+  scale: 1;
+  transition: none;
 }
 
 .icon {
@@ -23,6 +54,13 @@
   border-radius: var(--radius-pill);
   background: color-mix(in oklab, var(--success) 10%, var(--surface));
   color: var(--success);
+}
+
+/* 失败提示只换图标圈的语义色，整张 toast 的底色 / 边框不动 */
+.icon[data-tone="danger"] {
+  border-color: color-mix(in oklab, var(--danger) 24%, var(--border));
+  background: color-mix(in oklab, var(--danger) 10%, var(--surface));
+  color: var(--danger);
 }
 
 .frame {
@@ -75,7 +113,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: transform var(--duration-spring) var(--ease-spring),
+  transition: transform var(--duration-fast) var(--ease-standard),
     background-color var(--duration-fast) var(--ease-standard),
     color var(--duration-fast) var(--ease-standard);
 }
@@ -95,6 +133,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .toast, .toast.leaving, .toast.thrown {
+    translate: none;
+    scale: none;
+    transition: opacity var(--duration-instant) linear;
+  }
   .close { transition: none; }
   .close:active { transform: none; }
 }

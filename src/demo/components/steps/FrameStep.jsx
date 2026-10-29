@@ -64,7 +64,7 @@ export default function FrameStep() {
         </>
       )}
     >
-      <Section title="范围" help="笼架按模型加上已生成支撑和底板的世界体积往外留间距。选「仅选中」时，没选中任何模型就包住全部。">
+      <Section title="范围" help="每个模型各做一圈边框，按模型和落在它占地里的支撑往外留间距。选「仅选中」时，没选中任何模型就给全部各做一圈。">
         <Choice
           ariaLabel="边框范围"
           options={SCOPES}

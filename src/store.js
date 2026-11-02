@@ -27,6 +27,7 @@ export const params = {
   layFace: 'down',    // 点中的面转到哪个方向：down 朝下 / up 朝上；转完整个模型的最低点落到平台
   /* 画线切割（模型表面画一圈线 → 切成两件；思路参考 Blender 插件 PartCraft，代码独立实现） */
   cutSurface: 'line', // 切面：line 沿画线（线不平时切口跟着线起伏，默认）/ plane 一律切最佳拟合平面
+  cutMagnet: true,    // 画线磁吸：线段靠近模型明显折边时自动吸过去（像 Photoshop 磁性套索；只影响画线采样）
   cutPin: 'trapezoid', // 连接件：trapezoid 梯形插销（默认）/ none 只切不加销
   cutPinSize: 6,      // 插销根部宽（mm）：切面放不下时自动缩小
   cutPinDepth: 6,     // 插销插入深度（mm）

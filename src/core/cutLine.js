@@ -28,6 +28,7 @@ const CLOSE_PX = 12;        // 指针离起点这么近（屏幕像素）就算�
 const DBL_MS = 320;         // 双击间隔
 const C_LINE = 0xffb020;    // 保留的线：琥珀色（深浅两种视口底色上都醒目，不与支撑红 / 选中蓝撞色）
 const C_LINE_ON = 0xffd36b; // 选中的那一条
+const C_SEG_HOVER = 0xff4d00; // 鼠标所在的路径段：加深、加粗
 const C_DRAFT = 0xffffff;   // 正在画的线
 const C_CLOSE = 0x3ee06a;   // 可封口时的起点
 
@@ -41,6 +42,11 @@ let pruneFlag = false;      // 载入了新模型：下一次刷新时清掉锚�
 let lastDown = 0;
 let lastView = null;
 let lastSummary = '';
+let pointDrag = null;       // 正在拖的路径点：{ holder, index, pid, moved, origCtrl, origLegs }
+let dragFrame = 0;
+let dragNext = null;
+let hoverSeg = null;        // 鼠标所在的路径段：{ lineId, legIdx }
+let magnet = null;          // 当前零件的折边索引：{ partId, arr, ver, nf, edges, grid, cell }
 
 const raycaster = new THREE.Raycaster();
 const _v = new THREE.Vector3();
@@ -126,6 +132,152 @@ function evalPts(pts, byId) {
     pts[i].pid = hold[i].a.pid;
   }
   return true;
+}
+
+/* ---------- 磁吸：把贴面路径吸到模型的明显折边 ---------- */
+
+const MAGNET_R = 1.0;             // 路径点离折边这么近才吸（mm）
+const MAGNET_CELL = 1.0;          // 折边空间索引格子（mm）
+const MAGNET_FACE_MAX = 350000;   // 面数更多的模型不建索引，避免切模式卡顿
+const MAGNET_COS = Math.cos(55 * Math.PI / 180);  // 两个面夹角超过 55° 算明显折边
+const MAGNET_MIN_EDGE = 0.5;      // 太短的碎边不吸（mm）
+const MAGNET_NORMAL = 0.15;       // 路径点法线与折边所在面至少同向
+const MAGNET_RUN = 3;             // 至少连续这么多个采样点落在同一条折边链上才吸，孤立点不吸
+
+/** 当前零件的折边索引（顶点焊接后的边，按空间格子索引）。缓存在 part 几何不变时复用 */
+function featureData(part) {
+  const arr = part.geom && part.geom.attributes && part.geom.attributes.position ? part.geom.attributes.position.array : null;
+  if (!arr) return null;
+  const ver = part.geom.attributes.position.version || 0;
+  const nf = Math.floor(arr.length / 9);
+  if (nf > MAGNET_FACE_MAX) return null;
+  if (magnet && magnet.partId === part.id && magnet.arr === arr && magnet.ver === ver && magnet.nf === nf) return magnet;
+  const V = arr.length / 3;
+  const ids = new Uint32Array(V);
+  const vmap = new Map(), vpos = [];
+  for (let i = 0; i < V; i++) {
+    const x = arr[i * 3], y = arr[i * 3 + 1], z = arr[i * 3 + 2];
+    const key = `${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`;
+    let id = vmap.get(key);
+    if (id === undefined) { id = vpos.length / 3; vmap.set(key, id); vpos.push(x, y, z); }
+    ids[i] = id;
+  }
+  const emap = new Map();
+  const edgeKey = (a, b) => (a < b ? a * V + b : b * V + a);
+  for (let f = 0; f < nf; f++) {
+    const i = f * 9;
+    const a = ids[i], b = ids[i + 1], c = ids[i + 2];
+    const abx = arr[i + 3] - arr[i], aby = arr[i + 4] - arr[i + 1], abz = arr[i + 5] - arr[i + 2];
+    const acx = arr[i + 6] - arr[i], acy = arr[i + 7] - arr[i + 1], acz = arr[i + 8] - arr[i + 2];
+    let nx = aby * acz - abz * acy, ny = abz * acx - abx * acz, nz = abx * acy - aby * acx;
+    const l = Math.hypot(nx, ny, nz);
+    if (!(l > 1e-12)) continue;
+    nx /= l; ny /= l; nz /= l;
+    for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+      const k = edgeKey(u, v);
+      const e = emap.get(k);
+      if (!e) emap.set(k, { a: u, b: v, nx, ny, nz, f, sharp: false });
+      else if (!e.sharp && e.nx * nx + e.ny * ny + e.nz * nz < MAGNET_COS) e.sharp = true;
+    }
+  }
+  const edges = [], grid = new Map();
+  for (const e of emap.values()) {
+    if (!e.sharp) continue;
+    const ax = vpos[e.a * 3], ay = vpos[e.a * 3 + 1], az = vpos[e.a * 3 + 2];
+    const bx = vpos[e.b * 3], by = vpos[e.b * 3 + 1], bz = vpos[e.b * 3 + 2];
+    if (Math.hypot(bx - ax, by - ay, bz - az) < MAGNET_MIN_EDGE) continue;
+    const idx = edges.length;
+    edges.push({ ax, ay, az, bx, by, bz, va: e.a, vb: e.b, nx: e.nx, ny: e.ny, nz: e.nz, f: e.f });
+    const x0 = Math.floor(Math.min(ax, bx) / MAGNET_CELL), x1 = Math.floor(Math.max(ax, bx) / MAGNET_CELL);
+    const y0 = Math.floor(Math.min(ay, by) / MAGNET_CELL), y1 = Math.floor(Math.max(ay, by) / MAGNET_CELL);
+    const z0 = Math.floor(Math.min(az, bz) / MAGNET_CELL), z1 = Math.floor(Math.max(az, bz) / MAGNET_CELL);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
+      const k = `${x},${y},${z}`;
+      let list = grid.get(k);
+      if (!list) grid.set(k, list = []);
+      list.push(idx);
+    }
+  }
+  magnet = { partId: part.id, arr, ver, nf, edges, grid, cell: MAGNET_CELL };
+  return magnet;
+}
+
+/** (px,py,pz) 到折边线段的最近点，写进 out，返回距离 */
+function nearestOnEdge(px, py, pz, e, out) {
+  const ex = e.bx - e.ax, ey = e.by - e.ay, ez = e.bz - e.az;
+  const l2 = ex * ex + ey * ey + ez * ez;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((px - e.ax) * ex + (py - e.ay) * ey + (pz - e.az) * ez) / l2)) : 0;
+  out.x = e.ax + ex * t; out.y = e.ay + ey * t; out.z = e.az + ez * t;
+  return Math.hypot(out.x - px, out.y - py, out.z - pz);
+}
+
+/** 路径点落到最近的折边上，返回新的贴面点；附近没有明显折边返回 null */
+function snapToFeature(part, p) {
+  const data = featureData(part);
+  if (!data || !data.edges.length) return null;
+  const cx = Math.floor(p.x / data.cell), cy = Math.floor(p.y / data.cell), cz = Math.floor(p.z / data.cell);
+  const q = { x: 0, y: 0, z: 0 };
+  let best = MAGNET_R, pick = null;
+  for (let x = cx - 1; x <= cx + 1; x++) for (let y = cy - 1; y <= cy + 1; y++) for (let z = cz - 1; z <= cz + 1; z++) {
+    const list = data.grid.get(`${x},${y},${z}`);
+    if (!list) continue;
+    for (const ei of list) {
+      const e = data.edges[ei];
+      if (p.nx * e.nx + p.ny * e.ny + p.nz * e.nz < MAGNET_NORMAL) continue;
+      const d = nearestOnEdge(p.x, p.y, p.z, e, q);
+      if (d < best) { best = d; pick = { e, ei, d, q: { x: q.x, y: q.y, z: q.z } }; }
+    }
+  }
+  if (!pick) return null;
+  const t = partTriangle(part, pick.e.f, _tri);
+  if (!t) return null;
+  const [u, v] = baryOf(t, pick.q.x, pick.q.y, pick.q.z);
+  const pt = { anchors: [{ pid: part.id, f: pick.e.f, u, v, nf: triCount(part) }], pid: part.id, nx: 0, ny: 1, nz: 0 };
+  triPoint(t, u, v, pt);
+  return { pt, e: pick.e, ei: pick.ei, d: pick.d };
+}
+
+/** 两条折边是否首尾相接（同一条折边链上的连续段） */
+const edgesLinked = (a, b) => a.e.va === b.e.va || a.e.va === b.e.vb || a.e.vb === b.e.va || a.e.vb === b.e.vb;
+
+/** 把一段贴面路径的中间点吸到折边；两端（用户点击的控制点）不动 */
+function magnetPath(partId, path) {
+  if (!params.cutMagnet || path.length < 5) return path;
+  const part = state.parts.find(p => p.id === partId);
+  if (!part) return path;
+  const hit = new Array(path.length).fill(null);
+  for (let i = 1; i < path.length - 1; i++) hit[i] = snapToFeature(part, path[i]);
+  /* 只吸连续落在同一条折边链上的几颗。孤立的一颗会把路径拉出尖角，宁可不动 */
+  for (let i = 1; i < path.length - 1;) {
+    if (!hit[i]) { i++; continue; }
+    let j = i;
+    while (j + 1 < path.length - 1 && hit[j + 1] && edgesLinked(hit[j], hit[j + 1])) {
+      if (j > i) {
+        const ax = hit[j].pt.x - hit[j - 1].pt.x, ay = hit[j].pt.y - hit[j - 1].pt.y, az = hit[j].pt.z - hit[j - 1].pt.z;
+        const bx = hit[j + 1].pt.x - hit[j].pt.x, by = hit[j + 1].pt.y - hit[j].pt.y, bz = hit[j + 1].pt.z - hit[j].pt.z;
+        const la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz);
+        if (la > 1e-6 && lb > 1e-6 && (ax * bx + ay * by + az * bz) / (la * lb) < 0.2) break;
+      }
+      j++;
+    }
+    if (j - i + 1 >= MAGNET_RUN) {
+      let dir = 0, back = false;
+      for (let k = i; k < j; k++) {
+        const ox = path[k + 1].x - path[k].x, oy = path[k + 1].y - path[k].y, oz = path[k + 1].z - path[k].z;
+        const sx = hit[k + 1].pt.x - hit[k].pt.x, sy = hit[k + 1].pt.y - hit[k].pt.y, sz = hit[k + 1].pt.z - hit[k].pt.z;
+        const lo = Math.hypot(ox, oy, oz), ls = Math.hypot(sx, sy, sz);
+        if (lo > 1e-6 && ls > 1e-6) {
+          const c = (ox * sx + oy * sy + oz * sz) / (lo * ls);
+          if (c < -0.1) back = true;
+          dir += c;
+        }
+      }
+      /* 整段吸附后不能局部倒折，也不能整体折回原方向 */
+      if (!back && j > i && dir / (j - i) > 0.35) for (let k = i; k <= j; k++) path[k] = hit[k].pt;
+    }
+    i = j + 1;
+  }
+  return path;
 }
 
 /* ---------- 线：控制点 + 逐段贴面路径 ---------- */
@@ -215,7 +367,7 @@ function legBetween(a, b, view, partId) {
   // 终点就是 b 本身：最后一个采样点离 b 太近（< 0.05mm）就让它让位，免得出现两个几乎重合的点
   if (prev === a || dist(prev, b) > 0.05) out.push(b);
   else out[out.length - 1] = b;
-  return out;
+  return magnetPath(partId, out);
 }
 
 /** 点 p 此刻在当前视角下看得见（射线先打到的就是它附近的表面） */
@@ -238,6 +390,252 @@ function viewOf(e) {
 
 const viewNow = () => (lastView ? { ...lastView, camera: viewCamera(), sx: -1e9, sy: -1e9 } : viewOf(null));
 
+/* ---------- 路径点编辑（拖动 / 插入 / 删除） ---------- */
+
+/** 当前可编辑的已封口线（选中、可见、没切、不在继续编辑草稿里） */
+function activeHolder() {
+  const line = state.cutLines.find(l => l.id === activeId);
+  if (!line || !line.alive || !line.visible || line.cut || line.editing) return null;
+  return { ctrl: line.ctrl, legs: line.legs, closed: !!line.closed, partId: line.partId, line, draft: false };
+}
+
+function draftHolder() {
+  if (!draft) return null;
+  return { ctrl: draft.ctrl, legs: draft.legs, closed: false, partId: draft.partId, line: draft.orig || null, draft: true };
+}
+
+const editHolder = () => draftHolder() || activeHolder();
+
+/** 点（带法线抬出）投到画布上的像素坐标 */
+function nodeScreen(p, view) {
+  _v.set(p.x + p.nx * LIFT, p.y + p.ny * LIFT + raiseH(), p.z + p.nz * LIFT).project(view.camera);
+  return { x: (_v.x * 0.5 + 0.5) * view.width, y: (-_v.y * 0.5 + 0.5) * view.height, z: _v.z };
+}
+
+/** 指针附近的锚点：{ holder, index, pt }；没有返回 null */
+function nodeAt(e, radius = 8) {
+  const h = editHolder();
+  if (!h) return null;
+  const view = viewOf(e);
+  const cv = getCanvas();
+  const rect = cv ? cv.getBoundingClientRect() : { left: 0, top: 0 };
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  let best = null;
+  h.ctrl.forEach((p, i) => {
+    const s = nodeScreen(p, view);
+    if (s.z > 1) return;
+    const d = Math.hypot(s.x - x, s.y - y);
+    if (d <= radius && (!best || d < best.d)) best = { holder: h, index: i, pt: p, d };
+  });
+  const vis = best ? visibleFrom(view, best.pt) : false;
+  return best && vis ? best : null;
+}
+
+const segDist2 = (px, py, a, b) => {
+  const ex = b.x - a.x, ey = b.y - a.y;
+  const l2 = ex * ex + ey * ey;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((px - a.x) * ex + (py - a.y) * ey) / l2)) : 0;
+  return { d: Math.hypot(a.x + ex * t - px, a.y + ey * t - py), t };
+};
+
+const segDist3 = (p, a, b) => {
+  const ex = b.x - a.x, ey = b.y - a.y, ez = b.z - a.z;
+  const l2 = ex * ex + ey * ey + ez * ez;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * ex + (p.y - a.y) * ey + (p.z - a.z) * ez) / l2)) : 0;
+  return Math.hypot(a.x + ex * t - p.x, a.y + ey * t - p.y, a.z + ez * t - p.z);
+};
+
+/** 指针附近的已封口线路径段：{ holder, legIdx, segIdx, fi, point }。按屏幕距离找线身，再用射线命中点排掉背面的线 */
+function pathAt(e, h) {
+  if (!h || h.draft || !h.closed) return null;
+  const view = viewOf(e);
+  const hit = pickRay(pointerRay(e));
+  if (!hit) return null;
+  const loc = localFaceOf(hit.fi);
+  if (!loc || loc.part.id !== h.partId) return null;
+  const cv = getCanvas();
+  const rect = cv ? cv.getBoundingClientRect() : { left: 0, top: 0 };
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const hp = { x: hit.point.x, y: hit.point.y - raiseH(), z: hit.point.z };
+  let best = null;
+  h.legs.forEach((leg, li) => {
+    let a = nodeScreen(leg[0], view);
+    for (let k = 0; k < leg.length - 1; k++) {
+      const b = nodeScreen(leg[k + 1], view);
+      if (a.z <= 1 && b.z <= 1) {
+        const s = segDist2(x, y, a, b);
+        if (s.d <= 18) {
+          const d3 = segDist3(hp, leg[k], leg[k + 1]);
+          if (d3 <= 2.2 && (!best || d3 < best.d3 - 1e-6 || (Math.abs(d3 - best.d3) <= 1e-6 && s.d < best.d))) {
+            best = { holder: h, legIdx: li, segIdx: k, d: s.d, d3, a, b, t: s.t };
+          }
+        }
+      }
+      a = b;
+    }
+  });
+  if (!best) return null;
+  /* 瞄到线身后把点吸到线身的投影位置，再从那里打回表面：点在线上，不因鼠标离线几像素而产生折角 */
+  let fi = hit.fi, point = hit.point;
+  const sx = best.a.x + (best.b.x - best.a.x) * best.t, sy = best.a.y + (best.b.y - best.a.y) * best.t;
+  _v2.set((sx / view.width) * 2 - 1, -(sy / view.height) * 2 + 1);
+  raycaster.setFromCamera(_v2, view.camera);
+  const snapped = pickRay(raycaster);
+  if (snapped) {
+    const l2 = localFaceOf(snapped.fi);
+    if (l2 && l2.part.id === h.partId) { fi = snapped.fi; point = snapped.point; }
+  }
+  return { holder: best.holder, legIdx: best.legIdx, segIdx: best.segIdx, fi, point };
+}
+
+/** 在线身命中处插入锚点（按实际点击的表面点拆成两段）；只用于已封口线 */
+function insertPointAt(hit) {
+  const { holder: h, legIdx, segIdx, fi, point } = hit;
+  hoverSeg = null;
+  const leg = h.legs[legIdx];
+  if (!leg || segIdx < 0 || segIdx >= leg.length - 1) return false;
+  const np = makePt(fi, point);
+  if (!np || np.pid !== h.partId) return false;
+  if (dist(np, leg[segIdx]) < 0.05 || dist(np, leg[segIdx + 1]) < 0.05) return false;
+  const left = [...leg.slice(0, segIdx + 1), np];
+  const right = [np, ...leg.slice(segIdx + 1)];
+  const at = h.closed && legIdx === h.ctrl.length - 1 ? h.ctrl.length : legIdx + 1;
+  h.ctrl.splice(at, 0, np);
+  h.legs.splice(legIdx, 1, left, right);
+  if (h.draft) { redraw(); emitState(); } else refresh();
+  return true;
+}
+
+/** Alt 点锚点：删掉它，把两侧的路径合成一段 */
+function deletePointAt(e, hit) {
+  const h = hit.holder, i = hit.index;
+  hoverSeg = null;
+  if (h.ctrl.length <= 3) { toast('至少保留 3 个点才能围成一圈'); return; }
+  const view = viewOf(e);
+  const ctrl = h.ctrl, legs = h.legs, n = ctrl.length;
+  if (h.closed) {
+    const prev = (i - 1 + n) % n, next = (i + 1) % n;
+    const merged = legBetween(ctrl[prev], ctrl[next], view, h.partId);
+    const nc = ctrl.slice(); nc.splice(i, 1);
+    let nl;
+    if (i === 0) nl = [...legs.slice(1, n - 1), merged];
+    else if (i === n - 1) nl = [...legs.slice(0, n - 2), merged];
+    else nl = [...legs.slice(0, i - 1), merged, ...legs.slice(i + 1)];
+    ctrl.length = 0; ctrl.push(...nc);
+    legs.length = 0; legs.push(...nl);
+  } else {
+    if (i === 0) { ctrl.shift(); legs.shift(); }
+    else if (i === n - 1) { ctrl.pop(); legs.pop(); }
+    else {
+      const merged = legBetween(ctrl[i - 1], ctrl[i + 1], view, h.partId);
+      ctrl.splice(i, 1);
+      legs.splice(i - 1, 2, merged);
+    }
+  }
+  if (h.draft) { redraw(); emitState(); } else refresh();
+}
+
+/* 拖动锚点：只重算它两侧的贴面路径，松手后再重算拟合平面和预览 */
+
+function removeDragListeners() {
+  window.removeEventListener('pointermove', onPointDragMove, true);
+  window.removeEventListener('pointerup', onPointDragUp, true);
+  window.removeEventListener('pointercancel', onPointDragCancel, true);
+}
+
+function beginPointDrag(e, hit) {
+  const h = hit.holder;
+  hoverSeg = null;
+  pointDrag = {
+    holder: h, index: hit.index, pid: e.pointerId, moved: false,
+    origCtrl: h.ctrl.slice(), origLegs: h.legs.slice(),
+  };
+  window.addEventListener('pointermove', onPointDragMove, true);
+  window.addEventListener('pointerup', onPointDragUp, true);
+  window.addEventListener('pointercancel', onPointDragCancel, true);
+  getCanvas().style.cursor = 'grabbing';
+}
+
+function applyPointDrag(e) {
+  if (!pointDrag) return;
+  const h = pointDrag.holder, i = pointDrag.index;
+  const hit = pickRay(pointerRay(e));
+  if (!hit) return;
+  const loc = localFaceOf(hit.fi);
+  if (!loc || loc.part.id !== h.partId) return;
+  const np = makePt(hit.fi, hit.point);
+  if (!np) return;
+  const ctrl = h.ctrl, legs = h.legs, n = ctrl.length;
+  if (dist(ctrl[i], np) < 1e-4) return;
+  const view = viewOf(e);
+  if (h.closed) {
+    const prev = (i - 1 + n) % n, next = (i + 1) % n;
+    ctrl[i] = np;
+    legs[prev] = legBetween(ctrl[prev], np, view, h.partId);
+    legs[i] = legBetween(np, ctrl[next], view, h.partId);
+  } else {
+    ctrl[i] = np;
+    if (i > 0) legs[i - 1] = legBetween(ctrl[i - 1], np, view, h.partId);
+    if (i < n - 1) legs[i] = legBetween(np, ctrl[i + 1], view, h.partId);
+  }
+  pointDrag.moved = true;
+  redraw();
+}
+
+function queuePointDrag(e) {
+  dragNext = { clientX: e.clientX, clientY: e.clientY };
+  if (dragFrame) return;
+  dragFrame = requestAnimationFrame(() => {
+    dragFrame = 0;
+    const p = dragNext;
+    dragNext = null;
+    if (p && pointDrag) applyPointDrag(p);
+  });
+}
+
+function onPointDragMove(e) {
+  if (!pointDrag || e.pointerId !== pointDrag.pid) return;
+  queuePointDrag(e);
+}
+
+function onPointDragUp(e) {
+  if (!pointDrag || e.pointerId !== pointDrag.pid) return;
+  finishPointDrag(e);
+}
+
+function onPointDragCancel(e) {
+  if (!pointDrag || e.pointerId !== pointDrag.pid) return;
+  cancelPointDrag();
+}
+
+function finishPointDrag(e) {
+  if (!pointDrag) return;
+  if (dragFrame) { cancelAnimationFrame(dragFrame); dragFrame = 0; }
+  if (dragNext) { const p = dragNext; dragNext = null; applyPointDrag(p); }
+  const d = pointDrag;
+  removeDragListeners();
+  pointDrag = null;
+  if (d.moved) {
+    if (d.holder.draft) { redraw(); emitState(); }
+    else refresh();
+  } else redraw();
+  const cv = getCanvas();
+  if (cv) cv.style.cursor = 'default';
+}
+
+function cancelPointDrag() {
+  if (!pointDrag) return;
+  if (dragFrame) { cancelAnimationFrame(dragFrame); dragFrame = 0; }
+  dragNext = null;
+  const d = pointDrag;
+  removeDragListeners();
+  pointDrag = null;
+  if (d.holder.draft && draft) { draft.ctrl = d.origCtrl; draft.legs = d.origLegs; redraw(); emitState(); }
+  else if (d.holder.line) { d.holder.line.ctrl = d.origCtrl; d.holder.line.legs = d.origLegs; refresh(); }
+  const cv = getCanvas();
+  if (cv) cv.style.cursor = 'default';
+}
+
 /** 指针离草稿起点（屏幕像素）够近，且已经点够 3 个点：再点一下就封口 */
 function nearFirst(view) {
   if (!draft || draft.ctrl.length < 3) return false;
@@ -255,10 +653,12 @@ function nearFirst(view) {
 
 export function enterCutMode() {
   ensureBakedDisplay();
-  log('画线切割：在模型表面依次点出一圈（至少 3 点），点回起点、双击或按 Enter 封口，再点「切割」。Backspace 退回一点，Esc 取消；右键转视角，中键平移', 'ok');
+  log('画线切割：在模型表面依次点出一圈（至少 3 点），点回起点、双击或按 Enter 封口，再点「切割」。选中线后可拖动白点改线、点线身加点、Alt 点白点删点。Backspace 退回一点，Esc 取消；右键转视角，中键平移', 'ok');
 }
 
 export function leaveCutMode() {
+  cancelPointDrag();
+  hoverSeg = null;
   if (draft) cancelDraft();
 }
 
@@ -272,11 +672,35 @@ function clearHover() {
   redraw();
 }
 
-export function clearCutHover() { clearHover(); }
+function clearPathHover() {
+  if (!hoverSeg) return;
+  hoverSeg = null;
+  redraw();
+}
+
+export function clearCutHover() { clearHover(); clearPathHover(); }
 
 export function moveCutLine(e) {
-  if (!draft || busy || !state.mesh) return;
+  if (busy || !state.mesh || pointDrag) return;
   ensureBakedDisplay();
+  const cv = getCanvas();
+  const node = nodeAt(e);
+  if (node) {
+    if (cv) cv.style.cursor = 'grab';
+    clearPathHover();
+    if (draft) clearHover();
+    return;
+  }
+  if (cv) cv.style.cursor = 'default';
+  if (!draft) {
+    const active = activeHolder();
+    const seg = active ? pathAt(e, active) : null;
+    const next = seg ? { lineId: active.line.id, legIdx: seg.legIdx } : null;
+    const same = !!next === !!hoverSeg && (!next || (next.lineId === hoverSeg.lineId && next.legIdx === hoverSeg.legIdx));
+    if (!same) { hoverSeg = next; redraw(); }
+    return;
+  }
+  clearPathHover();
   const view = viewOf(e);
   const h = pickRay(pointerRay(e));
   if (!h) { clearHover(); return; }
@@ -296,6 +720,22 @@ export function moveCutLine(e) {
 export function downCutLine(e) {
   if (busy || !state.mesh) return true;
   ensureBakedDisplay();
+  if (!draft && e.shiftKey) {
+    const active = activeHolder();
+    const seg = active ? pathAt(e, active) : null;
+    if (seg) { insertPointAt(seg); return true; }
+  }
+  const node = nodeAt(e);
+  if (node) {
+    if (e.altKey) deletePointAt(e, node);
+    else beginPointDrag(e, node);
+    return true;
+  }
+  if (!draft) {
+    const active = activeHolder();
+    const seg = active ? pathAt(e, active) : null;
+    if (seg) { insertPointAt(seg); return true; }
+  }
   const view = viewOf(e);
   const h = pickRay(pointerRay(e));
   if (!h) return true;
@@ -402,6 +842,10 @@ function undoLastPoint() {
 /** 画线模式下的键盘。返回 true 表示已处理（scene.js 随后拦住事件） */
 export function cutKey(e) {
   const k = (e.key || '').toLowerCase();
+  if (pointDrag) {
+    if (k === 'escape') cancelPointDrag();
+    return true;
+  }
   if (k === 'escape') {
     if (!draft) return false;   // 没在画：交给 manipulate 退出模式
     cancelDraft();
@@ -435,6 +879,7 @@ export function cutKey(e) {
 
 export function selectCutLine(id) {
   activeId = state.cutLines.some(l => l.id === id) ? id : null;
+  hoverSeg = null;
   refresh();
 }
 
@@ -454,6 +899,7 @@ export function removeCutLine(id) {
 }
 
 export function clearCutLines() {
+  cancelPointDrag();
   if (draft) cancelDraft();
   state.cutLines.length = 0;
   activeId = null;
@@ -869,8 +1315,11 @@ function redraw() {
     const on = line.id === activeId;
     addStroke(g, chain(line.legs, true), true, on ? C_LINE_ON : C_LINE, on ? 3.4 : 2.4, !line.alive);
     if (on) {
+      if (hoverSeg && hoverSeg.lineId === line.id && line.legs[hoverSeg.legIdx]) {
+        addStroke(g, line.legs[hoverSeg.legIdx], false, C_SEG_HOVER, 6.2, !line.alive);
+      }
       addNodes(g, line.ctrl, false);
-      if (!line.cut && line.alive) {
+      if (!line.cut && line.alive && (!pointDrag || pointDrag.holder.line !== line)) {
         if (followsLine(line)) addSheet(g, line.geo);
         else if (!(curvedCut(line) && line.geo.tangled)) addPlane(g, line);
       }
@@ -969,6 +1418,7 @@ if (typeof window !== 'undefined') window.addEventListener('resize', () => { if 
 
 /** 切走工程时摘下这一盘的线（草稿作废） */
 export function takeCutLines() {
+  cancelPointDrag();
   if (draft) { if (draft.orig) draft.orig.editing = false; draft = null; }
   const pack = { lines: state.cutLines, activeId };
   state.cutLines = [];

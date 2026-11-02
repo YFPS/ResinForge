@@ -615,7 +615,7 @@ export function setMode(m) {
   controls.mouseButtons.LEFT = null;
   controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
   controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
-  canvas.style.cursor = m === 'orbit' ? 'default' : 'crosshair';
+  canvas.style.cursor = m === 'orbit' || m === 'cut' ? 'default' : 'crosshair';
   cancelTipDrag();
   clearSupportHover();
   if (m !== 'add') clearHeightLine();
@@ -1659,7 +1659,10 @@ export function initScene(canvasEl) {
       clearSupportHover();
     }
   });
-  canvas.addEventListener('pointerleave', () => { clearSupportHover(); clearLayFace(); hideLayTip(); clearCutHover(); });
+  canvas.addEventListener('pointerleave', () => {
+    clearSupportHover(); clearLayFace(); hideLayTip(); clearCutHover();
+    if (state.mode === 'cut') canvas.style.cursor = 'default';
+  });
   window.addEventListener('pointerup', () => { state.painting = false; });
   // 拖拽针尖：指针可能在画布外松开，统一听 window，按 pointerId 认这一根手指 / 鼠标
   window.addEventListener('pointermove', e => {

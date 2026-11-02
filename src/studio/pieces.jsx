@@ -388,9 +388,10 @@ function CutPanel() {
       else if (active.tangled) how = ' · 线在切面方向上自己交叉，沿线切不了：重画一圈，或把切面改成「平面」';
       else how = ` · 切口沿画线（线起伏 ${active.dev.toFixed(2)} mm）`;
     }
+    const editHint = active.alive && !active.cut ? ' · 拖白点改线，点线身或 Shift 点线身加点，Alt 点白点删点' : '';
     status = !active.alive
       ? `${active.name}：锚着的模型已不在板上（虚线），不能再切`
-      : `${active.name}${how}${active.cut ? ' · 已切过，不满意可撤回后再切' : ''}`;
+      : `${active.name}${how}${active.cut ? ' · 已切过，不满意可撤回后再切' : editHint}`;
   } else status = lines.length ? '选一条线，或在模型表面画新的一圈' : '在模型表面依次点出一圈，封口后点「切割」';
   const go = () => runTask('cut', () => runCutLine());
   return (
@@ -414,6 +415,10 @@ function CutPanel() {
         />
         {/* 三个数和说明按钮是一组：窄屏折行时整组一起落到下一行，说明按钮不会单独掉队 */}
         <div className="stuCutTail">
+          <span className="stuCutNum">
+            <span className="stuBrushLabel">磁吸</span>
+            <Switch checked={!!p.cutMagnet} onCheckedChange={on => setParam('cutMagnet', !!on)} aria-label="磁吸硬边" />
+          </span>
           {pin === 'trapezoid' ? (
             <>
               <span className="stuCutNum">
@@ -436,7 +441,7 @@ function CutPanel() {
               </span>
             </>
           ) : null}
-          <Tooltip content="沿模型表面点一圈线（至少 3 点），把模型切成 A、B 两件。切面选「随画线」时切口落在模型表面的位置就是这条线：线有起伏就沿着起伏切，选中线时画出真正的切面预览；选「平面」则一律切这一圈拟合出的最佳平面。默认在切面上加梯形插销：公榫在 B 件、母孔在 A 件，母孔比公榫每边宽出装配间隙；切面放不下时插销自动缩小。线会保留：封口后列在下面，可隐藏、删除、继续编辑、再切。按 C 开关，Enter 封口 / 切割，Backspace 退一点，Esc 取消。">
+          <Tooltip content="沿模型表面点一圈线（至少 3 点），把模型切成 A、B 两件。切面选「随画线」时切口落在模型表面的位置就是这条线：线有起伏就沿着起伏切，选中线时画出真正的切面预览；选「平面」则一律切这一圈拟合出的最佳平面。默认在切面上加梯形插销：公榫在 B 件、母孔在 A 件，母孔比公榫每边宽出装配间隙；切面放不下时插销自动缩小。线会保留：封口后列在下面，可隐藏、删除、继续编辑、再切。选中线后可以拖动白点改线、点线身或按住 Shift 点线身加一个点、Alt 点白点删点。开启“磁吸”时，线段靠近模型明显折边会自动吸过去（类似 Photoshop 磁性套索）。按 C 开关，Enter 封口 / 切割，Backspace 退一点，Esc 取消。">
             <button type="button" className="polyGapHelp" aria-label="画线切割说明">
               <CircleHelp size={16} strokeWidth={1.75} />
             </button>

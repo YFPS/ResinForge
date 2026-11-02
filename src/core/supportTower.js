@@ -753,8 +753,8 @@ export async function buildEStageTowers(ctx, points, P) {
     // 主干上长段没有斜边接点（用户 2026-10-14 截图：中粗 / 粗档的一根竖杆整段无加强，晃动隐患）。
     // 最小保持细格的 2 半格（q=2 行为不变）；q≥4 时取 q/2，链的密度与细格一致，孔仍随折返周期放大。
     const qs = Math.max(2, q >> 1);
-    // 主方向在前、反向备选在后（消费端「主向被区域拒收时才用备选」——链在区域边界折返）；
-    // 没有备选时，q 混合区的边界列（qAt 退回 2 的细格列）整列没有斜边，从底板起就是一根独立主干。
+    // 主方向在前、反向备选在后。备选只在主方向被模型挡住时用；主方向伸出区域时不折返，
+    // 否则外圈的孔会比里面的三角提前收小。q 混合区边界列若整列没有斜边，由后面的相位补杆补上。
     if (wz) {
       const d = fwd ? 1 : -1;
       if (md(a - d * n, qs) === 0) out.push([a + d, bb, 'x']);
@@ -784,32 +784,42 @@ export async function buildEStageTowers(ctx, points, P) {
   for (let n = 1; n <= nMax && cur.length; n++) {
     if (tick) await tick();
     const next = new Map();
+    // 斜边落点：目标格本身在区域内，或沿这根斜边的方向两侧都在区域内（中间漏标的半格空带）。
+    // 只因「靠着区域」就收下的话，外圈斜边会探出区域一格，下一折又提前折回，外圈的孔比里面的三角矮一截、对不齐。
+    const diagIn = (a, bb, a2, b2) => {
+      if (regHas(a2, b2, n)) return true;
+      const da = Math.sign(a2 - a), db = Math.sign(b2 - bb);
+      return (da !== 0 || db !== 0) && regHas(a2 + da, b2 + db, n) && regHas(a2 - da, b2 - db, n);
+    };
     const take = (a, bb, a2, b2, kind, vx, vz) => {
-      // 目标格不在区域时，允许「紧邻区域半格」的目标：区域按路径节点的墙格逐层构造，边界可能漏半格宽的空带——
-      // 斜边链跨到空带的第一步被拒，整列主干就没了加强（2026-10-14 独立主干修复）；放宽半步让链贴到区域边上，
-      // 净空仍由 edgeOK 严格把关。放宽目标只影响斜边：竖杆目标与源同格、直接命中区域。
-      if (regGet(a2, b2, n) === undefined
-        && regGet(a2 + 1, b2, n) === undefined && regGet(a2 - 1, b2, n) === undefined
-        && regGet(a2, b2 + 1, n) === undefined && regGet(a2, b2 - 1, n) === undefined) {
-        st.rejReg = (st.rejReg || 0) + 1; return false;
+      if (kind === 'v') {
+        // 竖杆目标与源同格。区域边界可能漏半格，紧邻有区域就还让这根竖杆立上，净空另由 edgeOK 把关。
+        if (regGet(a2, b2, n) === undefined
+          && regGet(a2 + 1, b2, n) === undefined && regGet(a2 - 1, b2, n) === undefined
+          && regGet(a2, b2 + 1, n) === undefined && regGet(a2, b2 - 1, n) === undefined) {
+          st.rejReg = (st.rejReg || 0) + 1; return 'out';
+        }
+      } else if (!diagIn(a, bb, a2, b2)) {
+        st.rejReg = (st.rejReg || 0) + 1; return 'out';
       }
-      if (!edgeOK(a, bb, n - 1, a2, b2, n)) { st.rejOK = (st.rejOK || 0) + 1; return false; }
+      if (!edgeOK(a, bb, n - 1, a2, b2, n)) { st.rejOK = (st.rejOK || 0) + 1; return 'hit'; }
       edges.push({ a1: a, b1: bb, n1: n - 1, a2, b2, n2: n, kind, vx, vz });
       const k = k2(a2, b2);
       if (!next.has(k)) { next.set(k, [a2, b2]); G.add(k3(a2, b2, n)); }
-      return true;
+      return 'ok';
     };
     for (const [a, bb] of cur) {
       const ups = upEdges(a, bb, n - 1);
       const diagDone = { x: false, z: false };
       for (const [a2, b2, kind, vx, vz] of ups) {
         if (kind === 'v') { take(a, bb, a2, b2, kind, vx, vz); continue; }
-        // 朝每个方向（x 向 / z 向）每层至多一根斜边：主方向在前；被区域拒收时用反向后备折返
-        //（否则 q 混合区的边界列整列无斜边）。「+」柱节点两向各一根，互不占位。
+        // 每面墙每层至多一根斜边，主方向在前。主方向伸出区域就停在这——不改走反向。
+        // 反向会在外圈把孔提前折小，和里面按同一节奏折返的三角对不齐。
+        // 主方向被模型挡住（净空）时仍用反向备选，链贴着模型折返。「+」柱两向各一根，互不占位。
         if (diagDone[kind]) continue;
-        const ok = take(a, bb, a2, b2, kind, vx, vz);
-        if (!ok) st.diagFall = (st.diagFall || 0) + 1;   // 主向被拒（触发折返尝试）
-        diagDone[kind] = ok;
+        const r = take(a, bb, a2, b2, kind, vx, vz);
+        if (r !== 'ok') st.diagFall = (st.diagFall || 0) + 1;
+        if (r !== 'hit') diagDone[kind] = true;
       }
       const fz = forced.get(k3(a, bb, n - 1));
       if (fz) for (const [a2, b2] of fz) {
@@ -915,10 +925,9 @@ export async function buildEStageTowers(ctx, points, P) {
   for (const nd of needles) { const k = k3(nd.a, nd.b, nd.n); if (!keep.has(k)) { keep.add(k); stack.push(k); } }
   while (stack.length) { const k = stack.pop(); for (const k1 of down.get(k) || []) if (!keep.has(k1)) { keep.add(k1); stack.push(k1); } }
   const used = edges.filter(e => keep.has(k3(e.a1, e.b1, e.n1)) && keep.has(k3(e.a2, e.b2, e.n2)));
-  /* 兜底加强（2026-10-14，用户截图：中粗 / 粗档有的主干整段无加强、晃动隐患）：
-     q 混合区 / 区域边界的斜边链可能在跨区处断裂，留下「独立竖杆」段。这里对最终杆件做实扫：
-     ≥3 个竖直半格没有斜边相接的竖杆段，每 3 半格补一根同规格斜杆（±1 水平 + 1 竖直，连到邻近
-     已保留节点、胶囊体净空通过才补）——细档本就没有断链，此步不产生新杆。 */
+  /* 兜底加强：闭包把伸到尖顶外面的斜边剪掉之后，边界上会留下没接斜边的竖杆。
+     补的斜边必须走和里面相同的折返（同一 q、同一相位、只走主方向），连到仍保留的邻节点。
+     不往四个方向里碰运气：那会在外圈切出偏一截的孔，和里面的三角对不齐。目标不在保留集里就跳过，不改走反向。 */
   {
     const nodeSet = new Set();
     const diag = new Set();                              // 有斜边相接的节点
@@ -935,18 +944,18 @@ export async function buildEStageTowers(ctx, points, P) {
     const extra = [];
     for (const [ck, m] of vAdj) {
       const a = Math.floor(ck / SPAN) - OFF, bb = ck - (a + OFF) * SPAN - OFF;
-      let since = 0;
       for (const n of [...m.keys()].sort((x, y) => x - y)) {
-        if (diag.has(k3(a, bb, n)) || diag.has(k3(a, bb, n + 1))) { since = 0; continue; }
-        since++;
-        if (since < 3) continue;
-        for (const [da, dbb] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          const t = k3(a + da, bb + dbb, n + 1);
-          if (!nodeSet.has(t) || !edgeOK(a, bb, n, a + da, bb + dbb, n + 1)) continue;
-          extra.push({ a1: a, b1: bb, n1: n, a2: a + da, b2: bb + dbb, n2: n + 1, kind: da !== 0 ? 'x' : 'z', vx: false, vz: false });
-          diag.add(k3(a, bb, n)); diag.add(t);
-          since = 0;
-          break;
+        if (diag.has(k3(a, bb, n)) || diag.has(k3(a, bb, n + 1))) continue;
+        const q = qAt(a, bb, n) || qAt(a, bb, n + 1);
+        if (!q) continue;
+        const fwd = md(n, 2 * q) < q, qs = Math.max(2, q >> 1), d = fwd ? 1 : -1;
+        const cands = [];
+        if (md(bb, q) === 0 && md(a - d * n, qs) === 0) cands.push([a + d, bb, 'x']);
+        if (md(a, q) === 0 && md(bb - d * n, qs) === 0) cands.push([a, bb + d, 'z']);
+        for (const [ta, tb, kind] of cands) {
+          if (!nodeSet.has(k3(ta, tb, n + 1)) || !edgeOK(a, bb, n, ta, tb, n + 1)) continue;
+          extra.push({ a1: a, b1: bb, n1: n, a2: ta, b2: tb, n2: n + 1, kind, vx: false, vz: false });
+          diag.add(k3(a, bb, n)); diag.add(k3(ta, tb, n + 1));
         }
       }
     }
